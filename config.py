@@ -1,24 +1,17 @@
-async def post_init(app):
-    me = await app.bot.get_me()
-    print("BOT INICIADO:", me.username)
+import os
 
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("Configure BOT_TOKEN nas variáveis de ambiente.")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+SOURCE_SITE_BASE = os.getenv("SOURCE_SITE_BASE", "https://animefire.io").strip().rstrip("/")
 
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Centraldeanimes_Baltigo").strip()
+REQUIRED_CHANNEL_URL = os.getenv("REQUIRED_CHANNEL_URL", "t.me/Centraldeanimes_Baltigo").strip()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("buscar", buscar))
-    app.add_handler(CommandHandler("ajuda", ajuda))
-    app.add_handler(CallbackQueryHandler(callbacks))
-    app.add_error_handler(error_handler)
+SEARCH_LIMIT = int(os.getenv("SEARCH_LIMIT", "10"))
+EPISODES_PER_PAGE = int(os.getenv("EPISODES_PER_PAGE", "12"))
+EPISODE_LOOKUP_LIMIT = int(os.getenv("EPISODE_LOOKUP_LIMIT", "400"))
+ANTI_FLOOD_SECONDS = float(os.getenv("ANTI_FLOOD_SECONDS", "1.2"))
+API_CACHE_TTL_SECONDS = int(os.getenv("API_CACHE_TTL_SECONDS", "900"))
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "45"))
 
-    print("Bot rodando...")
-    app.run_polling(drop_pending_updates=True)
+BOT_BRAND = os.getenv("BOT_BRAND", "Anime Brasil").strip()
+WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL", "").strip().rstrip("/")
