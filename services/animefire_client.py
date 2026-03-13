@@ -1,18 +1,12 @@
 import asyncio
 import re
-import unicodedata
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import quote
 
 import httpx
 from bs4 import BeautifulSoup
 
-from config import SOURCE_SITE_BASE
-from core.http_client import get_http_client
 
-
-BASE_URL = SOURCE_SITE_BASE.rstrip("/")
-BASE_NETLOC = urlparse(BASE_URL).netloc.lower()
-DUCK_URL = "https://html.duckduckgo.com/html/"
+BASE_URL = "https://animefire.io"
 LIGHTSPEED_SERVERS = ["s2", "s3", "s4", "s5", "s6", "s7"]
 
 _SEARCH_CACHE = {}
@@ -21,53 +15,45 @@ _EPISODES_CACHE = {}
 _VIDEO_CACHE = {}
 
 _HTTP_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": "Mozilla/5.0",
     "Referer": BASE_URL,
 }
 
 
-async def _get(url: str, *, params: dict | None = None) -> str:
-    client = await get_http_client()
-    response = await client.get(url, params=params, headers=_HTTP_HEADERS)
-    response.raise_for_status()
-    return response.text
+async def _get(url: str) -> str:
+    async with httpx.AsyncClient(
+        timeout=20,
+        headers=_HTTP_HEADERS,
+        follow_redirects=True,
+    ) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.text
 
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
 
 
-def _strip_accents(text: str) -> str:
-    text = unicodedata.normalize("NFKD", text or "")
-    return "".join(ch for ch in text if not unicodedata.combining(ch))
-
-
-def _slugify_query(text: str) -> str:
-    text = _strip_accents((text or "").strip().lower())
-    text = re.sub(r"[^\w\s-]", " ", text)
-    text = re.sub(r"\s+", "-", text)
-    text = re.sub(r"-+", "-", text).strip("-")
-    return text
-
-
 def _normalize_slug_for_page(anime_id: str) -> str:
     return (anime_id or "").strip().strip("/")
 
 
-def _normalize_base_slug(slug: str) -> str:
-    slug = _normalize_slug_for_page(slug)
-    slug = re.sub(r"-todos-os-episodios$", "", slug)
-    return slug
-
-
 def _normalize_text(text: str) -> str:
-    text = _strip_accents((text or "").lower())
-    text = re.sub(r"[\(\)\[\]\-_:,.!/?]+", " ", text)
+    text = (text or "").lower().strip()
+    text = re.sub(r"[^\w\s-]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _search_path_term(query: str) -> str:
+    """
+    one piece -> one-piece
+    Mahou Shoujo Tai Arusu -> mahou-shoujo-tai-arusu
+    """
+    text = _normalize_text(query)
+    text = text.replace(" ", "-")
+    text = re.sub(r"-+", "-", text).strip("-")
     return text
 
 
@@ -77,16 +63,18 @@ def _extract_server_name(url: str) -> str:
 
 
 def _extract_quality_name(url: str) -> str:
-    u = (url or "").lower()
-    if "1080" in u or "fullhd" in u:
-        return "fullhd"
-    if "720" in u:
-        return "720p"
-    if "/hd/" in u:
-        return "hd"
-    if "/sd/" in u or "480" in u or "360" in u:
-        return "sd"
-    return "hd"
+    url = url.lower()
+
+    if "1080p" in url:
+        return "FULLHD"
+    if "720p" in url:
+        return "HD"
+    if "/hd/" in url:
+        return "HD"
+    if "/sd/" in url or "480p" in url:
+        return "SD"
+
+    return "HD"
 
 
 def _score_candidate(query: str, title: str, slug: str) -> float:
@@ -116,6 +104,7 @@ def _score_candidate(query: str, title: str, slug: str) -> float:
         w = q_words[0]
         if w not in t and w not in s:
             return -9999
+
         if t.startswith(w):
             score += 120
         if s.startswith(w):
@@ -131,175 +120,64 @@ def _score_candidate(query: str, title: str, slug: str) -> float:
         if w in s:
             score += 45
 
-    if "episodio" in t or "episodio" in s:
+    if "episodio" in t or "episódio" in t:
         score -= 500
 
     score += max(0, 50 - len(t))
     return score
 
 
-def _title_from_slug(slug: str) -> str:
-    return slug.replace("-", " ").title()
-
-
-def _extract_slug_from_anime_link(url: str) -> str:
-    if not url:
-        return ""
-
-    parsed = urlparse(url)
-    path = parsed.path.strip("/")
-
-    if not path.startswith("animes/"):
-        return ""
-
-    slug = path[len("animes/"):].strip("/")
-    if not slug or "/" in slug:
-        return ""
-
-    return slug
-
-
-def _extract_site_slug_from_url(url: str) -> str:
-    if not url:
-        return ""
-
-    parsed = urlparse(url)
-
-    if "duckduckgo.com" in parsed.netloc and parsed.path.startswith("/l/"):
-        qs = parse_qs(parsed.query)
-        uddg = qs.get("uddg", [])
-        if uddg:
-            return _extract_site_slug_from_url(unquote(uddg[0]))
-
-    if parsed.netloc and BASE_NETLOC not in parsed.netloc.lower():
-        return ""
-
-    return _extract_slug_from_anime_link(url)
-
-
-def _is_episode_like(title: str, slug: str) -> bool:
-    t = _normalize_text(title)
-    s = _normalize_text(slug.replace("-", " "))
-
-    if "episodio" in t or "episodio" in s:
-        return True
-
-    if re.search(r"\bepisodio\s+\d+\b", t):
-        return True
-
-    return False
-
-
-def _merge_result(found: dict[str, dict], query: str, slug: str, title: str):
-    title = _clean(title) or _title_from_slug(slug)
-
-    if _is_episode_like(title, slug):
-        return
-
-    score = _score_candidate(query, title, slug)
-    if score <= -9999:
-        return
-
-    item = {"id": slug, "title": title, "_score": score}
-    prev = found.get(slug)
-    if not prev or item["_score"] > prev["_score"]:
-        found[slug] = item
-
-
-def _results_from_found(found: dict[str, dict]) -> list[dict]:
-    ordered = sorted(found.values(), key=lambda x: (-x["_score"], x["title"].lower()))
-    return [{"id": x["id"], "title": x["title"]} for x in ordered[:20]]
-
-
-async def _search_site_direct(query: str) -> list[dict]:
-    found: dict[str, dict] = {}
-    slug_query = _slugify_query(query)
-
-    urls = [
-        f"{BASE_URL}/pesquisar/{slug_query}",
-        f"{BASE_URL}/?s={quote(query)}",
-    ]
-
-    for url in urls:
-        try:
-            html = await _get(url)
-        except Exception:
-            continue
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        for a in soup.select("a[href]"):
-            href = (a.get("href") or "").strip()
-            slug = _extract_slug_from_anime_link(href)
-            if not slug:
-                continue
-
-            title = _clean(a.get_text())
-            if not title:
-                img = a.find("img")
-                if img and img.get("alt"):
-                    title = _clean(img.get("alt"))
-
-            _merge_result(found, query, slug, title)
-
-        if found:
-            return _results_from_found(found)
-
-    return []
-
-
-async def _search_duckduckgo(query: str) -> list[dict]:
-    search_queries = [
-        f'site:{BASE_NETLOC}/animes "{query}"',
-        f"site:{BASE_NETLOC}/animes {query}",
-    ]
-
-    found: dict[str, dict] = {}
-
-    for q in search_queries:
-        try:
-            html = await _get(DUCK_URL, params={"q": q})
-        except Exception:
-            continue
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        for a in soup.select("a[href]"):
-            href = (a.get("href") or "").strip()
-            slug = _extract_site_slug_from_url(href)
-            if not slug:
-                continue
-
-            title = _clean(a.get_text()) or _title_from_slug(slug)
-            _merge_result(found, query, slug, title)
-
-    return _results_from_found(found)
-
-
 async def search_anime(query: str):
     key = (query or "").strip().lower()
-    if not key:
-        return []
-
     if key in _SEARCH_CACHE:
         return _SEARCH_CACHE[key]
 
-    results = []
+    search_term = _search_path_term(query)
+    url = f"{BASE_URL}/pesquisar/{quote(search_term)}"
 
-    try:
-        results = await _search_site_direct(query)
-    except Exception:
-        results = []
+    html = await _get(url)
+    soup = BeautifulSoup(html, "html.parser")
 
-    if not results:
-        try:
-            results = await _search_duckduckgo(query)
-        except Exception:
-            results = []
+    found = {}
 
-    if results:
-        _SEARCH_CACHE[key] = results
+    for a in soup.select("a[href*='/animes/']"):
+        href = (a.get("href") or "").strip()
+        if "/animes/" not in href:
+            continue
 
+        slug = href.split("/animes/")[-1].strip("/")
+
+        # ignora links de episódio
+        if not slug or "/" in slug:
+            continue
+
+        title = _clean(a.get_text())
+        if not title:
+            img = a.find("img")
+            if img:
+                title = _clean(img.get("alt"))
+
+        if not title:
+            title = slug.replace("-", " ").title()
+
+        score = _score_candidate(query, title, slug)
+        if score <= -9999:
+            continue
+
+        item = {
+            "id": slug,
+            "title": title,
+            "_score": score,
+        }
+
+        prev = found.get(slug)
+        if not prev or item["_score"] > prev["_score"]:
+            found[slug] = item
+
+    ordered = sorted(found.values(), key=lambda x: (-x["_score"], x["title"].lower()))
+    results = [{"id": x["id"], "title": x["title"]} for x in ordered[:20]]
+
+    _SEARCH_CACHE[key] = results
     return results
 
 
@@ -317,11 +195,9 @@ async def get_anime_details(anime_id: str):
     title = title_el.get_text(strip=True) if title_el else anime_id.replace("-", " ").title()
 
     description = ""
-    for p in soup.find_all("p"):
-        text = _clean(p.get_text())
-        if text and len(text) > 80:
-            description = text
-            break
+    p = soup.find("p")
+    if p:
+        description = _clean(p.get_text())
 
     cover_url = ""
     og_img = soup.find("meta", attrs={"property": "og:image"})
@@ -362,12 +238,12 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
             if not m:
                 continue
 
-            page_slug = m.group(1)
+            base_slug = m.group(1)
             ep = m.group(2)
 
             episodes.append({
                 "episode": ep,
-                "base_slug": _normalize_base_slug(page_slug),
+                "base_slug": base_slug,
             })
 
         unique = {}
@@ -389,7 +265,7 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
 
 async def _url_exists_with_client(client: httpx.AsyncClient, url: str) -> bool:
     try:
-        r = await client.head(url, headers=_HTTP_HEADERS)
+        r = await client.head(url)
         if r.status_code == 200:
             content_type = (r.headers.get("content-type") or "").lower()
             if "video" in content_type or "mp4" in content_type or content_type == "":
@@ -401,7 +277,11 @@ async def _url_exists_with_client(client: httpx.AsyncClient, url: str) -> bool:
         r = await client.get(url, headers={**_HTTP_HEADERS, "Range": "bytes=0-0"})
         if r.status_code in (200, 206):
             content_type = (r.headers.get("content-type") or "").lower()
-            if "video" in content_type or "mp4" in content_type or "octet-stream" in content_type:
+            if (
+                "video" in content_type
+                or "mp4" in content_type
+                or "octet-stream" in content_type
+            ):
                 return True
     except Exception:
         pass
@@ -415,14 +295,33 @@ async def _check_candidate(client: httpx.AsyncClient, url: str):
 
 
 def _build_candidate_urls(base_slug: str, episode: str) -> list[str]:
+    """
+    Ordem correta de qualidade:
+    1. FULLHD
+    2. HD
+    3. SD
+
+    Só cai para a menor se a maior não existir.
+    """
     candidates = []
+
+    # 1) FULLHD em todos os servidores
     for server in LIGHTSPEED_SERVERS:
         base = f"https://lightspeedst.net/{server}"
         candidates.append(f"{base}/mp4_temp/{base_slug}/{episode}/1080p.mp4")
+
+    # 2) HD em todos os servidores
+    for server in LIGHTSPEED_SERVERS:
+        base = f"https://lightspeedst.net/{server}"
         candidates.append(f"{base}/mp4_temp/{base_slug}/{episode}/720p.mp4")
-        candidates.append(f"{base}/mp4/{base_slug}/fullhd/{episode}.mp4")
         candidates.append(f"{base}/mp4/{base_slug}/hd/{episode}.mp4")
+
+    # 3) SD em todos os servidores
+    for server in LIGHTSPEED_SERVERS:
+        base = f"https://lightspeedst.net/{server}"
+        candidates.append(f"{base}/mp4_temp/{base_slug}/{episode}/480p.mp4")
         candidates.append(f"{base}/mp4/{base_slug}/sd/{episode}.mp4")
+
     return candidates
 
 
@@ -454,7 +353,7 @@ async def _resolve_video_url(base_slug: str, episode: str) -> str:
                 if not task.done():
                     task.cancel()
 
-    fallback = f"https://lightspeedst.net/s6/mp4/{base_slug}/hd/{episode}.mp4"
+    fallback = f"https://lightspeedst.net/s6/mp4/{base_slug}/sd/{episode}.mp4"
     _VIDEO_CACHE[cache_key] = fallback
     return fallback
 
@@ -475,9 +374,9 @@ async def get_episode_player(anime_id: str, episode: str):
             break
 
     if not base_slug:
-        base_slug = _normalize_base_slug(anime_id)
+        base_slug = anime_id.replace("-todos-os-episodios", "")
 
-    video = await _resolve_video_url(base_slug, str(episode))
+    video = await _resolve_video_url(base_slug, episode)
     server = _extract_server_name(video)
     quality = _extract_quality_name(video)
 
