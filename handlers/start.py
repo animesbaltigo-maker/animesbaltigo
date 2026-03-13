@@ -19,13 +19,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     text = (
-        "📚 <b>Bem-vindo ao Mangas Brasil!</b>\n\n"
-        "Aqui você pode ler mangás e manhwas gratuitamente, direto no Telegram.\n\n"
+        "🎬 <b>Bem-vindo ao Animes Baltigo!</b>\n\n"
+        "Aqui você pode assistir gratuitamente, direto no Telegram.\n\n"
         "✨ <b>O que você pode fazer aqui:</b>\n"
-        "• 🔎 Buscar qualquer mangá\n"
-        "• 📖 Navegar pelos capítulos facilmente\n"
-        "• ⚡ Ler rápido e sem anúncios\n\n"
-        "💬 <b>Use o comando abaixo para começar:</b>\n\n"
+        "• 🔎 Buscar qualquer anime\n"
+        "• 🎞 Navegar pelob acervo facilmente\n"
+        "• ⚡ Rápido e sem anúncios\n\n"
     )
 
     keyboard = InlineKeyboardMarkup([
