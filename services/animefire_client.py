@@ -205,3 +205,14 @@ async def get_episode_player(ep_slug: str):
 
     _VIDEO_CACHE[ep_slug] = data
     return data
+
+# =========================
+# COMPATIBILIDADE COM CALLBACKS
+# =========================
+
+async def get_episodes(slug: str):
+    return await get_anime_episodes(slug)
+
+
+async def get_episode(slug: str):
+    return await get_episode_player(slug)
