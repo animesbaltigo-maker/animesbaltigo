@@ -135,19 +135,30 @@ async def search_anime(query: str):
     search_term = _search_path_term(query)
     url = f"{BASE_URL}/pesquisar/{quote(search_term)}"
 
-    html = await _get(url)
+    print(f"[BUSCA] query={query!r}")
+    print(f"[BUSCA] BASE_URL={BASE_URL!r}")
+    print(f"[BUSCA] url={url}")
+
+    try:
+        html = await _get(url)
+        print(f"[BUSCA] html_len={len(html)}")
+        print(f"[BUSCA] html_inicio={html[:300]!r}")
+    except Exception as e:
+        print(f"[BUSCA] erro_no_get={repr(e)}")
+        raise
+
     soup = BeautifulSoup(html, "html.parser")
+    links = soup.select("a[href*='/animes/']")
+    print(f"[BUSCA] links_encontrados={len(links)}")
 
     found = {}
 
-    for a in soup.select("a[href*='/animes/']"):
+    for a in links:
         href = (a.get("href") or "").strip()
         if "/animes/" not in href:
             continue
 
         slug = href.split("/animes/")[-1].strip("/")
-
-        # ignora links de episódio
         if not slug or "/" in slug:
             continue
 
@@ -177,9 +188,12 @@ async def search_anime(query: str):
     ordered = sorted(found.values(), key=lambda x: (-x["_score"], x["title"].lower()))
     results = [{"id": x["id"], "title": x["title"]} for x in ordered[:20]]
 
-    _SEARCH_CACHE[key] = results
-    return results
+    print(f"[BUSCA] resultados={len(results)}")
 
+    if results:
+        _SEARCH_CACHE[key] = results
+
+    return results
 
 async def get_anime_details(anime_id: str):
     anime_id = _normalize_slug_for_page(anime_id)
