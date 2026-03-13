@@ -1,6 +1,6 @@
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8675150552:AAFFAgWiRwqwouIZH-pUEPOg6hZYEHLh7YA").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 SOURCE_SITE_BASE = os.getenv("SOURCE_SITE_BASE", "https://animefire.io").strip().rstrip("/")
 
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Centraldeanimes_Baltigo").strip()
