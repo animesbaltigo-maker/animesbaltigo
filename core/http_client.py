@@ -1,22 +1,24 @@
 import httpx
-from config import HTTP_TIMEOUT
-
-_client = None
 
 
-async def get_http_client():
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=20, read=HTTP_TIMEOUT, write=HTTP_TIMEOUT, pool=20),
-            follow_redirects=True,
-            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
-        )
-    return _client
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0 Safari/537.36"
+    )
+}
 
 
-async def close_http_client():
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+async def http_get(url: str, params: dict | None = None) -> str:
+    async with httpx.AsyncClient(
+        headers=_HEADERS,
+        follow_redirects=True,
+        timeout=30,
+    ) as client:
+
+        r = await client.get(url, params=params)
+
+        r.raise_for_status()
+
+        return r.text
