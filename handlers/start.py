@@ -1,3 +1,8 @@
+import html
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+
 from config import BOT_BRAND
 from utils.gatekeeper import ensure_channel_membership
 
