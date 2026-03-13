@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from config import SOURCE_SITE_BASE
 from core.http_client import http_get
 
+
 BASE_URL = SOURCE_SITE_BASE.rstrip("/")
 
 _SEARCH_CACHE = {}
@@ -14,15 +15,8 @@ _EPISODES_CACHE = {}
 _VIDEO_CACHE = {}
 
 
-def _clean(text: str) -> str:
+def _clean(text: str):
     return re.sub(r"\s+", " ", (text or "")).strip()
-
-
-def _slugify(text: str) -> str:
-    text = (text or "").lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"\s+", "-", text)
-    return text
 
 
 async def _get(url: str):
@@ -52,11 +46,11 @@ async def search_anime(query: str):
     if key in _SEARCH_CACHE:
         return _SEARCH_CACHE[key]
 
-    slug_query = _slugify(query)
+    q = quote(query)
 
     urls = [
-        f"{BASE_URL}/pesquisar/{slug_query}",
-        f"{BASE_URL}/?s={quote(query)}"
+        f"{BASE_URL}/pesquisar/{query.replace(' ', '-')}",
+        f"{BASE_URL}/?s={q}",
     ]
 
     results = []
@@ -64,36 +58,41 @@ async def search_anime(query: str):
     for url in urls:
         try:
             html = await _get(url)
+
             soup = BeautifulSoup(html, "html.parser")
 
-            found = {}
+            animes = []
 
-            for a in soup.select("a[href]"):
-                href = a.get("href", "")
+            for article in soup.select("article"):
+                a = article.select_one("a[href]")
+
+                if not a:
+                    continue
+
+                href = a.get("href")
 
                 slug = _extract_slug(href)
 
                 if not slug:
                     continue
 
-                title = _clean(a.get_text())
+                title = a.get_text(strip=True)
 
                 if not title:
-                    img = a.find("img")
+                    img = article.select_one("img")
                     if img and img.get("alt"):
-                        title = _clean(img["alt"])
+                        title = img["alt"]
 
                 if not title:
                     title = slug.replace("-", " ").title()
 
-                found[slug] = {
+                animes.append({
                     "id": slug,
                     "title": title
-                }
+                })
 
-            results = list(found.values())
-
-            if results:
+            if animes:
+                results = animes
                 break
 
         except Exception:
@@ -114,11 +113,12 @@ async def get_anime_details(slug: str):
     url = f"{BASE_URL}/animes/{slug}"
 
     html = await _get(url)
+
     soup = BeautifulSoup(html, "html.parser")
 
-    title = soup.select_one("h1")
+    title_tag = soup.select_one("h1")
 
-    title = _clean(title.text) if title else slug.replace("-", " ").title()
+    title = _clean(title_tag.text) if title_tag else slug.replace("-", " ").title()
 
     poster = None
 
@@ -134,6 +134,7 @@ async def get_anime_details(slug: str):
     }
 
     _DETAILS_CACHE[slug] = data
+
     return data
 
 
@@ -148,6 +149,7 @@ async def get_anime_episodes(slug: str):
     url = f"{BASE_URL}/animes/{slug}"
 
     html = await _get(url)
+
     soup = BeautifulSoup(html, "html.parser")
 
     episodes = []
@@ -176,11 +178,12 @@ async def get_anime_episodes(slug: str):
     )
 
     _EPISODES_CACHE[slug] = episodes
+
     return episodes
 
 
 # =========================
-# VIDEO
+# VIDEO PLAYER
 # =========================
 
 async def get_episode_player(ep_slug: str):
@@ -190,6 +193,7 @@ async def get_episode_player(ep_slug: str):
     url = f"{BASE_URL}/episodio/{ep_slug}"
 
     html = await _get(url)
+
     soup = BeautifulSoup(html, "html.parser")
 
     iframe = soup.select_one("iframe")
@@ -204,7 +208,9 @@ async def get_episode_player(ep_slug: str):
     }
 
     _VIDEO_CACHE[ep_slug] = data
+
     return data
+
 
 # =========================
 # COMPATIBILIDADE COM CALLBACKS
