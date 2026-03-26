@@ -51,10 +51,6 @@ _USER_CALLBACK_LOCKS = {}
 _MESSAGE_EDIT_LOCKS = {}
 _MESSAGE_INFLIGHT_ACTIONS = {}
 
-EMOJI_MARK_WATCHED = "5427009714745517609"
-EMOJI_UNMARK_WATCHED = "5465665476971471368"
-EMOJI_SELECTED = "4970142833605345805"
-
 
 def _now() -> float:
     return time.monotonic()
@@ -138,13 +134,6 @@ def _truncate_text(text: str, limit: int):
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
-
-
-def _clean_player_title(title: str) -> str:
-    title = (title or "").strip()
-    title = re.sub(r"\s*[-–—]?\s*epis[oó]dio\s*\d+\s*$", "", title, flags=re.IGNORECASE)
-    title = re.sub(r"\s*[-–—]?\s*episode\s*\d+\s*$", "", title, flags=re.IGNORECASE)
-    return title.strip(" -–—")
 
 
 def _anime_main_image(anime: dict) -> str:
@@ -251,12 +240,13 @@ def _normalize_quality(value: str) -> str:
 
 
 def _player_text(title: str, episode: str, server: str, total_episodes: int, quality: str):
-    safe_title = html.escape(_clean_player_title(title or "Sem título"))
+    safe_title = html.escape((title or "Sem título").strip())
     safe_ep = html.escape(str(episode))
+    safe_server = html.escape(_display_server_name(server))
     safe_quality = html.escape(_normalize_quality(quality))
 
     return (
-        f"🎬 <b>{safe_title}</b>\n\n"
+        f"▶️ <b>{safe_title}</b>\n\n"
         f"🎞 <b>Episódio:</b> {safe_ep}\n"
         f"🎚 <b>Qualidade:</b> {safe_quality}\n"
         f"📚 <b>Total:</b> {total_episodes}\n\n"
@@ -313,22 +303,10 @@ def _search_keyboard(results: list, page: int, total: int, token: str):
 
     nav = []
     if page > 1:
-        nav.append(
-            InlineKeyboardButton(
-                "Anterior",
-                callback_data=f"sp|{token}|{page - 1}",
-                icon_custom_emoji_id=EMOJI_LEFT,
-            )
-        )
+        nav.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"sp|{token}|{page - 1}"))
 
     if end < total:
-        nav.append(
-            InlineKeyboardButton(
-                "Próxima",
-                callback_data=f"sp|{token}|{page + 1}",
-                icon_custom_emoji_id=EMOJI_RIGHT,
-            )
-        )
+        nav.append(InlineKeyboardButton("Próxima ➡️", callback_data=f"sp|{token}|{page + 1}"))
 
     if nav:
         rows.append(nav)
@@ -394,19 +372,14 @@ def _variant_keyboard(item: dict, back_callback: str | None = None) -> InlineKey
         default_id = item.get("default_anime_id") or item.get("id")
         rows.append([
             InlineKeyboardButton(
-                "Ver episódios",
+                "📺 Ver episódios",
                 callback_data=f"eps|{default_id}|0",
-                icon_custom_emoji_id=EMOJI_TV,
             )
         ])
 
     if back_callback:
         rows.append([
-            InlineKeyboardButton(
-                "Voltar",
-                callback_data=back_callback,
-                icon_custom_emoji_id=EMOJI_BACK,
-            )
+            InlineKeyboardButton("🔙 Voltar", callback_data=back_callback)
         ])
 
     return InlineKeyboardMarkup(rows)
@@ -444,21 +417,13 @@ def _episodes_keyboard(anime_id: str, offset: int, items: list, total: int):
         )
         prev_offset = max(0, offset - EPISODES_PER_PAGE)
         nav_row_1.append(
-            InlineKeyboardButton(
-                "Anterior",
-                callback_data=f"eps|{anime_id}|{prev_offset}",
-                icon_custom_emoji_id=EMOJI_LEFT,
-            )
+            InlineKeyboardButton("⬅️ Anterior", callback_data=f"eps|{anime_id}|{prev_offset}")
         )
 
     if current_page < total_pages:
         next_offset = offset + EPISODES_PER_PAGE
         nav_row_2.append(
-            InlineKeyboardButton(
-                "Próxima",
-                callback_data=f"eps|{anime_id}|{next_offset}",
-                icon_custom_emoji_id=EMOJI_RIGHT,
-            )
+            InlineKeyboardButton("Próxima ➡️", callback_data=f"eps|{anime_id}|{next_offset}")
         )
         nav_row_2.append(
             InlineKeyboardButton("Última ⏩", callback_data=f"eps|{anime_id}|{last_offset}")
@@ -471,11 +436,7 @@ def _episodes_keyboard(anime_id: str, offset: int, items: list, total: int):
         rows.append(nav_row_2)
 
     rows.append([
-        InlineKeyboardButton(
-            "Voltar",
-            callback_data=f"anime|{anime_id}",
-            icon_custom_emoji_id=EMOJI_BACK,
-        )
+        InlineKeyboardButton("🔙 Voltar", callback_data=f"anime|{anime_id}")
     ])
 
     return InlineKeyboardMarkup(rows)
@@ -538,7 +499,7 @@ def _recommend_text(anime: dict, genre_key: str) -> str:
     if score:
         meta.append(f"⭐ <b>{score}</b>")
     if episodes:
-        meta.append(f"<b>{episodes} episódios</b>")
+        meta.append(f"📺 <b>{episodes} episódios</b>")
 
     if meta:
         parts.append(" • ".join(meta))
@@ -556,13 +517,7 @@ def _recommend_text(anime: dict, genre_key: str) -> str:
 
 def _recommend_result_keyboard(anime_id: str, genre_key: str) -> InlineKeyboardMarkup:
     rows = [
-        [
-            InlineKeyboardButton(
-                "Ver episódios",
-                callback_data=f"eps|{anime_id}|0",
-                icon_custom_emoji_id=EMOJI_TV,
-            )
-        ],
+        [InlineKeyboardButton("📺 Ver episódios", callback_data=f"eps|{anime_id}|0")],
         [
             InlineKeyboardButton("🎭 Trocar gênero", callback_data="rec|menu"),
             InlineKeyboardButton("🎲 Tentar de novo", callback_data=f"rec|try|{genre_key}"),
@@ -633,60 +588,30 @@ def _player_keyboard(
     hd_label = "HD"
     sd_label = "SD"
 
-    hd_icon = None
-    sd_icon = None
-
     if available_qualities:
         if "HD" not in available_qualities:
-            hd_label = "HD"
+            hd_label = "HD 🚫"
         if "SD" not in available_qualities:
-            sd_label = "SD"
+            sd_label = "SD 🚫"
 
     if selected_quality == "HD":
-        hd_icon = EMOJI_SELECTED
-    elif "HD" not in available_qualities:
-        hd_icon = EMOJI_BLOCK
-
-    if selected_quality == "SD":
-        sd_icon = EMOJI_SELECTED
-    elif "SD" not in available_qualities:
-        sd_icon = EMOJI_BLOCK
+        hd_label = f"{hd_label} 🔘"
+    else:
+        sd_label = f"{sd_label} 🔘"
 
     watched = is_episode_watched(user_id, anime_id, episode)
 
-    if watched:
-        watch_toggle_button = InlineKeyboardButton(
-            text="Desmarcar como visto",
-            callback_data=f"unvw|{anime_id}|{episode}",
-            icon_custom_emoji_id=EMOJI_UNMARK_WATCHED,
-        )
-    else:
-        watch_toggle_button = InlineKeyboardButton(
-            text="Marcar como visto",
-            callback_data=f"vw|{anime_id}|{episode}",
-            icon_custom_emoji_id=EMOJI_MARK_WATCHED,
-        )
+    watch_toggle_button = InlineKeyboardButton(
+        "↩️ Desmarcar como visto" if watched else "✅ Marcar como visto",
+        callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
+    )
 
     rows = [
-        [
-            InlineKeyboardButton(
-                text="Assistir",
-                url=detected_video or "https://t.me",
-                icon_custom_emoji_id=EMOJI_PLAY,
-            )
-        ],
+        [InlineKeyboardButton("▶️ Assistir", url=detected_video or "https://t.me")],
         [watch_toggle_button],
         [
-            InlineKeyboardButton(
-                text=hd_label,
-                callback_data=f"ql|{anime_id}|{episode}|HD",
-                icon_custom_emoji_id=hd_icon,
-            ),
-            InlineKeyboardButton(
-                text=sd_label,
-                callback_data=f"ql|{anime_id}|{episode}|SD",
-                icon_custom_emoji_id=sd_icon,
-            ),
+            InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
+            InlineKeyboardButton(sd_label, callback_data=f"ql|{anime_id}|{episode}|SD"),
         ],
     ]
 
@@ -694,28 +619,22 @@ def _player_keyboard(
     if prev_episode:
         nav.append(
             InlineKeyboardButton(
-                text="Anterior",
+                "⏮ Anterior",
                 callback_data=f"ep|{anime_id}|{prev_episode}",
-                icon_custom_emoji_id=EMOJI_LEFT,
             )
         )
     if next_episode:
         nav.append(
             InlineKeyboardButton(
-                text="Próximo",
+                "Próximo ⏭",
                 callback_data=f"ep|{anime_id}|{next_episode}",
-                icon_custom_emoji_id=EMOJI_RIGHT,
             )
         )
     if nav:
         rows.append(nav)
 
     rows.append([
-        InlineKeyboardButton(
-            text="Lista de episódios",
-            callback_data=f"eps|{anime_id}|0",
-            icon_custom_emoji_id=EMOJI_LIST,
-        )
+        InlineKeyboardButton("📋 Lista de episódios", callback_data=f"eps|{anime_id}|0")
     ])
 
     return InlineKeyboardMarkup(rows)
@@ -780,13 +699,7 @@ def _action_signature(data: str) -> str:
 
 def _loading_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "Carregando...",
-                callback_data="noop_loading",
-                icon_custom_emoji_id=EMOJI_LOADING,
-            )
-        ]
+        [InlineKeyboardButton("⏳ Carregando...", callback_data="noop_loading")]
     ])
 
 
@@ -1085,7 +998,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("CALLBACK DATA:", data)
 
     if data == "noop_loading":
-        await _safe_answer_query(query, "Aguarde...", show_alert=False)
+        await _safe_answer_query(query, "⏳ Aguarde...", show_alert=False)
         return
 
     cooldown = await _check_callback_cooldown(context, user.id, data)
@@ -1103,12 +1016,12 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         inflight_action = _get_inflight_action(message.chat.id, message.message_id)
 
         if inflight_action == current_action:
-            await _safe_answer_query(query, "Essa ação já está sendo processada...", show_alert=False)
+            await _safe_answer_query(query, "⏳ Essa ação já está sendo processada...", show_alert=False)
             return
     else:
         msg_lock = asyncio.Lock()
 
-    await _safe_answer_query(query, "Carregando...", show_alert=False)
+    await _safe_answer_query(query, "⏳ Carregando...", show_alert=False)
 
     try:
         async with user_lock:
@@ -1118,7 +1031,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     inflight_action = _get_inflight_action(message.chat.id, message.message_id)
 
                     if inflight_action == current_action:
-                        await _safe_answer_query(query, "Essa ação já está sendo processada...", show_alert=False)
+                        await _safe_answer_query(query, "⏳ Essa ação já está sendo processada...", show_alert=False)
                         return
 
                     _set_inflight_action(message.chat.id, message.message_id, current_action)
@@ -1136,7 +1049,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     current_quality = _get_selected_quality(context, anime_id, episode)
 
                     if not _can_switch_quality_now(context, anime_id, episode):
-                        await _safe_answer_query(query, "Aguarde um instante para trocar a qualidade.", show_alert=False)
+                        await _safe_answer_query(query, "⏳ Aguarde um instante para trocar a qualidade.", show_alert=False)
                         return
 
                     if current_quality == requested_quality:
@@ -1205,6 +1118,42 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         episode,
                         caption_only=True,
                     )
+                    return
+
+                if data.startswith("watch|"):
+                    _, anime_id, episode = data.split("|", 2)
+
+                    anime = await _get_cached_anime(context, anime_id)
+                    selected_quality = _get_selected_quality(context, anime_id, episode)
+                    player = await _get_cached_player(anime_id, episode, selected_quality)
+                    video_url = (player.get("video") or "").strip()
+
+                    _safe_log_event(
+                        event_type="watch_click",
+                        user_id=user.id,
+                        username=user.username or user.first_name or "",
+                        anime_id=anime_id,
+                        anime_title=anime.get("title", "Sem título"),
+                        episode=str(episode),
+                        extra=selected_quality,
+                    )
+
+                    if not video_url:
+                        await _safe_answer_query(query, "❌ Não encontrei o vídeo desse episódio.", show_alert=True)
+                        return
+
+                    try:
+                        await query.message.reply_text(
+                            f"▶️ <b>{html.escape(anime.get('title', 'Sem título'))}</b>\n"
+                            f"🎞 <b>Episódio:</b> {html.escape(str(episode))}\n"
+                            f"🎚 <b>Qualidade:</b> {html.escape(selected_quality)}\n\n"
+                            f"<a href=\"{html.escape(video_url, quote=True)}\">Clique aqui para assistir</a>",
+                            parse_mode="HTML",
+                            disable_web_page_preview=False,
+                        )
+                    except Exception:
+                        await _safe_answer_query(query, "⚠️ Não consegui enviar o link agora.", show_alert=True)
+
                     return
 
                 if data == "rec|menu":
@@ -1357,13 +1306,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     text = _anime_text(anime)
                     keyboard = InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton(
-                                "Ver episódios",
-                                callback_data=f"eps|{anime_id}|0",
-                                icon_custom_emoji_id=EMOJI_TV,
-                            )
-                        ]
+                        [InlineKeyboardButton("📺 Ver episódios", callback_data=f"eps|{anime_id}|0")]
                     ])
 
                     image_url = _anime_main_image(anime)
@@ -1484,7 +1427,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except asyncio.TimeoutError:
         print("ERRO NO CALLBACK: Timeout")
-        await _safe_answer_query(query, "Demorou demais para carregar. Tente de novo.", show_alert=True)
+        await _safe_answer_query(query, "⏳ Demorou demais para carregar. Tente de novo.", show_alert=True)
     except Exception as e:
         print("ERRO NO CALLBACK:", repr(e))
         traceback.print_exc()
