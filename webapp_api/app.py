@@ -71,6 +71,14 @@ app.add_middleware(
 _CACHE: dict[str, dict[str, Any]] = {}
 _LOCKS: dict[str, asyncio.Lock] = {}
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+MINIAPP_DIR = BASE_DIR / "miniapp"
+
+app.mount("/static", StaticFiles(directory=str(MINIAPP_DIR)), name="static")
+
+@app.get("/")
+async def serve_index():
+    return FileResponse(str(MINIAPP_DIR / "index.html"))
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
