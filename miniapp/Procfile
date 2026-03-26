@@ -1,1 +1,1 @@
-web: python -m http.server 8080
+cd miniapp && python -m http.server 8080
