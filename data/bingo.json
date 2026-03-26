@@ -1,0 +1,8 @@
+{
+  "players": {},
+  "drawn": [],
+  "active": false,
+  "started": false,
+  "winner": null,
+  "notified": []
+}
