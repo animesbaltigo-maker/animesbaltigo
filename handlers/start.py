@@ -4,14 +4,18 @@ import time
 import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from config import BOT_BRAND, BOT_USERNAME
 from services.animefire_client import get_anime_details, get_episode_player, search_anime
 from services.metrics import is_episode_watched
 from services.referral_db import (
+    create_referral,
     init_referral_db,
     register_interaction,
+    register_referral_click,
+    try_qualify_referral,
     upsert_user,
 )
 from services.user_registry import register_user
@@ -20,15 +24,20 @@ from utils.gatekeeper import ensure_channel_membership
 
 BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBZ987imm1UGdjCzV5n7FN2F6Ayew0umj2AAJkC2sbJAWhRWilm7WSjeD5AQADAgADeQADOgQ/photo.jpg"
 
+START_COOLDOWN = 1.2
 START_DEEP_LINK_TTL = 8.0
 
 _START_USER_LOCKS = {}
 _START_INFLIGHT = {}
 
+
+# 🔥 REMOVE " - Episódio X" DO TÍTULO
 def _clean_player_title(title: str) -> str:
     title = (title or "").strip()
+
     title = re.sub(r"\s*[-–—]?\s*epis[oó]dio\s*\d+\s*$", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s*[-–—]?\s*episode\s*\d+\s*$", "", title, flags=re.IGNORECASE)
+
     return title.strip(" -–—")
 
 
@@ -59,7 +68,7 @@ def _available_quality_set(player: dict) -> set:
     if current:
         qualities.add(current)
 
-    return {q for q in qualities if q}
+    return qualities
 
 
 def _player_keyboard(
@@ -75,154 +84,47 @@ def _player_keyboard(
     selected_quality = _normalize_quality(selected_quality)
     available_qualities = available_qualities or set()
 
-    hd_icon = EMOJI_SELECTED if selected_quality == "HD" else None
-    sd_icon = EMOJI_SELECTED if selected_quality == "SD" else None
+    hd_label = "HD"
+    sd_label = "SD"
 
-    if available_qualities:
-        if "HD" not in available_qualities:
-            hd_icon = EMOJI_BLOCK
-        if "SD" not in available_qualities:
-            sd_icon = EMOJI_BLOCK
+    if "HD" not in available_qualities:
+        hd_label += " 🚫"
+    if "SD" not in available_qualities:
+        sd_label += " 🚫"
+
+    if selected_quality == "HD":
+        hd_label += " 🔘"
+    else:
+        sd_label += " 🔘"
 
     watched = is_episode_watched(user_id, anime_id, episode)
 
     watch_btn = InlineKeyboardButton(
-        text="Desmarcar como visto" if watched else "Marcar como visto",
+        "❌ Desmarcar como visto" if watched else "✅ Marcar como visto",
         callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
-        icon_custom_emoji_id=EMOJI_UNMARK_WATCHED if watched else EMOJI_MARK_WATCHED,
     )
 
     rows = [
-        [
-            InlineKeyboardButton(
-                text="Assistir",
-                url=detected_video or "https://t.me",
-                icon_custom_emoji_id=EMOJI_PLAY,
-            )
-        ],
+        [InlineKeyboardButton("▶️ Assistir", url=detected_video or "https://t.me")],
         [watch_btn],
         [
-            InlineKeyboardButton(
-                text="HD",
-                callback_data=f"ql|{anime_id}|{episode}|HD",
-                icon_custom_emoji_id=hd_icon,
-            ),
-            InlineKeyboardButton(
-                text="SD",
-                callback_data=f"ql|{anime_id}|{episode}|SD",
-                icon_custom_emoji_id=sd_icon,
-            ),
+            InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
+            InlineKeyboardButton(sd_label, callback_data=f"ql|{anime_id}|{episode}|SD"),
         ],
     ]
 
     nav = []
     if prev_episode:
-        nav.append(
-            InlineKeyboardButton(
-                text="Anterior",
-                callback_data=f"ep|{anime_id}|{prev_episode}",
-                icon_custom_emoji_id=EMOJI_LEFT,
-            )
-        )
+        nav.append(InlineKeyboardButton("⏮ Anterior", callback_data=f"ep|{anime_id}|{prev_episode}"))
     if next_episode:
-        nav.append(
-            InlineKeyboardButton(
-                text="Próximo",
-                callback_data=f"ep|{anime_id}|{next_episode}",
-                icon_custom_emoji_id=EMOJI_RIGHT,
-            )
-        )
+        nav.append(InlineKeyboardButton("Próximo ⏭", callback_data=f"ep|{anime_id}|{next_episode}"))
 
     if nav:
         rows.append(nav)
 
     rows.append([
-        InlineKeyboardButton(
-            text="Lista de episódios",
-            callback_data=f"eps|{anime_id}|0",
-            icon_custom_emoji_id=EMOJI_LIST,
-        )
+        InlineKeyboardButton("📋 Lista de episódios", callback_data=f"eps|{anime_id}|0")
     ])
-
-    return InlineKeyboardMarkup(rows)
-
-
-def _anime_text(anime: dict) -> str:
-    title = html.escape((anime.get("title") or "Sem título").strip()).upper()
-    description = (anime.get("description") or "Sem descrição disponível.").strip()
-
-    if len(description) > 280:
-        description = description[:277].rstrip() + "..."
-
-    description = html.escape(description)
-
-    score = anime.get("score")
-    status = anime.get("status")
-    genres = anime.get("genres") or []
-    episodes = anime.get("episodes")
-    season_year = anime.get("season_year")
-
-    info_lines = []
-
-    if score:
-        info_lines.append(f"⭐ <b>Pontuação:</b> <code>{html.escape(str(score))}</code>")
-    if status:
-        info_lines.append(f"📡 <b>Situação:</b> <code>{html.escape(str(status))}</code>")
-    if season_year:
-        info_lines.append(f"📅 <b>Lançamento:</b> <code>{html.escape(str(season_year))}</code>")
-    if episodes:
-        info_lines.append(f"📚 <b>Episódios:</b> <code>{html.escape(str(episodes))}</code>")
-
-    genres_block = ""
-    if genres:
-        safe_genres = " • ".join(html.escape(str(g)) for g in genres[:5])
-        genres_block = f"\n🎭 <b>Gêneros:</b>\n<code>{safe_genres}</code>\n"
-
-    info_block = "\n".join(info_lines)
-
-    return (
-        f"🎬 <b>{title}</b>\n\n"
-        f"━━━━━━━━━━━━━━━━\n\n"
-        f"{info_block}"
-        f"{genres_block}\n"
-        f"━━━━━━━━━━━━━━━━\n\n"
-        f"📖 <b>Info:</b>\n"
-        f"{description}"
-    )
-
-
-def _variant_keyboard(group_item: dict) -> InlineKeyboardMarkup:
-    rows = []
-
-    variants = group_item.get("variants") or []
-    sub_variant = next((v for v in variants if not v.get("is_dubbed")), None)
-    dub_variant = next((v for v in variants if v.get("is_dubbed")), None)
-
-    if sub_variant:
-        rows.append([
-            InlineKeyboardButton(
-                text="🇯🇵 Legendado",
-                callback_data=f"var|{sub_variant['id']}",
-            )
-        ])
-
-    if dub_variant:
-        rows.append([
-            InlineKeyboardButton(
-                text="🇧🇷 Dublado",
-                callback_data=f"var|{dub_variant['id']}",
-            )
-        ])
-
-    if not rows:
-        default_id = group_item.get("default_anime_id") or group_item.get("id")
-        rows.append([
-            InlineKeyboardButton(
-                text="Ver episódios",
-                callback_data=f"eps|{default_id}|0",
-                icon_custom_emoji_id=EMOJI_TV,
-            )
-        ])
 
     return InlineKeyboardMarkup(rows)
 
@@ -243,6 +145,20 @@ def _deep_link_key(user_id: int, payload: str) -> str:
     return f"{user_id}:{payload}"
 
 
+def _is_inflight(user_id: int, payload: str) -> bool:
+    key = _deep_link_key(user_id, payload)
+    item = _START_INFLIGHT.get(key)
+
+    if not item:
+        return False
+
+    if _now() - item > START_DEEP_LINK_TTL:
+        _START_INFLIGHT.pop(key, None)
+        return False
+
+    return True
+
+
 def _set_inflight(user_id: int, payload: str):
     _START_INFLIGHT[_deep_link_key(user_id, payload)] = _now()
 
@@ -253,13 +169,12 @@ def _clear_inflight(user_id: int, payload: str):
 
 async def _safe_delete_message(msg):
     try:
-        if msg:
-            await msg.delete()
+        await msg.delete()
     except Exception:
         pass
 
 
-async def start(update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     init_referral_db()
 
     user = update.effective_user
@@ -285,174 +200,67 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
             _set_inflight(user.id, arg)
 
         try:
+            # 🔥 ABRIR EPISÓDIO DIRETO
             if arg.startswith("ep_") and "__" in arg:
                 raw = arg[3:]
                 anime_id, episode = raw.rsplit("__", 1)
 
-                loading_msg = await message.reply_text(
-                    "⏳ <b>Abrindo o episódio para você...</b>",
-                    parse_mode="HTML",
-                )
+                loading = await message.reply_text("⏳ Abrindo episódio...")
 
                 try:
                     anime = await get_anime_details(anime_id)
                     player = await get_episode_player(anime_id, episode, "HD")
 
-                    detected_quality = _normalize_quality(player.get("quality", "HD"))
-                    total_episodes = player.get("total_episodes", 0)
+                    clean_title = _clean_player_title(anime.get("title"))
 
                     text = (
-                            f"🎬 <b>{html.escape(_clean_player_title(anime.get('title', 'Sem título')))}</b>\n\n"
-                            f"🎞 <b>Episódio:</b> {html.escape(str(episode))}\n"
-                            f"🎚 <b>Qualidade:</b> {html.escape(str(detected_quality))}\n"
-                            f"📚 <b>Total:</b> {html.escape(str(total_episodes))}\n\n"
-                            f"Escolha uma opção abaixo para continuar."
+                        f"🎬 <b>{html.escape(clean_title)}</b>\n\n"
+                        f"🎞 Episódio: {episode}\n"
+                        f"🎚 Qualidade: {_normalize_quality(player.get('quality'))}\n"
+                        f"📚 Total: {player.get('total_episodes')}\n\n"
+                        f"Escolha uma opção abaixo para continuar."
                     )
 
                     keyboard = _player_keyboard(
-                        anime_id=anime_id,
-                        episode=episode,
-                        detected_video=player.get("video"),
-                        prev_episode=player.get("prev_episode"),
-                        next_episode=player.get("next_episode"),
-                        selected_quality=player.get("quality", "HD"),
-                        user_id=user.id,
-                        available_qualities=_available_quality_set(player),
+                        anime_id,
+                        episode,
+                        player.get("video"),
+                        player.get("prev_episode"),
+                        player.get("next_episode"),
+                        player.get("quality"),
+                        user.id,
+                        _available_quality_set(player),
                     )
 
-                    await _safe_delete_message(loading_msg)
+                    await _safe_delete_message(loading)
 
-                    photo = (
-                        anime.get("media_image_url")
-                        or anime.get("cover_url")
-                        or anime.get("banner_url")
+                    await message.reply_photo(
+                        photo=anime.get("media_image_url"),
+                        caption=text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
                     )
-
-                    if photo:
-                        await message.reply_photo(
-                            photo=photo,
-                            caption=text,
-                            parse_mode="HTML",
-                            reply_markup=keyboard,
-                        )
-                    else:
-                        await message.reply_text(
-                            text,
-                            parse_mode="HTML",
-                            reply_markup=keyboard,
-                        )
 
                     return
 
                 except Exception as e:
-                    await _safe_delete_message(loading_msg)
+                    await _safe_delete_message(loading)
                     await message.reply_text("❌ Erro ao abrir episódio.")
-                    print(f"[START][EP] {e}")
+                    print(e)
                     return
 
-            if arg.startswith("anime_"):
-                anime_id = arg[6:]
-
-                loading_msg = await message.reply_text(
-                    "⏳ <b>Abrindo o anime para você...</b>",
-                    parse_mode="HTML",
-                )
-
-                try:
-                    anime = await get_anime_details(anime_id)
-                    results = await search_anime(anime.get("title") or anime_id)
-
-                    group_item = None
-                    for item in results:
-                        if (item.get("default_anime_id") or item.get("id")) == anime_id:
-                            group_item = item
-                            break
-
-                        for variant in (item.get("variants") or []):
-                            if variant.get("id") == anime_id:
-                                group_item = item
-                                break
-
-                        if group_item:
-                            break
-
-                    if not group_item:
-                        group_item = {
-                            "id": anime_id,
-                            "default_anime_id": anime_id,
-                            "title": anime.get("title") or anime_id,
-                            "variants": [{
-                                "id": anime_id,
-                                "title": anime.get("title") or anime_id,
-                                "is_dubbed": False,
-                            }],
-                        }
-
-                    text = _anime_text(anime)
-                    keyboard = _variant_keyboard(group_item)
-
-                    await _safe_delete_message(loading_msg)
-
-                    photo = (
-                        anime.get("media_image_url")
-                        or anime.get("cover_url")
-                        or anime.get("banner_url")
-                    )
-
-                    if photo:
-                        await message.reply_photo(
-                            photo=photo,
-                            caption=text,
-                            parse_mode="HTML",
-                            reply_markup=keyboard,
-                        )
-                    else:
-                        await message.reply_text(
-                            text,
-                            parse_mode="HTML",
-                            reply_markup=keyboard,
-                        )
-
-                    return
-
-                except Exception as e:
-                    await _safe_delete_message(loading_msg)
-                    await message.reply_text("❌ Erro ao abrir anime.")
-                    print(f"[START][ANIME] {e}")
-                    return
-
+            # 🔥 START NORMAL
             text = (
-                f"🎬 <b>Bem-vindo ao {BOT_BRAND}!</b>\n\n"
-                "Aqui você pode encontrar animes de forma rápida, direto no Telegram.\n\n"
-                "✨ <b>O que você pode fazer aqui:</b>\n\n"
-                "• 🔎 Buscar qualquer anime\n"
-                "• 📺 Navegar pelos episódios\n"
-                "• ⚡ Assistir rápido e sem complicação\n\n"
-                "Use <code>/buscar nome</code> para começar."
+                "🎌 Um lugar para encontrar e assistir animes direto no Telegram.\n\n"
+                "🔎 Busque qualquer anime\n"
+                "📺 Assista sem complicação\n"
+                "✅ Marque episódios como vistos\n\n"
+                "Digite /buscar para começar."
             )
 
             keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        text="Adicionar ao grupo",
-                        url=f"https://t.me/{BOT_USERNAME}?startgroup=true",
-                        icon_custom_emoji_id=EMOJI_PLUS,
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="QG Baltigo",
-                        url="https://t.me/QG_BALTIGO",
-                        icon_custom_emoji_id=EMOJI_PIRATE,
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Buscar anime",
-                        switch_inline_query_current_chat="",
-                        icon_custom_emoji_id=EMOJI_LUPA,
-                    )
-                ]
+                [InlineKeyboardButton("🔎 Buscar anime", switch_inline_query_current_chat="")],
+                [InlineKeyboardButton("➕ Adicionar ao grupo", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")]
             ])
 
             await message.reply_photo(
