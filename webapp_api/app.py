@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
+import httpx
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,6 +64,19 @@ SECTIONS: dict[str, dict[str, str]] = {
     "sobrenatural": {"title": "Sobrenatural", "slug": "genero/sobrenatural"},
     "suspense": {"title": "Suspense", "slug": "genero/suspense"},
 }
+
+# Se quiser, pode já deixar "top" fora da home por causa do 403 no Railway
+HOME_ORDER = [
+    "recentes",
+    "em_lancamento",
+    "atualizados",
+    # "top",  # descomente se quiser tentar manter
+    "legendados",
+    "dublados",
+    "acao",
+    "aventura",
+    "comedia",
+]
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("baltigo_api")
@@ -166,7 +180,6 @@ def _cache_set(key: str, data: Any) -> Any:
 def _cache_invalidate_prefix(*prefixes: str) -> None:
     if not prefixes:
         return
-
     for key in list(_CACHE.keys()):
         if any(key.startswith(prefix) for prefix in prefixes):
             _CACHE.pop(key, None)
@@ -189,6 +202,12 @@ async def _cached(key: str, ttl: int, factory):
 async def _get(url: str) -> str:
     client = await get_http_client()
     response = await client.get(url, headers=HEADERS)
+
+    # não derruba tudo em 403/404 do AnimeFire
+    if response.status_code in (403, 404):
+        logger.warning("AnimeFire bloqueou/negou URL %s com status %s", url, response.status_code)
+        return ""
+
     response.raise_for_status()
     return response.text
 
@@ -200,6 +219,9 @@ def _extract_slug_from_href(href: str) -> str:
 
 
 def _extract_last_page(page_html: str, slug: str) -> int:
+    if not page_html:
+        return 1
+
     soup = BeautifulSoup(page_html, "html.parser")
     max_page = 1
 
@@ -215,6 +237,9 @@ def _extract_last_page(page_html: str, slug: str) -> int:
 
 
 def _extract_listing_cards(page_html: str) -> list[dict]:
+    if not page_html:
+        return []
+
     soup = BeautifulSoup(page_html, "html.parser")
     found: dict[str, dict] = {}
 
@@ -444,16 +469,26 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
 
     async def meta_factory():
         first_html = await _get(_section_url(slug, 1))
+        if not first_html:
+            return {"first_html": "", "total_pages": 0}
         total_pages = _extract_last_page(first_html, slug)
         return {"first_html": first_html, "total_pages": total_pages}
 
     try:
         meta = await _cached(f"meta:{section}", SECTION_TTL, meta_factory)
+
+        if not meta or not meta.get("first_html"):
+            logger.warning("Seção '%s' veio vazia/bloqueada", section)
+            return _empty_section_payload(section, page)
+
         total_pages = max(1, int(meta["total_pages"]))
         current_page = min(max(1, page), total_pages)
 
         async def page_factory():
             page_html = meta["first_html"] if current_page == 1 else await _get(_section_url(slug, current_page))
+            if not page_html:
+                return _empty_section_payload(section, current_page)
+
             items = _extract_listing_cards(page_html)[:GRID_PAGE_LIMIT]
             total_items = _safe_total_items_from_page(total_pages, len(items))
 
@@ -471,6 +506,9 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
 
         return await _cached(f"page:{section}:{current_page}", SECTION_TTL, page_factory)
 
+    except httpx.HTTPStatusError as e:
+        logger.warning("HTTP error na seção '%s': %s", section, e)
+        return _empty_section_payload(section, page)
     except Exception:
         logger.exception("Falha ao carregar seção '%s' página %s", section, page)
         return _empty_section_payload(section, page)
@@ -481,7 +519,7 @@ async def _startup_refresh_task():
     async def refresher():
         while True:
             try:
-                _cache_invalidate_prefix("recentes:", "meta:")
+                _cache_invalidate_prefix("recentes:", "meta:", "page:")
             except Exception:
                 logger.exception("Falha ao invalidar cache periódico")
             await asyncio.sleep(60)
@@ -504,20 +542,8 @@ def health():
 
 @app.get("/api/debug/home")
 async def debug_home():
-    ordered_sections = [
-        "recentes",
-        "em_lancamento",
-        "atualizados",
-        "top",
-        "legendados",
-        "dublados",
-        "acao",
-        "aventura",
-        "comedia",
-    ]
-
     result = []
-    for section in ordered_sections:
+    for section in HOME_ORDER:
         try:
             data = await _get_paginated_section_page(section, 1)
             result.append(
@@ -536,26 +562,11 @@ async def debug_home():
                     "error": str(e),
                 }
             )
-
     return {"ok": True, "sections": result}
 
 
 @app.get("/api/catalog/home")
-async def catalog_home(
-    home_limit: int = Query(HOME_SECTION_LIMIT, ge=1, le=20),
-):
-    ordered_sections = [
-        "recentes",
-        "em_lancamento",
-        "atualizados",
-        "top",
-        "legendados",
-        "dublados",
-        "acao",
-        "aventura",
-        "comedia",
-    ]
-
+async def catalog_home(home_limit: int = Query(HOME_SECTION_LIMIT, ge=1, le=20)):
     semaphore = asyncio.Semaphore(MAX_HOME_CONCURRENCY)
 
     async def load_section(section: str):
@@ -581,8 +592,31 @@ async def catalog_home(
                 }
 
     try:
-        payload = await asyncio.gather(*(load_section(section) for section in ordered_sections))
-        return {"ok": True, "sections": payload}
+        payload = await asyncio.gather(
+            *(load_section(section) for section in HOME_ORDER),
+            return_exceptions=True,
+        )
+
+        normalized = []
+        for idx, item in enumerate(payload):
+            section = HOME_ORDER[idx]
+            if isinstance(item, Exception):
+                logger.exception("Seção '%s' falhou no gather", exc_info=item)
+                conf = _section_conf(section)
+                normalized.append(
+                    {
+                        "key": section,
+                        "title": conf["title"] if conf else section,
+                        "page": 1,
+                        "total_pages": 0,
+                        "items": [],
+                    }
+                )
+            else:
+                normalized.append(item)
+
+        return {"ok": True, "sections": normalized}
+
     except Exception:
         logger.exception("Falha geral na home")
         return {
@@ -595,7 +629,7 @@ async def catalog_home(
                     "total_pages": 0,
                     "items": [],
                 }
-                for section in ordered_sections
+                for section in HOME_ORDER
             ],
         }
 
