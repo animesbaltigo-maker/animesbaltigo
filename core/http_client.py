@@ -1,6 +1,11 @@
+from __future__ import annotations
+
+import asyncio
+
 import httpx
 
-_client: httpx.AsyncClient | None = None
+_CLIENT: httpx.AsyncClient | None = None
+_CLIENT_LOCK = asyncio.Lock()
 
 _HEADERS = {
     "User-Agent": (
@@ -20,28 +25,40 @@ _HEADERS = {
     "Origin": "https://animefire.io",
 }
 
+_TIMEOUT = httpx.Timeout(
+    30.0,
+    connect=8.0,
+    read=18.0,
+    write=18.0,
+    pool=40.0,
+)
+
+_LIMITS = httpx.Limits(
+    max_connections=150,
+    max_keepalive_connections=50,
+)
+
 
 async def get_http_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(
-            headers=_HEADERS,
-            follow_redirects=True,
-            timeout=30,
-            http2=True,
-        )
-    return _client
+    global _CLIENT
+    if _CLIENT is not None:
+        return _CLIENT
+
+    async with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = httpx.AsyncClient(
+                headers=_HEADERS,
+                follow_redirects=True,
+                timeout=_TIMEOUT,
+                limits=_LIMITS,
+                http2=False,
+            )
+    return _CLIENT
 
 
-async def http_get(url: str, params: dict | None = None) -> str:
-    client = await get_http_client()
-    r = await client.get(url, params=params)
-    r.raise_for_status()
-    return r.text
-
-
-async def close_http_client():
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+async def close_http_client() -> None:
+    global _CLIENT
+    async with _CLIENT_LOCK:
+        if _CLIENT is not None:
+            await _CLIENT.aclose()
+            _CLIENT = None
