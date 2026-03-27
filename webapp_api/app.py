@@ -42,11 +42,18 @@ SECTION_TTL = 60 * 15
 RECENT_TTL = 60
 SEARCH_TTL = 60 * 10
 ANIME_TTL = 60 * 60 * 2
-EPISODE_TTL = 60 * 30
 
-PROXY_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=30.0)
-PROXY_MAX_RETRIES = 2
-PROXY_CHUNK_SIZE = 1024 * 512
+# Episode TTL is intentionally short because video links expire.
+# With ?refresh=1 the cache is bypassed entirely.
+EPISODE_TTL = 60 * 4
+
+# ── Proxy tunables ────────────────────────────────────────────────────────────
+PROXY_TIMEOUT = httpx.Timeout(connect=8.0, read=60.0, write=60.0, pool=10.0)
+PROXY_MAX_RETRIES = 3
+PROXY_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks for fast streaming
+PROXY_KEEPALIVE_EXPIRY = 30     # seconds to keep idle connections alive
+PROXY_MAX_CONNECTIONS = 100
+PROXY_MAX_KEEPALIVE = 20
 
 SECTIONS: dict[str, dict[str, str]] = {
     "recentes": {"title": "Últimos Episódios", "kind": "recent"},
@@ -71,7 +78,7 @@ MINIAPP_DIR = BASE_DIR / "miniapp"
 app = FastAPI(
     title="QG BALTIGO API",
     description="API do miniapp do bot com catálogo, episódios e proxy de vídeo",
-    version="3.0.0",
+    version="4.0.0",
 )
 
 app.add_middleware(
@@ -84,6 +91,32 @@ app.add_middleware(
 
 _CACHE: dict[str, dict[str, Any]] = {}
 _LOCKS: dict[str, asyncio.Lock] = {}
+
+# ── Global persistent proxy client ───────────────────────────────────────────
+# One client for the entire process lifetime; uses connection pooling and
+# keep-alive so every proxy request re-uses an already-open TCP connection
+# instead of paying the full TLS handshake cost every time.
+_PROXY_CLIENT: httpx.AsyncClient | None = None
+
+
+def _get_proxy_limits() -> httpx.Limits:
+    return httpx.Limits(
+        max_connections=PROXY_MAX_CONNECTIONS,
+        max_keepalive_connections=PROXY_MAX_KEEPALIVE,
+        keepalive_expiry=PROXY_KEEPALIVE_EXPIRY,
+    )
+
+
+async def get_proxy_client() -> httpx.AsyncClient:
+    global _PROXY_CLIENT
+    if _PROXY_CLIENT is None or _PROXY_CLIENT.is_closed:
+        _PROXY_CLIENT = httpx.AsyncClient(
+            timeout=PROXY_TIMEOUT,
+            follow_redirects=True,
+            limits=_get_proxy_limits(),
+            http2=False,  # many CDNs behave better with HTTP/1.1
+        )
+    return _PROXY_CLIENT
 
 
 # =============================================================================
@@ -115,11 +148,9 @@ def _clean_description(text: str) -> str:
 def _clean_genres(genres: list[str] | None) -> list[str]:
     if not genres:
         return []
-
     seen: set[str] = set()
     cleaned: list[str] = []
     skip_prefixes = ("animes de ", "oie", "clique")
-
     for genre in genres:
         g = _clean(str(genre))
         if not g:
@@ -130,17 +161,14 @@ def _clean_genres(genres: list[str] | None) -> list[str]:
         if g not in seen:
             seen.add(g)
             cleaned.append(g)
-
     return cleaned
 
 
 def _clean_alt_titles(values: list[str] | None) -> list[str]:
     if not values:
         return []
-
     cleaned: list[str] = []
     seen: set[str] = set()
-
     for value in values:
         v = _clean_description(str(value))
         if not v or len(v) > 120:
@@ -148,7 +176,6 @@ def _clean_alt_titles(values: list[str] | None) -> list[str]:
         if v not in seen:
             seen.add(v)
             cleaned.append(v)
-
     return cleaned
 
 
@@ -201,6 +228,10 @@ async def _cached(key: str, ttl: int, factory) -> Any:
         return _cache_set(key, data)
 
 
+def _invalidate_key(key: str) -> None:
+    _CACHE.pop(key, None)
+
+
 def _invalidate_prefix(prefix: str) -> None:
     for key in list(_CACHE.keys()):
         if key.startswith(prefix):
@@ -223,21 +254,18 @@ def _extract_slug_from_href(href: str) -> str:
 def _extract_last_page(page_html: str, slug: str) -> int:
     soup = BeautifulSoup(page_html, "html.parser")
     max_page = 1
-
     for anchor in soup.select("a[href]"):
         href = (anchor.get("href") or "").strip()
         pattern = rf"/{re.escape(slug)}/(\d+)(?:/)?(?:\?.*)?$"
         match = re.search(pattern, href)
         if match:
             max_page = max(max_page, int(match.group(1)))
-
     return max_page
 
 
 def _extract_listing_cards(page_html: str) -> list[dict]:
     soup = BeautifulSoup(page_html, "html.parser")
     found: dict[str, dict] = {}
-
     for anchor in soup.select("a[href*='/animes/']"):
         href = (anchor.get("href") or "").strip()
         anime_id = _extract_slug_from_href(href)
@@ -275,7 +303,6 @@ def _extract_listing_cards(page_html: str) -> list[dict]:
             "studio": "",
             "url": urljoin(BASE_URL, href),
         }
-
     return list(found.values())
 
 
@@ -283,7 +310,6 @@ def _shape_details(data: dict, fallback_id: str = "") -> dict:
     anime_id = data.get("id") or fallback_id
     title = data.get("title") or anime_id.replace("-", " ").title()
     dubbed = bool(data.get("is_dubbed")) or _is_dubbed(anime_id, title)
-
     return {
         "id": anime_id,
         "title": title,
@@ -316,14 +342,19 @@ def _shape_details(data: dict, fallback_id: str = "") -> dict:
 def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict) -> dict:
     video = item.get("video") or ""
     videos = item.get("videos") or {}
-
     available_qualities = item.get("available_qualities") or []
+
     if not available_qualities and isinstance(videos, dict):
         available_qualities = list(videos.keys())
 
     if not video and isinstance(videos, dict):
         normalized_quality = (quality or "HD").upper()
-        video = videos.get(normalized_quality) or videos.get("HD") or videos.get("SD") or ""
+        video = (
+            videos.get(normalized_quality)
+            or videos.get("HD")
+            or videos.get("SD")
+            or ""
+        )
 
     return {
         "anime_id": anime_id,
@@ -356,7 +387,6 @@ async def _get_recent_page(page: int) -> dict:
             anime_id = item.get("anime_id")
             if not anime_id or anime_id in seen:
                 continue
-
             seen.add(anime_id)
 
             title = item.get("title") or anime_id.replace("-", " ").title()
@@ -456,7 +486,6 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
             page_html = await _get(_section_url(slug, current_page))
 
         items = _extract_listing_cards(page_html)
-
         return {
             "section": section,
             "title": conf["title"],
@@ -477,8 +506,11 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
 # =============================================================================
 
 @app.on_event("startup")
-async def _startup_refresh_task():
-    async def refresher():
+async def _startup_tasks():
+    # Pre-create the proxy client on startup so the first request is instant.
+    await get_proxy_client()
+
+    async def _recent_refresher():
         while True:
             try:
                 _invalidate_prefix("recentes:")
@@ -487,7 +519,15 @@ async def _startup_refresh_task():
                 pass
             await asyncio.sleep(60)
 
-    asyncio.create_task(refresher())
+    asyncio.create_task(_recent_refresher())
+
+
+@app.on_event("shutdown")
+async def _shutdown_tasks():
+    global _PROXY_CLIENT
+    if _PROXY_CLIENT and not _PROXY_CLIENT.is_closed:
+        await _PROXY_CLIENT.aclose()
+        _PROXY_CLIENT = None
 
 
 # =============================================================================
@@ -499,7 +539,7 @@ def root():
     return {
         "ok": True,
         "name": "QG BALTIGO API",
-        "version": "3.0.0",
+        "version": "4.0.0",
         "sections": list(SECTIONS.keys()),
     }
 
@@ -583,12 +623,10 @@ async def api_search(
     async def factory():
         raw_items = await search_anime(query)
         shaped = []
-
         for item in raw_items:
             anime_id = item.get("id") or ""
             title = item.get("title") or anime_id
             dubbed = bool(item.get("is_dubbed")) or _is_dubbed(anime_id, title)
-
             shaped.append({
                 "id": anime_id,
                 "title": title,
@@ -605,7 +643,6 @@ async def api_search(
                 "year": None,
                 "studio": "",
             })
-
         return shaped
 
     shaped = await _cached(f"search:{query.lower()}", SEARCH_TTL, factory)
@@ -664,9 +701,14 @@ async def api_episode(
     anime_id: str,
     episode: str,
     quality: str = Query("HD"),
+    refresh: int = Query(0, description="Passe 1 para ignorar cache e buscar link novo"),
 ):
     quality = (quality or "HD").upper()
     cache_key = f"episode:{anime_id}:{episode}:{quality}"
+
+    # Allow the frontend to force a fresh link fetch when the cached one has expired.
+    if refresh:
+        _invalidate_key(cache_key)
 
     async def factory():
         item = await get_episode_player(anime_id, episode, quality)
@@ -675,6 +717,7 @@ async def api_episode(
 
         payload = _shape_episode_payload(anime_id, episode, quality, item)
 
+        # Automatic HD → SD fallback when the primary quality has no video.
         if not payload.get("video"):
             fallback_quality = "SD" if quality == "HD" else "HD"
             try:
@@ -732,7 +775,6 @@ async def app_index():
     index_path = MINIAPP_DIR / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Frontend not found")
-
     response = FileResponse(index_path)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -749,33 +791,56 @@ async def app_watch():
 
 
 # =============================================================================
-# PROXY STREAM
+# PROXY STREAM  (global pooled client, proper Range support, smart retry)
 # =============================================================================
 
-async def _proxy_fetch_with_retry(
+async def _proxy_request_with_retry(
     method: str,
     url: str,
     headers: dict[str, str],
 ) -> httpx.Response:
+    """
+    Performs a streaming-compatible proxy request with automatic retry.
+
+    Each attempt uses the shared global client so TCP connections are reused.
+    On 4xx/5xx the function retries with exponential back-off up to
+    PROXY_MAX_RETRIES times before raising.
+    """
+    client = await get_proxy_client()
     last_error: Exception | None = None
 
     for attempt in range(PROXY_MAX_RETRIES + 1):
         try:
-            async with httpx.AsyncClient(timeout=PROXY_TIMEOUT, follow_redirects=True) as client:
-                response = await client.request(method, url, headers=headers)
+            # Use stream=True so we never buffer the full response in RAM.
+            response = await client.send(
+                client.build_request(method, url, headers=headers),
+                stream=True,
+            )
 
-                if response.status_code in (200, 206):
-                    return response
+            if response.status_code in (200, 206):
+                return response
 
-                last_error = Exception(f"Upstream status inválido: {response.status_code}")
+            # Non-retryable client errors.
+            if 400 <= response.status_code < 500:
+                await response.aclose()
+                raise Exception(f"Upstream client error: {response.status_code}")
+
+            await response.aclose()
+            last_error = Exception(f"Upstream server error: {response.status_code}")
+
+        except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+            last_error = exc
 
         except Exception as exc:
             last_error = exc
+            # Don't retry on non-network errors.
+            if not isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+                break
 
         if attempt < PROXY_MAX_RETRIES:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3 * (attempt + 1))
 
-    raise last_error or Exception("Falha desconhecida no proxy")
+    raise last_error or Exception("Proxy: falha desconhecida após retries")
 
 
 @app.api_route("/api/proxy-stream", methods=["GET", "HEAD"])
@@ -783,9 +848,9 @@ async def proxy_stream(
     request: Request,
     url: str = Query(..., min_length=1),
 ):
-    range_header = request.headers.get("range")
+    range_header = request.headers.get("range", "")
 
-    outgoing_headers = {
+    outgoing_headers: dict[str, str] = {
         "User-Agent": HEADERS["User-Agent"],
         "Accept": "*/*",
         "Connection": "keep-alive",
@@ -796,58 +861,52 @@ async def proxy_stream(
     if range_header:
         outgoing_headers["Range"] = range_header
 
+    method = "HEAD" if request.method == "HEAD" else "GET"
+
     try:
-        method = "HEAD" if request.method == "HEAD" else "GET"
+        upstream = await _proxy_request_with_retry(method, url, outgoing_headers)
+    except Exception as exc:
+        print(f"PROXY ERROR [{method}] {url!r}: {exc!r}")
+        raise HTTPException(status_code=502, detail="Erro ao carregar vídeo")
 
-        upstream = await _proxy_fetch_with_retry(
-            method=method,
-            url=url,
-            headers=outgoing_headers,
-        )
+    content_type = upstream.headers.get("content-type", "application/octet-stream")
 
-        content_type = upstream.headers.get("content-type", "application/octet-stream")
-        content_length = upstream.headers.get("content-length")
-        content_range = upstream.headers.get("content-range")
-        content_disposition = upstream.headers.get("content-disposition")
-        etag = upstream.headers.get("etag")
-        last_modified = upstream.headers.get("last-modified")
+    # Build the response headers we will forward to the browser.
+    passthrough: dict[str, str] = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+        "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
+        "Content-Type": content_type,
+        # Tell browsers/proxies not to cache proxy responses; caching is done at
+        # the application layer (episode endpoint) instead.
+        "Cache-Control": "no-store",
+    }
 
-        passthrough_headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
-            "Content-Type": content_type,
-            "Cache-Control": "no-store",
-        }
+    for header in ("content-length", "content-range", "content-disposition", "etag", "last-modified"):
+        value = upstream.headers.get(header)
+        if value:
+            passthrough[header.title().replace("-", "-")] = value
 
-        if content_length:
-            passthrough_headers["Content-Length"] = content_length
-        if content_range:
-            passthrough_headers["Content-Range"] = content_range
-        if content_disposition:
-            passthrough_headers["Content-Disposition"] = content_disposition
-        if etag:
-            passthrough_headers["ETag"] = etag
-        if last_modified:
-            passthrough_headers["Last-Modified"] = last_modified
+    if method == "HEAD":
+        await upstream.aclose()
+        return Response(content=b"", status_code=upstream.status_code, headers=passthrough)
 
-        if request.method == "HEAD":
-            return Response(
-                content=b"",
-                status_code=upstream.status_code,
-                headers=passthrough_headers,
-            )
+    status_code = upstream.status_code
 
-        async def iterator():
+    async def byte_stream():
+        try:
             async for chunk in upstream.aiter_bytes(PROXY_CHUNK_SIZE):
                 yield chunk
+        except (httpx.ReadTimeout, httpx.RemoteProtocolError, GeneratorExit):
+            pass
+        finally:
+            await upstream.aclose()
 
-        return StreamingResponse(
-            iterator(),
-            status_code=upstream.status_code,
-            headers=passthrough_headers,
-            media_type=content_type,
-        )
-
-    except Exception as exc:
-        print("PROXY ERROR:", repr(exc))
-        raise HTTPException(status_code=502, detail="Erro ao carregar vídeo")
+    return StreamingResponse(
+        byte_stream(),
+        status_code=status_code,
+        headers=passthrough,
+        media_type=content_type,
+    )
