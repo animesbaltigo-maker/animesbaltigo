@@ -11,7 +11,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
     :root {
       --bg: #080810;
@@ -2278,184 +2277,56 @@ if (!sources.length) {
   // inicia player com fallback automático
   setTimeout(() => {
     const video = document.getElementById("main-video");
-    const videoBox = document.querySelector(".video-box");
-    if (!video || !videoBox) return;
+    if (!video) return;
 
     let index = 0;
-    let loadingTimer = null;
-    let loadedOnce = false;
 
-    function clearLoadingTimer() {
-      if (loadingTimer) {
-        clearTimeout(loadingTimer);
-        loadingTimer = null;
-      }
-    }
-
-    function showUnavailable() {
-      if (video._hls) {
-        try {
-          video._hls.destroy();
-        } catch (_) {}
-        video._hls = null;
+    function tryNext() {
+      if (index >= sources.length) {
+        console.error("Nenhuma fonte funcionou");
+        return;
       }
 
-      videoBox.innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);padding:40px 24px;height:100%;">
-          <div style="font-size:36px;">⚠️</div>
-          <strong style="color:#e0e0f0;font-size:16px;">Vídeo indisponível</strong>
-          <span style="font-size:13.5px;text-align:center;">Nenhuma fonte funcionou neste player interno.</span>
-        </div>
-      `;
-    }
-
-    function mountIframe(src) {
-      clearLoadingTimer();
-
+      const src = sources[index++];
+      
+      // limpa player
       if (video._hls) {
-        try {
-          video._hls.destroy();
-        } catch (_) {}
-        video._hls = null;
-      }
-
-      videoBox.innerHTML = `
-        <iframe
-          src="${src}"
-          allow="autoplay; fullscreen; picture-in-picture"
-          allowfullscreen
-          referrerpolicy="no-referrer"
-          style="width:100%;height:100%;border:0;background:#000;"
-        ></iframe>
-      `;
-    }
-
-    function attachVideoEvents() {
-      video.onerror = () => {
-        console.warn("[PLAYER] error, tentando próxima fonte");
-        clearLoadingTimer();
-        tryNext();
-      };
-
-      video.onloadedmetadata = () => {
-        loadedOnce = true;
-        clearLoadingTimer();
-        console.log("[PLAYER] metadata carregada");
-      };
-
-      video.oncanplay = () => {
-        loadedOnce = true;
-        clearLoadingTimer();
-        console.log("[PLAYER] pronto para tocar");
-      };
-
-      video.onplaying = () => {
-        loadedOnce = true;
-        clearLoadingTimer();
-        console.log("[PLAYER] reproduzindo");
-      };
-
-      video.onstalled = () => {
-        console.warn("[PLAYER] stalled, tentando próxima fonte");
-        clearLoadingTimer();
-        tryNext();
-      };
-
-      video.onwaiting = () => {
-        if (loadedOnce) return;
-        clearLoadingTimer();
-        loadingTimer = setTimeout(() => {
-          if (!loadedOnce) {
-            console.warn("[PLAYER] timeout em waiting, tentando próxima fonte");
-            tryNext();
-          }
-        }, 6000);
-      };
-    }
-
-    function cleanupVideo() {
-      loadedOnce = false;
-      clearLoadingTimer();
-
-      if (video._hls) {
-        try {
-          video._hls.destroy();
-        } catch (_) {}
+        video._hls.destroy();
         video._hls = null;
       }
 
       video.pause();
       video.removeAttribute("src");
-      while (video.firstChild) video.removeChild(video.firstChild);
       video.load();
-    }
-
-    function tryNext() {
-      clearLoadingTimer();
-
-      if (index >= sources.length) {
-        console.error("[PLAYER] nenhuma fonte funcionou");
-        showUnavailable();
-        return;
-      }
-
-      const src = sources[index++];
-      console.log("[PLAYER] tentando fonte:", src);
-
-      if (isIframeSource(src)) {
-        console.log("[PLAYER] usando iframe fallback");
-        mountIframe(src);
-        return;
-      }
-
-      cleanupVideo();
-      attachVideoEvents();
-
-      loadingTimer = setTimeout(() => {
-        if (!loadedOnce) {
-          console.warn("[PLAYER] timeout inicial, tentando próxima fonte");
-          tryNext();
-        }
-      }, 8000);
 
       // M3U8 (HLS)
       if (/\.m3u8/i.test(src)) {
         if (window.Hls && Hls.isSupported()) {
-          const hls = new Hls({
-            enableWorker: true,
-            lowLatencyMode: false,
-            backBufferLength: 90
-          });
+          const hls = new Hls();
           video._hls = hls;
 
           hls.on(Hls.Events.ERROR, function (_, data) {
-            console.warn("[PLAYER] HLS error:", data);
             if (data && data.fatal) {
-              try {
-                hls.destroy();
-              } catch (_) {}
-              video._hls = null;
+              hls.destroy();
               tryNext();
             }
           });
 
           hls.loadSource(src);
           hls.attachMedia(video);
-        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-          video.src = src;
         } else {
-          console.warn("[PLAYER] HLS indisponível, tentando próxima fonte");
-          tryNext();
-          return;
+          video.src = src;
         }
       } else {
         // MP4 / GoogleVideo
         video.src = src;
       }
 
-      video.play().catch((error) => {
-        console.warn("[PLAYER] autoplay falhou:", error);
-      });
+      video.onerror = () => {
+        tryNext();
+      };
+
+      video.play().catch(() => {});
     }
 
     tryNext();
