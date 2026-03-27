@@ -44,6 +44,12 @@ from telegram.ext import InlineQueryHandler
 from handlers.inline import inline_query
 from handlers.testminiapp import testminiapp
 
+from handlers.epanime import (
+    epanime_command,
+    epanime_select_callback,
+    epanime_page_callback,
+    epanime_back_search_callback,
+)
 
 init_metrics_db()
 
