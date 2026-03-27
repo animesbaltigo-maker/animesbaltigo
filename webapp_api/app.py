@@ -545,3 +545,20 @@ async def api_episode(
         raise HTTPException(status_code=404, detail="Episódio não encontrado")
 
     return {"ok": True, "item": payload}
+
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+MINIAPP_DIR = BASE_DIR / "miniapp"
+
+app.mount("/miniapp", StaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
+
+@app.get("/app")
+async def app_index():
+    return FileResponse(MINIAPP_DIR / "index.html")
+
+@app.get("/watch")
+async def app_watch():
+    return FileResponse(MINIAPP_DIR / "watch.html")
