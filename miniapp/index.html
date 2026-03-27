@@ -391,6 +391,7 @@
       display: flex;
       gap: 8px;
       align-items: center;
+      flex-wrap: wrap;
     }
 
     .card-grid {
@@ -817,7 +818,7 @@
       opacity: 0;
       transform: translateY(20px);
       transition: 0.18s ease;
-      min-width: min(100%, 360px);
+      min-width: min(100%, 420px);
       max-width: 92vw;
       border-radius: 16px;
       border: 1px solid rgba(255,255,255,0.10);
@@ -1023,7 +1024,8 @@
             <h1 class="hero-title">Assista seus animes direto no Telegram.</h1>
             <p class="hero-desc">
               Pesquise, abra animes, escolha episódios e carregue tudo no miniapp sem sair do bot.
-              Se vier pelo botão de assistir, o episódio abre automaticamente.
+              Quando vier pelo botão do start com <strong>?anime=ID&ep=EP&q=HD</strong>,
+              o episódio já abre automaticamente.
             </p>
 
             <div class="hero-actions">
@@ -1035,11 +1037,11 @@
           <div class="hero-side">
             <div class="hero-side-glow"></div>
             <div class="hero-side-card">
-              <h3>Fluxo pronto pro start</h3>
+              <h3>Player reforçado</h3>
               <p>
-                Compatível com links do tipo
-                <strong>?anime=ID&ep=EP&q=HD</strong>,
-                abrindo o anime e o episódio específico logo ao entrar no miniapp.
+                Esse miniapp tenta recarregar o player, faz fallback de qualidade e evita abrir
+                o mesmo episódio duas vezes ao mesmo tempo. Não dá para garantir 100%,
+                mas fica muito mais estável.
               </p>
             </div>
           </div>
@@ -1138,6 +1140,7 @@
             <p class="panel-subtitle" id="playerPageSubtitle">Carregando episódio...</p>
           </div>
           <div class="section-actions">
+            <button class="ghost-btn small" id="retryPlayerBtn">Tentar de novo</button>
             <button class="ghost-btn small" id="backToAnimeBtn">Anime</button>
             <button class="ghost-btn small" id="backToHomeFromPlayerBtn">Início</button>
           </div>
@@ -1220,10 +1223,14 @@
         tg.expand();
         tg.setHeaderColor?.("#0b1020");
         tg.setBackgroundColor?.("#070b14");
-      } catch (e) {}
+      } catch (e) {
+        console.warn("Telegram WebApp init falhou:", e);
+      }
     }
 
     const API_BASE = window.location.origin;
+    const MAX_PLAYER_RETRIES = 2;
+    const PLAYER_WATCHDOG_MS = 12000;
 
     const state = {
       home: null,
@@ -1238,6 +1245,15 @@
       currentPlayer: null,
       historyStack: [],
       autoBootDone: false,
+
+      openingEpisode: false,
+      openEpisodeRequestId: 0,
+      playerRetryCount: 0,
+      playerWatchdogTimer: null,
+      currentPlayerSourceUrl: "",
+      currentVideoCandidates: [],
+      currentVideoCandidateIndex: 0,
+      playerReady: false,
     };
 
     const els = {
@@ -1292,6 +1308,7 @@
       backToAnimeBtn: document.getElementById("backToAnimeBtn"),
       backToHomeFromPlayerBtn: document.getElementById("backToHomeFromPlayerBtn"),
       openInBrowserBtn: document.getElementById("openInBrowserBtn"),
+      retryPlayerBtn: document.getElementById("retryPlayerBtn"),
       playerDesc: document.getElementById("playerDesc"),
       playerNote: document.getElementById("playerNote"),
     };
@@ -1331,7 +1348,7 @@
       els.toast.classList.add("show");
       toastTimer = setTimeout(() => {
         els.toast.classList.remove("show");
-      }, 2600);
+      }, 3200);
     }
 
     function setSubtitle(text) {
@@ -1642,12 +1659,54 @@
       return "";
     }
 
-    function getEpisodeByNumber(number) {
-      return state.animeEpisodes.find((ep) => String(ep.number ?? ep.episode ?? ep.ep ?? "").trim() === String(number).trim()) || null;
+    function clearPlayerWatchdog() {
+      if (state.playerWatchdogTimer) {
+        clearTimeout(state.playerWatchdogTimer);
+        state.playerWatchdogTimer = null;
+      }
     }
 
-    function buildProxyVideoUrl(url) {
-      return `${API_BASE}/api/proxy-stream?url=${encodeURIComponent(url)}`;
+    function setPlayerReady(value) {
+      state.playerReady = Boolean(value);
+      if (state.playerReady) {
+        clearPlayerWatchdog();
+      }
+    }
+
+    function resetVideoElement() {
+      clearPlayerWatchdog();
+      setPlayerReady(false);
+
+      try {
+        els.videoPlayer.pause();
+      } catch (e) {}
+
+      els.videoPlayer.removeAttribute("src");
+      els.videoPlayer.load();
+      els.videoPlayer.style.display = "block";
+
+      els.iframePlayer.src = "about:blank";
+      els.iframePlayer.style.display = "none";
+    }
+
+    function clearPlayerMedia() {
+      state.currentPlayerSourceUrl = "";
+      state.currentVideoCandidates = [];
+      state.currentVideoCandidateIndex = 0;
+      state.playerRetryCount = 0;
+      resetVideoElement();
+    }
+
+    function buildProxyVideoUrl(url, extra = {}) {
+      const target = new URL(`${API_BASE}/api/proxy-stream`);
+      target.searchParams.set("url", url);
+      target.searchParams.set("_t", String(Date.now()));
+
+      Object.entries(extra).forEach(([key, value]) => {
+        target.searchParams.set(key, String(value));
+      });
+
+      return target.toString();
     }
 
     function isDirectPlayableVideo(url) {
@@ -1675,16 +1734,16 @@
       history.replaceState({}, "", url.toString());
     }
 
-    function renderQualityButtons(playerItem) {
-      const rawList = Array.isArray(playerItem.available_qualities) ? playerItem.available_qualities : [];
-      const qualities = [...new Set([
-        ...rawList.map(normalizeQuality),
-        normalizeQuality(playerItem.quality || state.currentQuality || "HD"),
-      ])].filter(Boolean);
+    function getAllPossibleQualities(playerItem) {
+      const rawList = Array.isArray(playerItem?.available_qualities) ? playerItem.available_qualities : [];
+      const set = new Set(rawList.map(normalizeQuality));
+      set.add(normalizeQuality(playerItem?.quality || state.currentQuality || "HD"));
+      if (!set.size) set.add("HD");
+      return [...set].filter(Boolean);
+    }
 
-      if (!qualities.length) {
-        qualities.push("HD");
-      }
+    function renderQualityButtons(playerItem) {
+      const qualities = getAllPossibleQualities(playerItem);
 
       els.qualityRow.innerHTML = qualities.map((quality) => {
         const active = normalizeQuality(quality) === normalizeQuality(state.currentQuality);
@@ -1699,22 +1758,142 @@
       }).join("");
     }
 
+    function buildSourceCandidates(videoUrl) {
+      const candidates = [];
+      if (!videoUrl) return candidates;
+
+      candidates.push(buildProxyVideoUrl(videoUrl));
+      candidates.push(buildProxyVideoUrl(videoUrl, { mode: "stream" }));
+      candidates.push(buildProxyVideoUrl(videoUrl, { mode: "download" }));
+
+      return [...new Set(candidates)];
+    }
+
+    function startPlayerWatchdog() {
+      clearPlayerWatchdog();
+      state.playerWatchdogTimer = setTimeout(async () => {
+        if (!state.playerReady) {
+          console.warn("PLAYER WATCHDOG disparou");
+          await handlePlayerFailure("O player demorou demais para responder.");
+        }
+      }, PLAYER_WATCHDOG_MS);
+    }
+
     function renderPlayerSource(videoUrl) {
-      const proxied = buildProxyVideoUrl(videoUrl);
+      state.currentPlayerSourceUrl = videoUrl || "";
+      state.currentVideoCandidates = buildSourceCandidates(videoUrl);
+      state.currentVideoCandidateIndex = 0;
+      state.playerRetryCount = 0;
+      setPlayerReady(false);
 
       if (isDirectPlayableVideo(videoUrl)) {
-        els.iframePlayer.style.display = "none";
-        els.videoPlayer.style.display = "block";
-        els.videoPlayer.src = proxied;
+        resetVideoElement();
+
+        const firstCandidate = state.currentVideoCandidates[0] || buildProxyVideoUrl(videoUrl);
+        els.videoPlayer.dataset.originalUrl = videoUrl;
+        els.videoPlayer.src = firstCandidate;
         els.videoPlayer.load();
+        startPlayerWatchdog();
       } else {
-        els.videoPlayer.pause();
-        els.videoPlayer.removeAttribute("src");
-        els.videoPlayer.load();
+        resetVideoElement();
         els.videoPlayer.style.display = "none";
         els.iframePlayer.style.display = "block";
         els.iframePlayer.src = videoUrl;
+        setPlayerReady(true);
       }
+    }
+
+    async function tryFallbackQuality() {
+      const current = normalizeQuality(state.currentQuality || "HD");
+
+      if (current === "HD") {
+        showToast("Tentando SD...");
+        await openEpisode(state.currentAnimeId, state.currentEpisode, "SD", { pushHistory: false, force: true });
+        return true;
+      }
+
+      return false;
+    }
+
+    async function replayCurrentVideoCandidate() {
+      if (!state.currentPlayerSourceUrl) return false;
+
+      const candidates = state.currentVideoCandidates.length
+        ? state.currentVideoCandidates
+        : buildSourceCandidates(state.currentPlayerSourceUrl);
+
+      if (!candidates.length) return false;
+
+      const nextIndex = Math.min(state.currentVideoCandidateIndex + 1, candidates.length - 1);
+      state.currentVideoCandidateIndex = nextIndex;
+
+      const nextUrl = candidates[nextIndex];
+      console.log("Tentando candidate do vídeo:", nextUrl);
+
+      resetVideoElement();
+      els.videoPlayer.dataset.originalUrl = state.currentPlayerSourceUrl;
+      els.videoPlayer.src = nextUrl;
+      els.videoPlayer.load();
+      startPlayerWatchdog();
+
+      return true;
+    }
+
+    async function handlePlayerFailure(reason = "") {
+      console.warn("Falha no player:", reason);
+
+      clearPlayerWatchdog();
+
+      if (state.playerRetryCount < MAX_PLAYER_RETRIES) {
+        state.playerRetryCount += 1;
+        showToast(`Falha no player. Tentando novamente (${state.playerRetryCount}/${MAX_PLAYER_RETRIES})...`);
+        const ok = await replayCurrentVideoCandidate();
+        if (ok) return;
+      }
+
+      const changed = await tryFallbackQuality();
+      if (changed) return;
+
+      showToast("Não foi possível carregar esse vídeo agora.");
+      els.playerNote.textContent = "O player falhou após várias tentativas. Tente novamente ou troque a qualidade.";
+    }
+
+    function bindVideoEvents() {
+      const video = els.videoPlayer;
+
+      video.addEventListener("error", async () => {
+        console.log("VIDEO ERROR", video.error);
+        await handlePlayerFailure("Erro nativo do vídeo.");
+      });
+
+      video.addEventListener("stalled", () => {
+        console.log("VIDEO STALLED");
+      });
+
+      video.addEventListener("waiting", () => {
+        console.log("VIDEO WAITING");
+      });
+
+      video.addEventListener("loadedmetadata", () => {
+        console.log("VIDEO LOADEDMETADATA");
+        setPlayerReady(true);
+      });
+
+      video.addEventListener("canplay", () => {
+        console.log("VIDEO CANPLAY");
+        setPlayerReady(true);
+        state.playerRetryCount = 0;
+      });
+
+      video.addEventListener("playing", () => {
+        console.log("VIDEO PLAYING");
+        setPlayerReady(true);
+        state.playerRetryCount = 0;
+      });
+
+      video.addEventListener("emptied", () => {
+        console.log("VIDEO EMPTIED");
+      });
     }
 
     async function openEpisode(animeId, episode, quality = "HD", options = {}) {
@@ -1722,6 +1901,13 @@
         showToast("Anime ou episódio inválido.");
         return;
       }
+
+      if (state.openingEpisode && !options.force) {
+        return;
+      }
+
+      const requestId = ++state.openEpisodeRequestId;
+      state.openingEpisode = true;
 
       const q = normalizeQuality(quality || state.currentQuality || "HD");
       const pushHistory = options.pushHistory !== false;
@@ -1735,6 +1921,10 @@
         const data = await apiGet(
           `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(q)}`
         );
+
+        if (requestId !== state.openEpisodeRequestId) {
+          return;
+        }
 
         const item = data?.item || null;
         if (!item) {
@@ -1758,7 +1948,7 @@
 
         els.playerDesc.textContent = item.description || "Sem descrição disponível para este episódio.";
         els.playerNote.textContent = item.video
-          ? "Episódio carregado. Se o player externo falhar, tente trocar a qualidade."
+          ? "Episódio carregado. Se falhar, o player tenta novamente e pode trocar a qualidade."
           : "Esse episódio não retornou vídeo direto agora.";
 
         renderQualityButtons(item);
@@ -1773,11 +1963,9 @@
           els.openInBrowserBtn.disabled = false;
           els.openInBrowserBtn.dataset.url = item.video;
         } else {
-          els.videoPlayer.pause();
-          els.videoPlayer.removeAttribute("src");
-          els.videoPlayer.load();
-          els.iframePlayer.src = "about:blank";
+          clearPlayerMedia();
           els.openInBrowserBtn.disabled = true;
+          showToast("Esse episódio não retornou vídeo.");
         }
 
         renderEpisodeButtons(state.animeEpisodes);
@@ -1788,6 +1976,9 @@
         showToast("Não foi possível abrir esse episódio.");
       } finally {
         hideLoading();
+        if (requestId === state.openEpisodeRequestId) {
+          state.openingEpisode = false;
+        }
       }
     }
 
@@ -1807,7 +1998,7 @@
       const { anime, ep, q } = getQueryParams();
 
       if (anime && ep) {
-        await openEpisode(anime, ep, q, { pushHistory: false });
+        await openEpisode(anime, ep, q, { pushHistory: false, force: true });
         return;
       }
 
@@ -1823,17 +2014,6 @@
     function focusSearch() {
       els.searchInput.focus();
       els.searchInput.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-
-    function clearPlayerMedia() {
-      try {
-        els.videoPlayer.pause();
-      } catch (e) {}
-      els.videoPlayer.removeAttribute("src");
-      els.videoPlayer.load();
-      els.iframePlayer.src = "about:blank";
-      els.videoPlayer.style.display = "block";
-      els.iframePlayer.style.display = "none";
     }
 
     document.addEventListener("click", async (event) => {
@@ -1861,7 +2041,7 @@
       const qualityBtn = event.target.closest("[data-quality]");
       if (qualityBtn) {
         const quality = qualityBtn.getAttribute("data-quality");
-        await openEpisode(state.currentAnimeId, state.currentEpisode, quality, { pushHistory: false });
+        await openEpisode(state.currentAnimeId, state.currentEpisode, quality, { pushHistory: false, force: true });
         return;
       }
 
@@ -1911,14 +2091,15 @@
 
     els.refreshBtn.addEventListener("click", async () => {
       const page = state.currentPage;
-      if (page === "home") await loadHome();
-      else if (page === "results") {
+      if (page === "home") {
+        await loadHome();
+      } else if (page === "results") {
         if (state.searchQuery) await performSearch(state.searchQuery);
         else await loadHome();
       } else if (page === "anime" && state.currentAnimeId) {
         await openAnime(state.currentAnimeId, { pushHistory: false });
       } else if (page === "player" && state.currentAnimeId && state.currentEpisode) {
-        await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false });
+        await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false, force: true });
       }
     });
 
@@ -1964,13 +2145,13 @@
     els.prevEpisodeBtn.addEventListener("click", async () => {
       const ep = els.prevEpisodeBtn.dataset.episode || "";
       if (!ep) return;
-      await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false });
+      await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false, force: true });
     });
 
     els.nextEpisodeBtn.addEventListener("click", async () => {
       const ep = els.nextEpisodeBtn.dataset.episode || "";
       if (!ep) return;
-      await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false });
+      await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false, force: true });
     });
 
     els.episodeListBtn.addEventListener("click", () => {
@@ -1984,10 +2165,17 @@
       window.open(url, "_blank", "noopener,noreferrer");
     });
 
+    els.retryPlayerBtn.addEventListener("click", async () => {
+      if (!state.currentAnimeId || !state.currentEpisode) return;
+      state.playerRetryCount = 0;
+      await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false, force: true });
+    });
+
     window.addEventListener("popstate", () => {
       goBack();
     });
 
+    bindVideoEvents();
     bootFromUrl();
   </script>
 </body>
