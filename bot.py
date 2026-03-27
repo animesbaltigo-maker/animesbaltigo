@@ -81,7 +81,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("testminiapp", testminiapp_command))
+    app.add_handler(CommandHandler("testminiapp", testminiapp))
     app.add_handler(CommandHandler("buscar", buscar))
     app.add_handler(CommandHandler("ajuda", ajuda))
     app.add_handler(CommandHandler("infoanime", infoanime))
