@@ -2059,6 +2059,28 @@
         item.video || (item.videos && (item.videos[activeQ] || item.videos.HD || item.videos.SD)) || ""
       );
 
+      // Save to history
+      saveHistory({
+        id: animeId,
+        episode,
+        quality: activeQ,
+        time: Date.now(),
+        title: item.title || animeId,
+        cover_url: item.thumb || "",
+        prefix: item.is_dubbed ? "DUB" : "LEG",
+      });
+
+      // Mark as watched
+      markWatched(animeId, episode);
+
+      if (item.next_episode) prefetchEpisode(animeId, item.next_episode, activeQ);
+
+      if (source && source.includes("lightspeedst.net")) {
+        setStatus("Abrindo episódio...");
+        window.location.href = source;
+        return;
+      }
+
       let playerHtml = "";
       if (!source) {
         playerHtml = `
@@ -2075,22 +2097,6 @@
       } else {
         playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata" crossorigin="anonymous"><source src="${esc(source)}" type="video/mp4"></video>`;
       }
-
-      // Save to history
-      saveHistory({
-        id: animeId,
-        episode,
-        quality: activeQ,
-        time: Date.now(),
-        title: item.title || animeId,
-        cover_url: item.thumb || "",
-        prefix: item.is_dubbed ? "DUB" : "LEG",
-      });
-
-      // Mark as watched
-      markWatched(animeId, episode);
-
-      if (item.next_episode) prefetchEpisode(animeId, item.next_episode, activeQ);
 
       app.innerHTML = `
         <section class="player-wrap fade-in">
