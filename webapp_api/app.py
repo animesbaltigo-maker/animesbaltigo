@@ -1,3 +1,4 @@
+cat > webapp_api/app.py <<'PY'
 from __future__ import annotations
 
 import asyncio
@@ -548,3 +549,4 @@ async def api_episode(
         raise HTTPException(status_code=404, detail="Episódio não encontrado")
 
     return {"ok": True, "item": item}
+PY
