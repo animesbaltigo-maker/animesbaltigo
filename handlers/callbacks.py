@@ -602,7 +602,7 @@ def _player_keyboard(
     watched = is_episode_watched(user_id, anime_id, episode)
 
     watch_toggle_button = InlineKeyboardButton(
-        "↩️ Desmarcar como visto" if watched else "✅ Marcar como visto",
+        "❌ Desmarcar como visto" if watched else "✅ Marcar como visto",
         callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
     )
 
@@ -1504,59 +1504,3 @@ def build_episodes_keyboard(anime_id: str, episodes: list[dict], page: int = 1, 
     ])
 
     return InlineKeyboardMarkup(rows)
-
-
-async def epanime_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data or ""
-    # formato: epanime_select:anime_id
-    _, anime_id = data.split(":", 1)
-
-    anime = await get_anime_details(anime_id)
-    episodes = await get_anime_episodes(anime_id)
-
-    context.user_data["epanime_last_anime_id"] = anime_id
-
-    text = (
-        f"<b>{anime['title']}</b>\n\n"
-        f"{anime.get('description', 'Sem descrição.')}\n\n"
-        f"Total de episódios: <b>{len(episodes)}</b>\n"
-        f"Escolha um episódio:"
-    )
-
-    await query.edit_message_text(
-        text=text,
-        parse_mode="HTML",
-        reply_markup=build_episodes_keyboard(anime_id, episodes, page=1),
-    )
-
-async def epanime_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data or ""
-    # formato: epanime_page:anime_id:page
-    _, anime_id, page_str = data.split(":")
-    page = int(page_str)
-
-    anime = await get_anime_details(anime_id)
-    episodes = await get_anime_episodes(anime_id)
-
-    text = (
-        f"<b>{anime['title']}</b>\n\n"
-        f"Total de episódios: <b>{len(episodes)}</b>\n"
-        f"Página <b>{page}</b>\n"
-        f"Escolha um episódio:"
-    )
-
-    await query.edit_message_text(
-        text=text,
-        parse_mode="HTML",
-        reply_markup=build_episodes_keyboard(anime_id, episodes, page=page),
-    )
-
-async def epanime_back_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer("Volte e pesquise novamente.")
