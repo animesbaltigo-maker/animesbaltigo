@@ -563,7 +563,7 @@ async def start(update, context):
                 "• 📺 Navegar pelos episódios\n"
                 "• ✅ Marcar episódios como vistos\n"
                 "• ⚡ Assistir rápido e sem complicação\n\n"
-                "Use <code>/buscar para começar."
+                "Use <code>/buscar<code> para começar."
             )
 
             keyboard = InlineKeyboardMarkup([
