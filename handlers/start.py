@@ -577,7 +577,9 @@ async def start(update, context):
                     InlineKeyboardButton(
                         "➕ Adicionar ao grupo",
                         url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
-                    ),
+                    )
+                ],
+                [
                     InlineKeyboardButton(
                         "🏴‍☠️ QG Baltigo",
                         url="https://t.me/QG_BALTIGO"
