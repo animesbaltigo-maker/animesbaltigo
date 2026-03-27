@@ -1435,3 +1435,128 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         if message:
             _clear_inflight_action(message.chat.id, message.message_id)
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
+from telegram.ext import ContextTypes
+
+# Substitua pela sua fonte real
+async def get_anime_details(anime_id: str) -> dict:
+    return {
+        "id": anime_id,
+        "title": "Naruto",
+        "description": "Exemplo de descrição.",
+        "cover_url": "https://via.placeholder.com/400x600",
+    }
+
+
+# Substitua pela sua fonte real
+async def get_anime_episodes(anime_id: str) -> list[dict]:
+    # Exemplo
+    return [{"number": str(i)} for i in range(1, 51)]
+
+
+def build_episodes_keyboard(anime_id: str, episodes: list[dict], page: int = 1, per_page: int = 12) -> InlineKeyboardMarkup:
+    total = len(episodes)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, total_pages))
+
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = episodes[start:end]
+
+    rows = []
+
+    for ep in page_items:
+        ep_number = str(ep["number"])
+        rows.append([
+            InlineKeyboardButton(
+                text=f"▶ EP {ep_number}",
+                web_app=WebAppInfo(
+                    url=f"{MINIAPP_URL}?anime_id={anime_id}&episode={ep_number}"
+                ),
+            )
+        ])
+
+    nav_row = []
+    if page > 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="⬅️ Anterior",
+                callback_data=f"epanime_page:{anime_id}:{page-1}"
+            )
+        )
+    if page < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Próxima ➡️",
+                callback_data=f"epanime_page:{anime_id}:{page+1}"
+            )
+        )
+
+    if nav_row:
+        rows.append(nav_row)
+
+    rows.append([
+        InlineKeyboardButton(
+            text="🔙 Voltar",
+            callback_data="epanime_back_search"
+        )
+    ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+async def epanime_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data or ""
+    # formato: epanime_select:anime_id
+    _, anime_id = data.split(":", 1)
+
+    anime = await get_anime_details(anime_id)
+    episodes = await get_anime_episodes(anime_id)
+
+    context.user_data["epanime_last_anime_id"] = anime_id
+
+    text = (
+        f"<b>{anime['title']}</b>\n\n"
+        f"{anime.get('description', 'Sem descrição.')}\n\n"
+        f"Total de episódios: <b>{len(episodes)}</b>\n"
+        f"Escolha um episódio:"
+    )
+
+    await query.edit_message_text(
+        text=text,
+        parse_mode="HTML",
+        reply_markup=build_episodes_keyboard(anime_id, episodes, page=1),
+    )
+
+async def epanime_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data or ""
+    # formato: epanime_page:anime_id:page
+    _, anime_id, page_str = data.split(":")
+    page = int(page_str)
+
+    anime = await get_anime_details(anime_id)
+    episodes = await get_anime_episodes(anime_id)
+
+    text = (
+        f"<b>{anime['title']}</b>\n\n"
+        f"Total de episódios: <b>{len(episodes)}</b>\n"
+        f"Página <b>{page}</b>\n"
+        f"Escolha um episódio:"
+    )
+
+    await query.edit_message_text(
+        text=text,
+        parse_mode="HTML",
+        reply_markup=build_episodes_keyboard(anime_id, episodes, page=page),
+    )
+
+async def epanime_back_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer("Volte e pesquise novamente.")
