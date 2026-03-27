@@ -1,10 +1,10 @@
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from telegram.ext import ContextTypes, CommandHandler
+from telegram.ext import ContextTypes
 
 MINIAPP_URL = "https://SEU_DOMINIO/miniapp/index.html"
 
 
-async def testminiapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def testminiapp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     user = update.effective_user
 
@@ -36,7 +36,3 @@ async def testminiapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=keyboard,
         disable_web_page_preview=True,
     )
-
-
-def get_testminiapp_handler() -> CommandHandler:
-    return CommandHandler("testminiapp", testminiapp_command)
