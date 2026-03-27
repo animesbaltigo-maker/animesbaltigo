@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -608,7 +608,7 @@ async def api_anime(anime_id: str):
 
 
 @app.get("/api/anime/{anime_id}/episode/{episode}")
-async def api_episode(anime_id: str, episode: str, quality: str = Query("HD")):
+async def api_episode(anime_id: str, episode: str, response: Response, quality: str = Query("HD")):
     normalized_quality = quality.upper().strip() or "HD"
     key = f"episode:{anime_id}:{episode}:{normalized_quality}"
 
@@ -654,6 +654,7 @@ async def api_episode(anime_id: str, episode: str, quality: str = Query("HD")):
     payload = await _cached(key, EPISODE_TTL, factory)
     if not payload:
         raise HTTPException(status_code=404, detail="Episódio não encontrado")
+    response.headers["Cache-Control"] = "no-store, max-age=0"
     return {"ok": True, "item": payload}
 
 
