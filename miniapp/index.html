@@ -1954,11 +1954,21 @@
     }
 
     function normalizeSourceUrl(value) {
-      return String(value || "").trim();
+      return decodeURIComponent(String(value || "").trim())
+        .replace(/&amp;/g, "&")
+        .trim();
     }
 
     function isM3u8Source(source) {
       return /\.m3u8(\?|#|$)/i.test(source || "");
+    }
+
+    function isMp4Source(source) {
+      return /\.mp4(\?|#|$)/i.test(source || "");
+    }
+
+    function isDirectVideoSource(source) {
+      return isMp4Source(source) || isM3u8Source(source);
     }
 
     function isIframeSource(source) {
@@ -1974,6 +1984,24 @@
         value.includes("ok.ru/videoembed") ||
         value.includes("sibnet")
       );
+    }
+
+    function openExternalPlayer(url) {
+      const safeUrl = normalizeSourceUrl(url);
+      if (!safeUrl) return;
+      window.open(safeUrl, "_blank", "noopener,noreferrer");
+    }
+
+    async function copyEpisodeLink(url) {
+      const safeUrl = normalizeSourceUrl(url);
+      if (!safeUrl) return;
+
+      try {
+        await navigator.clipboard.writeText(safeUrl);
+        setStatus("Link do episódio copiado");
+      } catch (_) {
+        setStatus("Não foi possível copiar o link");
+      }
     }
 
     function enhanceNativeVideo(source) {
@@ -1993,10 +2021,16 @@
         if (!video.parentElement || video.dataset.failed === "1") return;
         video.dataset.failed = "1";
         video.parentElement.innerHTML = `
-          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);padding:40px 24px;height:100%;">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);padding:40px 24px;height:100%;text-align:center;">
             <div style="font-size:36px;">⚠️</div>
-            <strong style="color:#e0e0f0;font-size:16px;">Vídeo indisponível</strong>
-            <span style="font-size:13.5px;text-align:center;">Este episódio não pôde ser reproduzido no player interno.</span>
+            <strong style="color:#e0e0f0;font-size:16px;">Falha no player interno</strong>
+            <span style="font-size:13.5px;max-width:520px;">
+              Este episódio não pôde ser reproduzido diretamente aqui.
+            </span>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+              <button class="btn btn-primary" onclick="openExternalPlayer('${esc(source)}')">Abrir direto</button>
+              <button class="btn btn-ghost" onclick="copyEpisodeLink('${esc(source)}')">Copiar link</button>
+            </div>
           </div>
         `;
       };
@@ -2005,15 +2039,13 @@
         video.dataset.loaded = "1";
       }, { once: true });
 
-      video.addEventListener("error", () => {
-        markUnavailable();
-      }, { once: true });
+      video.addEventListener("error", markUnavailable, { once: true });
 
-      setTimeout(() => {
-        if (video.dataset.loaded === "1") return;
-        const ready = Number(video.readyState || 0);
-        if (ready >= 2) return;
-      }, 5000);
+      const failTimer = setTimeout(() => {
+        if (!video.dataset.loaded) markUnavailable();
+      }, 12000);
+
+      video.addEventListener("loadeddata", () => clearTimeout(failTimer), { once: true });
 
       try { video.load(); } catch (_) {}
       const playPromise = video.play?.();
@@ -2059,6 +2091,37 @@
         item.video || (item.videos && (item.videos[activeQ] || item.videos.HD || item.videos.SD)) || ""
       );
 
+      let playerHtml = "";
+      if (!source) {
+        playerHtml = `
+          <div style="display:flex;flex-direction:column;align-items:center;gap:14px;color:var(--muted);padding:40px 24px;">
+            <div style="font-size:36px;">⚠️</div>
+            <strong style="color:#e0e0f0;font-size:16px;">Vídeo indisponível</strong>
+            <span style="font-size:13.5px;text-align:center;">Este episódio não está disponível no momento.</span>
+          </div>
+        `;
+      } else if (isM3u8Source(source)) {
+        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata"></video>`;
+      } else if (isMp4Source(source)) {
+        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata" crossorigin="anonymous"><source src="${esc(source)}" type="video/mp4"></video>`;
+      } else if (isIframeSource(source)) {
+        playerHtml = `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);padding:32px 24px;height:100%;text-align:center;">
+            <div style="font-size:36px;">🎬</div>
+            <strong style="color:#e0e0f0;font-size:16px;">Player externo</strong>
+            <span style="font-size:13.5px;max-width:520px;">
+              Este episódio usa um player externo que pode bloquear incorporação no site.
+            </span>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+              <button class="btn btn-primary" onclick="openExternalPlayer('${esc(source)}')">Abrir player</button>
+              <button class="btn btn-ghost" onclick="copyEpisodeLink('${esc(source)}')">Copiar link</button>
+            </div>
+          </div>
+        `;
+      } else {
+        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata"><source src="${esc(source)}"></video>`;
+      }
+
       // Save to history
       saveHistory({
         id: animeId,
@@ -2074,29 +2137,6 @@
       markWatched(animeId, episode);
 
       if (item.next_episode) prefetchEpisode(animeId, item.next_episode, activeQ);
-
-      if (source && source.includes("lightspeedst.net")) {
-        setStatus("Abrindo episódio...");
-        window.location.href = source;
-        return;
-      }
-
-      let playerHtml = "";
-      if (!source) {
-        playerHtml = `
-          <div style="display:flex;flex-direction:column;align-items:center;gap:14px;color:var(--muted);padding:40px 24px;">
-            <div style="font-size:36px;">⚠️</div>
-            <strong style="color:#e0e0f0;font-size:16px;">Vídeo indisponível</strong>
-            <span style="font-size:13.5px;text-align:center;">Este episódio não está disponível no momento.</span>
-          </div>
-        `;
-      } else if (isIframeSource(source)) {
-        playerHtml = `<iframe src="${esc(source)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
-      } else if (isM3u8Source(source)) {
-        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata"></video>`;
-      } else {
-        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata" crossorigin="anonymous"><source src="${esc(source)}" type="video/mp4"></video>`;
-      }
 
       app.innerHTML = `
         <section class="player-wrap fade-in">
@@ -2196,11 +2236,11 @@
           s.onload = initHls;
           document.body.appendChild(s);
         }
-      } else if (source && !isIframeSource(source)) {
+      } else if (source && isMp4Source(source)) {
         enhanceNativeVideo(source);
       }
 
-      if (source && !isIframeSource(source)) {
+      if (source && isDirectVideoSource(source)) {
         bindAutoplay(animeId, item.next_episode, activeQ);
       }
 
@@ -2216,6 +2256,8 @@
     window.prefetchAnime = window.prefetchAnime;
     window.prefetchEpisode = window.prefetchEpisode;
     window.clearAutoplay = clearAutoplay;
+    window.openExternalPlayer = openExternalPlayer;
+    window.copyEpisodeLink = copyEpisodeLink;
 
     window.changeSectionPage = (page) => goSection(currentSection, page);
     window.changeSearchPage = (page) => doSearch(currentSearch, page);
