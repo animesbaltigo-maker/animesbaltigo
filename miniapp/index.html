@@ -362,51 +362,208 @@
 
     @media (max-width:720px){
       :root{ --topbar-h: auto; }
-      .topbar{flex-direction:column; align-items:stretch; gap:12px}
-      .top-left{flex-direction:column; align-items:flex-start; gap:10px}
-      .nav{gap:12px; width:100%}
+      html,body{overflow-x:hidden}
+      .topbar{
+        flex-direction:column; align-items:stretch; gap:10px;
+        padding:12px 14px;
+      }
+      .top-left{flex-direction:column; align-items:flex-start; gap:8px}
+      .nav{
+        gap:10px; width:100%;
+        flex-wrap:nowrap;
+        overflow-x:auto;
+        padding-bottom:2px;
+      }
       .top-right{width:100%}
-      .search{width:100%}
+      .search{
+        width:100%;
+        padding:10px 12px;
+      }
       .grid,.continue-grid{display:none}
       .hero{
-        height:340px; min-height:340px; max-height:340px;
-        padding:0 18px 20px;
+        height:300px; min-height:300px; max-height:300px;
+        padding:0 14px 16px;
       }
       .hero::before{
         background:
-          linear-gradient(180deg, rgba(0,0,0,.30) 0%, rgba(0,0,0,.86) 90%),
-          linear-gradient(90deg, rgba(0,0,0,.74) 0%, rgba(0,0,0,.34) 100%);
+          linear-gradient(180deg, rgba(0,0,0,.28) 0%, rgba(0,0,0,.90) 92%),
+          linear-gradient(90deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.38) 100%);
+      }
+      .hero-content{max-width:none}
+      .hero-kicker{margin-bottom:8px}
+      .hero-title{
+        font-size:22px;
+        line-height:1.02;
+        margin-bottom:8px;
+      }
+      .hero-meta{
+        font-size:12px;
+        line-height:1.4;
+        margin-bottom:10px;
       }
       .hero-desc{
-        -webkit-line-clamp:3;
-        font-size:14px;
-        margin-bottom:16px;
+        display:none;
       }
-      .section,.page,.player-wrap{padding-left:18px; padding-right:18px}
-      .status-wrap,.toolbar{padding-left:18px; padding-right:18px}
-      .anime-title{font-size:34px}
+      .actions{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:8px;
+      }
+      .btn{
+        min-height:44px;
+        padding:12px 12px;
+        border-radius:12px;
+      }
+      .section,.page,.player-wrap{padding-left:14px; padding-right:14px}
+      .status-wrap,.toolbar{padding-left:14px; padding-right:14px}
+      .toolbar{
+        gap:8px;
+      }
+      .toolbar-left{
+        flex-wrap:nowrap;
+        overflow-x:auto;
+        width:100%;
+      }
+      .toolbar-right{
+        width:100%;
+      }
+      .section{
+        margin-top:20px;
+      }
+      .section-title{font-size:22px}
+      .anime-title{
+        font-size:28px;
+        line-height:1.04;
+      }
+      .meta-line,.desc{
+        font-size:14px;
+      }
       .info-grid{grid-template-columns:1fr}
-      .card.card-row{min-width:146px; max-width:146px; flex-basis:146px}
+      .card.card-row{
+        min-width:132px; max-width:132px; flex-basis:132px;
+        border-radius:14px;
+      }
+      .card-body{
+        padding:8px 8px 10px;
+      }
+      .card-title{
+        font-size:13px;
+        min-height:34px;
+      }
+      .card-sub{
+        font-size:11px;
+      }
       .poster-wrap{aspect-ratio:2/3}
+      .episode-strip{
+        gap:8px;
+      }
+      .ep-btn{
+        min-width:74px;
+        padding:12px 10px;
+        border-radius:10px;
+        font-size:13px;
+      }
+      .player-wrap{
+        padding-top:14px;
+      }
+      .player-header{
+        margin-bottom:10px;
+      }
+      .player-title{
+        font-size:20px;
+        margin-bottom:4px;
+      }
+      .player-sub{
+        font-size:13px;
+      }
+      .player-panel{
+        border-radius:14px;
+      }
+      .video-box{
+        border-radius:14px;
+        overflow:hidden;
+      }
+      .player-meta{
+        grid-template-columns:1fr;
+        gap:10px;
+        margin-top:12px;
+      }
+      .meta-card{
+        border-radius:14px;
+        padding:14px;
+      }
+      .meta-label{
+        text-align:left;
+        margin-bottom:8px;
+      }
+      .meta-text{
+        font-size:14px;
+        line-height:1.55;
+      }
       .controls-card{
         position:relative;
         bottom:auto;
+        margin-top:12px;
+        border-radius:14px;
+        padding:14px;
       }
-      .nav-ep .chip,
+      .controls-title{
+        font-size:11px;
+        margin-bottom:8px;
+      }
+      .quality-row{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:8px;
+      }
       .quality-row .chip{
-        flex:1 1 calc(50% - 8px);
+        min-width:0;
+        max-width:none;
+        width:100%;
+        flex:none;
+      }
+      .nav-ep{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:8px;
+      }
+      .nav-ep .chip{
+        width:100%;
+        min-width:0;
+        flex:none;
+      }
+      .nav-ep .chip:last-child:nth-child(odd){
+        grid-column:1 / -1;
+      }
+      .chip{
+        min-height:44px;
+        border-radius:12px;
+        padding:11px 12px;
+        font-size:13px;
+      }
+      .player-actions{
+        flex-direction:column;
+        align-items:stretch;
+        gap:10px;
+      }
+      .player-breadcrumb{
+        text-align:center;
+        font-size:13px;
       }
     }
 
     @media (max-width:520px){
-      .hero-title{font-size:30px}
-      .section-title{font-size:24px}
-      .brand{font-size:24px}
+      .brand{font-size:22px}
+      .hero-title{font-size:20px}
+      .section-title{font-size:20px}
       .btn{flex:1 1 auto}
-      .card.card-row{min-width:132px; max-width:132px; flex-basis:132px}
-      .player-title{font-size:24px}
-      .chip{padding:11px 12px}
-      .ep-btn{min-width:84px; padding:13px 10px}
+      .card.card-row{min-width:124px; max-width:124px; flex-basis:124px}
+      .player-title{font-size:18px}
+      .chip{padding:10px 10px}
+      .ep-btn{min-width:70px; padding:11px 9px}
+      .actions{grid-template-columns:1fr}
+      .quality-row,
+      .nav-ep{grid-template-columns:1fr}
     }
 
     @media (prefers-reduced-motion: reduce){
@@ -604,7 +761,8 @@
         meta.push(item.genres.slice(0, 3).join(" • "));
       }
       heroMeta.textContent = meta.join(" • ") || "QG BALTIGO";
-      heroDesc.textContent = safe(item.description, "Explore o catálogo.").slice(0, isMobileLike() ? 140 : 220);
+      const heroText = safe(item.description, "Explore o catálogo.");
+      heroDesc.textContent = heroText.slice(0, isMobileLike() ? 90 : 220);
       heroWatch.onclick = () => openAnime(item.id);
       heroInfo.onclick = () => openAnime(item.id);
     }
