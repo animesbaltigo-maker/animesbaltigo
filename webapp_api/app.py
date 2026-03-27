@@ -3,12 +3,16 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urljoin
+from urllib.parse import urljoin
 
+import httpx
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from core.http_client import get_http_client
 from services.animefire_client import (
@@ -22,7 +26,11 @@ from services.recent_episodes_client import get_recent_episodes
 BASE_URL = "https://animefire.io"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
     "Referer": BASE_URL,
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
 }
@@ -30,11 +38,15 @@ HEADERS = {
 HOME_SECTION_LIMIT = 12
 GRID_PAGE_LIMIT = 24
 
-SECTION_TTL = 60 * 15      # 15 min
-RECENT_TTL = 60            # 1 min
-SEARCH_TTL = 60 * 10       # 10 min
-ANIME_TTL = 60 * 60 * 2    # 2 h
-EPISODE_TTL = 60 * 60      # 1 h
+SECTION_TTL = 60 * 15
+RECENT_TTL = 60
+SEARCH_TTL = 60 * 10
+ANIME_TTL = 60 * 60 * 2
+EPISODE_TTL = 60 * 30
+
+PROXY_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=30.0)
+PROXY_MAX_RETRIES = 2
+PROXY_CHUNK_SIZE = 1024 * 512
 
 SECTIONS: dict[str, dict[str, str]] = {
     "recentes": {"title": "Últimos Episódios", "kind": "recent"},
@@ -53,10 +65,13 @@ SECTIONS: dict[str, dict[str, str]] = {
     "suspense": {"title": "Suspense", "slug": "genero/suspense"},
 }
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+MINIAPP_DIR = BASE_DIR / "miniapp"
+
 app = FastAPI(
     title="QG BALTIGO API",
-    description="API para streaming de animes",
-    version="2.0.0",
+    description="API do miniapp do bot com catálogo, episódios e proxy de vídeo",
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -71,7 +86,9 @@ _CACHE: dict[str, dict[str, Any]] = {}
 _LOCKS: dict[str, asyncio.Lock] = {}
 
 
-# ─── String Helpers ───────────────────────────────────────────────────────────
+# =============================================================================
+# HELPERS
+# =============================================================================
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
@@ -98,27 +115,32 @@ def _clean_description(text: str) -> str:
 def _clean_genres(genres: list[str] | None) -> list[str]:
     if not genres:
         return []
+
     seen: set[str] = set()
-    cleaned = []
+    cleaned: list[str] = []
     skip_prefixes = ("animes de ", "oie", "clique")
+
     for genre in genres:
         g = _clean(str(genre))
         if not g:
             continue
-        g_lower = g.lower()
-        if any(g_lower.startswith(p) for p in skip_prefixes):
+        gl = g.lower()
+        if any(gl.startswith(prefix) for prefix in skip_prefixes):
             continue
         if g not in seen:
             seen.add(g)
             cleaned.append(g)
+
     return cleaned
 
 
 def _clean_alt_titles(values: list[str] | None) -> list[str]:
     if not values:
         return []
-    cleaned = []
+
+    cleaned: list[str] = []
     seen: set[str] = set()
+
     for value in values:
         v = _clean_description(str(value))
         if not v or len(v) > 120:
@@ -126,18 +148,29 @@ def _clean_alt_titles(values: list[str] | None) -> list[str]:
         if v not in seen:
             seen.add(v)
             cleaned.append(v)
+
     return cleaned
 
 
 def _is_dubbed(anime_id: str, title: str) -> bool:
+    value_id = (anime_id or "").lower()
+    value_title = (title or "").lower()
     return (
-        "dublado" in (anime_id or "").lower()
-        or "dublado" in (title or "").lower()
-        or "(dub)" in (title or "").lower()
+        "dublado" in value_id
+        or "dublado" in value_title
+        or "(dub)" in value_title
     )
 
 
-# ─── Cache ────────────────────────────────────────────────────────────────────
+def _section_conf(section: str) -> dict[str, str] | None:
+    return SECTIONS.get((section or "").strip().lower())
+
+
+def _section_url(slug: str, page: int) -> str:
+    if page <= 1:
+        return f"{BASE_URL}/{slug}"
+    return f"{BASE_URL}/{slug}/{page}"
+
 
 def _cache_get(key: str, ttl: int) -> Any | None:
     item = _CACHE.get(key)
@@ -169,13 +202,10 @@ async def _cached(key: str, ttl: int, factory) -> Any:
 
 
 def _invalidate_prefix(prefix: str) -> None:
-    """Remove all cache keys that start with the given prefix."""
     for key in list(_CACHE.keys()):
         if key.startswith(prefix):
             _CACHE.pop(key, None)
 
-
-# ─── HTTP ─────────────────────────────────────────────────────────────────────
 
 async def _get(url: str) -> str:
     client = await get_http_client()
@@ -183,8 +213,6 @@ async def _get(url: str) -> str:
     response.raise_for_status()
     return response.text
 
-
-# ─── Scrapers ─────────────────────────────────────────────────────────────────
 
 def _extract_slug_from_href(href: str) -> str:
     href = (href or "").strip()
@@ -195,13 +223,14 @@ def _extract_slug_from_href(href: str) -> str:
 def _extract_last_page(page_html: str, slug: str) -> int:
     soup = BeautifulSoup(page_html, "html.parser")
     max_page = 1
+
     for anchor in soup.select("a[href]"):
         href = (anchor.get("href") or "").strip()
         pattern = rf"/{re.escape(slug)}/(\d+)(?:/)?(?:\?.*)?$"
         match = re.search(pattern, href)
         if match:
-            page_num = int(match.group(1))
-            max_page = max(max_page, page_num)
+            max_page = max(max_page, int(match.group(1)))
+
     return max_page
 
 
@@ -215,13 +244,11 @@ def _extract_listing_cards(page_html: str) -> list[dict]:
         if not anime_id:
             continue
 
-        # Title
         title = ""
         title_el = anchor.select_one(".animeTitle")
         if title_el:
             title = _clean(title_el.get_text(" ", strip=True))
 
-        # Cover image
         img = anchor.find("img")
         cover = ""
         if img:
@@ -256,6 +283,7 @@ def _shape_details(data: dict, fallback_id: str = "") -> dict:
     anime_id = data.get("id") or fallback_id
     title = data.get("title") or anime_id.replace("-", " ").title()
     dubbed = bool(data.get("is_dubbed")) or _is_dubbed(anime_id, title)
+
     return {
         "id": anime_id,
         "title": title,
@@ -285,17 +313,38 @@ def _shape_details(data: dict, fallback_id: str = "") -> dict:
     }
 
 
-def _section_conf(section: str) -> dict[str, str] | None:
-    return SECTIONS.get((section or "").strip().lower())
+def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict) -> dict:
+    video = item.get("video") or ""
+    videos = item.get("videos") or {}
+
+    available_qualities = item.get("available_qualities") or []
+    if not available_qualities and isinstance(videos, dict):
+        available_qualities = list(videos.keys())
+
+    if not video and isinstance(videos, dict):
+        normalized_quality = (quality or "HD").upper()
+        video = videos.get(normalized_quality) or videos.get("HD") or videos.get("SD") or ""
+
+    return {
+        "anime_id": anime_id,
+        "episode": episode,
+        "video": video,
+        "videos": videos,
+        "quality": item.get("quality") or quality.upper(),
+        "available_qualities": available_qualities,
+        "title": item.get("title") or "",
+        "description": _clean_description(item.get("description") or ""),
+        "thumb": item.get("thumb") or item.get("image") or "",
+        "is_dubbed": bool(item.get("is_dubbed")),
+        "prev_episode": item.get("prev_episode"),
+        "next_episode": item.get("next_episode"),
+        "total_episodes": item.get("total_episodes"),
+    }
 
 
-def _section_url(slug: str, page: int) -> str:
-    if page <= 1:
-        return f"{BASE_URL}/{slug}"
-    return f"{BASE_URL}/{slug}/{page}"
-
-
-# ─── Pagination Helpers ───────────────────────────────────────────────────────
+# =============================================================================
+# PAGINATION / CATALOG
+# =============================================================================
 
 async def _get_recent_page(page: int) -> dict:
     async def factory():
@@ -307,6 +356,7 @@ async def _get_recent_page(page: int) -> dict:
             anime_id = item.get("anime_id")
             if not anime_id or anime_id in seen:
                 continue
+
             seen.add(anime_id)
 
             title = item.get("title") or anime_id.replace("-", " ").title()
@@ -319,7 +369,6 @@ async def _get_recent_page(page: int) -> dict:
                 or ""
             )
 
-            # Fallback: fetch cover from anime details if missing
             if not cover:
                 try:
                     details = await get_anime_details(anime_id)
@@ -358,7 +407,7 @@ async def _get_recent_page(page: int) -> dict:
 
         return {
             "section": "recentes",
-            "title": _section_conf("recentes")["title"],  # type: ignore[index]
+            "title": _section_conf("recentes")["title"],
             "page": current_page,
             "limit": GRID_PAGE_LIMIT,
             "total_items": total,
@@ -405,7 +454,9 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
             page_html = meta["first_html"]
         else:
             page_html = await _get(_section_url(slug, current_page))
+
         items = _extract_listing_cards(page_html)
+
         return {
             "section": section,
             "title": conf["title"],
@@ -421,7 +472,9 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
     return await _cached(f"page:{section}:{current_page}", SECTION_TTL, page_factory)
 
 
-# ─── Background Tasks ─────────────────────────────────────────────────────────
+# =============================================================================
+# BACKGROUND
+# =============================================================================
 
 @app.on_event("startup")
 async def _startup_refresh_task():
@@ -437,27 +490,32 @@ async def _startup_refresh_task():
     asyncio.create_task(refresher())
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+# =============================================================================
+# ROOT / HEALTH
+# =============================================================================
 
 @app.get("/")
 def root():
     return {
         "ok": True,
         "name": "QG BALTIGO API",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "sections": list(SECTIONS.keys()),
     }
 
 
 @app.get("/api/health")
 def health():
-    cache_size = len(_CACHE)
     return {
         "ok": True,
-        "cache_entries": cache_size,
+        "cache_entries": len(_CACHE),
         "timestamp": int(time.time()),
     }
 
+
+# =============================================================================
+# CATALOG
+# =============================================================================
 
 @app.get("/api/catalog/home")
 async def catalog_home():
@@ -473,17 +531,18 @@ async def catalog_home():
         "comedia",
     ]
 
-    # Fetch all sections concurrently
     tasks = [_get_paginated_section_page(section, 1) for section in ordered_sections]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     payload = []
     for section, result in zip(ordered_sections, results):
+        conf = _section_conf(section)
+        title = conf["title"] if conf else section
+
         if isinstance(result, Exception):
-            # Include empty section on error rather than failing the whole home
             payload.append({
                 "key": section,
-                "title": _section_conf(section)["title"] if _section_conf(section) else section,
+                "title": title,
                 "page": 1,
                 "total_pages": 0,
                 "items": [],
@@ -509,6 +568,10 @@ async def catalog_list(
     return {"ok": bool(data["items"]), **data}
 
 
+# =============================================================================
+# SEARCH
+# =============================================================================
+
 @app.get("/api/search")
 async def api_search(
     q: str = Query(..., min_length=1),
@@ -520,10 +583,12 @@ async def api_search(
     async def factory():
         raw_items = await search_anime(query)
         shaped = []
+
         for item in raw_items:
             anime_id = item.get("id") or ""
             title = item.get("title") or anime_id
             dubbed = bool(item.get("is_dubbed")) or _is_dubbed(anime_id, title)
+
             shaped.append({
                 "id": anime_id,
                 "title": title,
@@ -540,6 +605,7 @@ async def api_search(
                 "year": None,
                 "studio": "",
             })
+
         return shaped
 
     shaped = await _cached(f"search:{query.lower()}", SEARCH_TTL, factory)
@@ -563,6 +629,10 @@ async def api_search(
     }
 
 
+# =============================================================================
+# ANIME / EPISODES
+# =============================================================================
+
 @app.get("/api/anime/{anime_id}")
 async def api_anime(anime_id: str):
     async def factory():
@@ -576,6 +646,7 @@ async def api_anime(anime_id: str):
             or episodes_payload.get("items")
             or []
         )
+
         return {
             "item": _shape_details(data, anime_id),
             "episodes": episodes,
@@ -594,61 +665,67 @@ async def api_episode(
     episode: str,
     quality: str = Query("HD"),
 ):
-    key = f"episode:{anime_id}:{episode}:{quality.upper()}"
+    quality = (quality or "HD").upper()
+    cache_key = f"episode:{anime_id}:{episode}:{quality}"
 
     async def factory():
-        item = await get_episode_player(anime_id, episode, quality.upper())
+        item = await get_episode_player(anime_id, episode, quality)
         if not item:
             return None
-        return {
-            "anime_id": anime_id,
-            "episode": episode,
-            "video": item.get("video") or "",
-            "videos": item.get("videos") or {},
-            "quality": item.get("quality") or quality.upper(),
-            "available_qualities": item.get("available_qualities") or [],
-            "title": item.get("title") or "",
-            "description": _clean_description(item.get("description") or ""),
-            "thumb": item.get("thumb") or item.get("image") or "",
-            "is_dubbed": bool(item.get("is_dubbed")),
-            "prev_episode": item.get("prev_episode"),
-            "next_episode": item.get("next_episode"),
-            "total_episodes": item.get("total_episodes"),
-        }
 
-    payload = await _cached(key, EPISODE_TTL, factory)
+        payload = _shape_episode_payload(anime_id, episode, quality, item)
+
+        if not payload.get("video"):
+            fallback_quality = "SD" if quality == "HD" else "HD"
+            try:
+                fallback_item = await get_episode_player(anime_id, episode, fallback_quality)
+                if fallback_item:
+                    fallback_payload = _shape_episode_payload(
+                        anime_id,
+                        episode,
+                        fallback_quality,
+                        fallback_item,
+                    )
+                    if fallback_payload.get("video"):
+                        return fallback_payload
+            except Exception:
+                pass
+
+        return payload
+
+    payload = await _cached(cache_key, EPISODE_TTL, factory)
     if not payload:
         raise HTTPException(status_code=404, detail="Episódio não encontrado")
 
     return {"ok": True, "item": payload}
 
 
-# ─── Cache management endpoint ───────────────────────────────────────────────
+# =============================================================================
+# CACHE
+# =============================================================================
 
 @app.post("/api/cache/clear")
-async def clear_cache(prefix: str = Query("", description="Prefix of cache keys to clear (empty = all)")):
+async def clear_cache(
+    prefix: str = Query("", description="Prefixo das chaves a limpar; vazio = tudo")
+):
     if prefix:
         _invalidate_prefix(prefix)
-        cleared = "prefixed"
+        cleared = f"prefix:{prefix}"
     else:
         count = len(_CACHE)
         _CACHE.clear()
-        cleared = f"all ({count} entries)"
+        cleared = f"all:{count}"
+
     return {"ok": True, "cleared": cleared}
 
 
-# ─── Static files ─────────────────────────────────────────────────────────────
-
-from fastapi import Request
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-MINIAPP_DIR = BASE_DIR / "miniapp"
+# =============================================================================
+# STATIC / MINIAPP
+# =============================================================================
 
 if MINIAPP_DIR.exists():
     app.mount("/miniapp", StaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
+
 
 @app.get("/app")
 async def app_index():
@@ -662,6 +739,7 @@ async def app_index():
     response.headers["Expires"] = "0"
     return response
 
+
 @app.get("/watch")
 async def app_watch():
     watch_path = MINIAPP_DIR / "watch.html"
@@ -669,49 +747,107 @@ async def app_watch():
         raise HTTPException(status_code=404, detail="Watch page not found")
     return FileResponse(watch_path)
 
-@app.get("/api/proxy-stream")
-async def proxy_stream(request: Request, url: str):
-    client = await get_http_client()
+
+# =============================================================================
+# PROXY STREAM
+# =============================================================================
+
+async def _proxy_fetch_with_retry(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+) -> httpx.Response:
+    last_error: Exception | None = None
+
+    for attempt in range(PROXY_MAX_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=PROXY_TIMEOUT, follow_redirects=True) as client:
+                response = await client.request(method, url, headers=headers)
+
+                if response.status_code in (200, 206):
+                    return response
+
+                last_error = Exception(f"Upstream status inválido: {response.status_code}")
+
+        except Exception as exc:
+            last_error = exc
+
+        if attempt < PROXY_MAX_RETRIES:
+            await asyncio.sleep(0.5)
+
+    raise last_error or Exception("Falha desconhecida no proxy")
+
+
+@app.api_route("/api/proxy-stream", methods=["GET", "HEAD"])
+async def proxy_stream(
+    request: Request,
+    url: str = Query(..., min_length=1),
+):
+    range_header = request.headers.get("range")
 
     outgoing_headers = {
         "User-Agent": HEADERS["User-Agent"],
-        "Referer": "https://animefire.io/",
-        "Origin": "https://animefire.io",
         "Accept": "*/*",
         "Connection": "keep-alive",
+        "Referer": BASE_URL + "/",
+        "Origin": BASE_URL,
     }
 
-    range_header = request.headers.get("range")
     if range_header:
         outgoing_headers["Range"] = range_header
 
-    upstream = await client.get(
-        url,
-        headers=outgoing_headers,
-        follow_redirects=True,
-    )
+    try:
+        method = "HEAD" if request.method == "HEAD" else "GET"
 
-    passthrough_headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
-        "Content-Type": upstream.headers.get("content-type", "application/octet-stream"),
-        "Cache-Control": "no-store",
-    }
+        upstream = await _proxy_fetch_with_retry(
+            method=method,
+            url=url,
+            headers=outgoing_headers,
+        )
 
-    for name in (
-        "content-length",
-        "content-range",
-        "content-disposition",
-        "etag",
-        "last-modified",
-    ):
-        value = upstream.headers.get(name)
-        if value:
-            passthrough_headers[name.title()] = value
+        content_type = upstream.headers.get("content-type", "application/octet-stream")
+        content_length = upstream.headers.get("content-length")
+        content_range = upstream.headers.get("content-range")
+        content_disposition = upstream.headers.get("content-disposition")
+        etag = upstream.headers.get("etag")
+        last_modified = upstream.headers.get("last-modified")
 
-    return StreamingResponse(
-        upstream.aiter_bytes(),
-        status_code=upstream.status_code,
-        headers=passthrough_headers,
-        media_type=upstream.headers.get("content-type", "application/octet-stream"),
-    )
+        passthrough_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
+            "Content-Type": content_type,
+            "Cache-Control": "no-store",
+        }
+
+        if content_length:
+            passthrough_headers["Content-Length"] = content_length
+        if content_range:
+            passthrough_headers["Content-Range"] = content_range
+        if content_disposition:
+            passthrough_headers["Content-Disposition"] = content_disposition
+        if etag:
+            passthrough_headers["ETag"] = etag
+        if last_modified:
+            passthrough_headers["Last-Modified"] = last_modified
+
+        if request.method == "HEAD":
+            return Response(
+                content=b"",
+                status_code=upstream.status_code,
+                headers=passthrough_headers,
+            )
+
+        async def iterator():
+            async for chunk in upstream.aiter_bytes(PROXY_CHUNK_SIZE):
+                yield chunk
+
+        return StreamingResponse(
+            iterator(),
+            status_code=upstream.status_code,
+            headers=passthrough_headers,
+            media_type=content_type,
+        )
+
+    except Exception as exc:
+        print("PROXY ERROR:", repr(exc))
+        raise HTTPException(status_code=502, detail="Erro ao carregar vídeo")
