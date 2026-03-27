@@ -11,7 +11,6 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from core.http_client import close_http_client
 from handlers.start import start
 from handlers.search import buscar
