@@ -662,3 +662,30 @@ async def app_watch():
     if not watch_path.exists():
         raise HTTPException(status_code=404, detail="Watch page not found")
     return FileResponse(watch_path)
+
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/proxy-stream")
+async def proxy_stream(url: str):
+    client = await get_http_client()
+
+    response = await client.get(
+        url,
+        headers={
+            "User-Agent": HEADERS["User-Agent"],
+            "Referer": "https://animefire.io/",
+            "Origin": "https://animefire.io",
+        },
+        follow_redirects=True,
+    )
+
+    def iterfile():
+        yield from response.iter_bytes()
+
+    return StreamingResponse(
+        iterfile(),
+        media_type=response.headers.get("content-type", "video/mp4"),
+        headers={
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
