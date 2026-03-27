@@ -1967,8 +1967,6 @@
         value.includes("blogger.com/video.g") ||
         value.includes("/embed") ||
         value.includes("embed-") ||
-        value.includes("/player") ||
-        value.includes("iframe") ||
         value.includes("streamtape") ||
         value.includes("filemoon") ||
         value.includes("voe.sx") ||
@@ -1982,22 +1980,25 @@
       const video = document.getElementById("main-video");
       if (!video || !source || isM3u8Source(source)) return;
 
-      if (video.getAttribute("src") !== source) {
+      const sourceNode = video.querySelector("source");
+      if (sourceNode) {
+        if (sourceNode.getAttribute("src") !== source) {
+          sourceNode.setAttribute("src", source);
+        }
+      } else if (video.getAttribute("src") !== source) {
         video.setAttribute("src", source);
       }
 
-      const ensurePlayback = () => {
-        try { video.load(); } catch (_) {}
-        const playPromise = video.play?.();
-        if (playPromise && typeof playPromise.catch === "function") {
-          playPromise.catch(() => {});
-        }
-      };
-
-      const fallbackToIframe = () => {
-        if (!video.parentElement || video.dataset.fallbackDone === "1" || isIframeSource(source)) return;
-        video.dataset.fallbackDone = "1";
-        video.parentElement.innerHTML = `<iframe src="${esc(source)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
+      const markUnavailable = () => {
+        if (!video.parentElement || video.dataset.failed === "1") return;
+        video.dataset.failed = "1";
+        video.parentElement.innerHTML = `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);padding:40px 24px;height:100%;">
+            <div style="font-size:36px;">⚠️</div>
+            <strong style="color:#e0e0f0;font-size:16px;">Vídeo indisponível</strong>
+            <span style="font-size:13.5px;text-align:center;">Este episódio não pôde ser reproduzido no player interno.</span>
+          </div>
+        `;
       };
 
       video.addEventListener("loadedmetadata", () => {
@@ -2005,17 +2006,20 @@
       }, { once: true });
 
       video.addEventListener("error", () => {
-        fallbackToIframe();
+        markUnavailable();
       }, { once: true });
 
       setTimeout(() => {
         if (video.dataset.loaded === "1") return;
         const ready = Number(video.readyState || 0);
         if (ready >= 2) return;
-        fallbackToIframe();
       }, 5000);
 
-      ensurePlayback();
+      try { video.load(); } catch (_) {}
+      const playPromise = video.play?.();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {});
+      }
     }
 
     // ─── EPISODE PLAYER ───
@@ -2069,7 +2073,7 @@
       } else if (isM3u8Source(source)) {
         playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata"></video>`;
       } else {
-        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata" crossorigin="anonymous"></video>`;
+        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata" crossorigin="anonymous"><source src="${esc(source)}" type="video/mp4"></video>`;
       }
 
       // Save to history
