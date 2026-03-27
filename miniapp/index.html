@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -11,6 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
     :root {
       --bg: #080810;
@@ -1185,26 +1187,65 @@
             let index = 0;
 
             function tryNext() {
-              if (index >= sources.length) { console.error("[player] Nenhuma fonte funcionou"); return; }
+              if (index >= sources.length) {
+                console.error("[player] Nenhuma fonte funcionou");
+                return;
+              }
+
               const src = sources[index++];
               console.log("[player] tentando fonte:", src);
 
-              if (video._hls) { video._hls.destroy(); video._hls = null; }
-              video.pause();
-              video.removeAttribute("src");
-              video.load();
+              if (video._hls) {
+                try { video._hls.destroy(); } catch (_) {}
+                video._hls = null;
+              }
 
-              if (/\.m3u8/i.test(src) && window.Hls && Hls.isSupported()) {
-                const hls = new Hls();
-                video._hls = hls;
-                hls.on(Hls.Events.ERROR, function (_, data) { if (data?.fatal) { hls.destroy(); tryNext(); } });
-                hls.loadSource(src);
-                hls.attachMedia(video);
+              try { video.pause(); } catch (_) {}
+              try { video.removeAttribute("src"); } catch (_) {}
+              try { video.load(); } catch (_) {}
+
+              let timedOut = false;
+              const timeout = setTimeout(() => {
+                timedOut = true;
+                console.warn("[player] timeout, tentando próxima");
+                tryNext();
+              }, 8000);
+
+              video.onerror = () => {
+                clearTimeout(timeout);
+                console.warn("[player] fonte falhou, tentando próxima");
+                tryNext();
+              };
+
+              video.onloadedmetadata = () => clearTimeout(timeout);
+              video.oncanplay = () => clearTimeout(timeout);
+
+              if (/\.m3u8/i.test(src)) {
+                if (window.Hls && Hls.isSupported()) {
+                  const hls = new Hls();
+                  video._hls = hls;
+
+                  hls.on(Hls.Events.ERROR, function (_, data) {
+                    if (data?.fatal && !timedOut) {
+                      clearTimeout(timeout);
+                      try { hls.destroy(); } catch (_) {}
+                      tryNext();
+                    }
+                  });
+
+                  hls.loadSource(src);
+                  hls.attachMedia(video);
+                } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+                  video.src = src;
+                } else {
+                  clearTimeout(timeout);
+                  tryNext();
+                  return;
+                }
               } else {
                 video.src = src;
               }
 
-              video.onerror = () => { console.warn("[player] fonte falhou, tentando próxima"); tryNext(); };
               video.play().catch(() => {});
             }
 
