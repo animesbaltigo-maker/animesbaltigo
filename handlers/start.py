@@ -2,7 +2,7 @@ import asyncio
 import html
 import time
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
@@ -21,6 +21,13 @@ from services.user_registry import register_user
 from utils.gatekeeper import ensure_channel_membership
 
 BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBZ987imm1UGdjCzV5n7FN2F6Ayew0umj2AAJkC2sbJAWhRWilm7WSjeD5AQADAgADeQADOgQ/photo.jpg"
+
+# URL base do teu miniapp
+# Exemplo:
+# MINIAPP_URL = "https://seudominio.com/miniapp"
+# ou
+# MINIAPP_URL = "https://SEU_IP:8000"
+MINIAPP_URL = "https://jerusalem-editorials-screensavers-for.trycloudflare.com/miniapp/index.html"
 
 START_COOLDOWN = 1.2
 START_DEEP_LINK_TTL = 8.0
@@ -63,6 +70,12 @@ def _available_quality_set(player: dict) -> set:
     return qualities
 
 
+def _build_miniapp_episode_url(anime_id: str, episode: str, quality: str) -> str:
+    quality = _normalize_quality(quality)
+    base = MINIAPP_URL.rstrip("/")
+    return f"{base}/?anime={anime_id}&ep={episode}&q={quality}"
+
+
 def _player_keyboard(
     anime_id: str,
     episode: str,
@@ -97,8 +110,19 @@ def _player_keyboard(
         callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
     )
 
+    miniapp_episode_url = _build_miniapp_episode_url(
+        anime_id=anime_id,
+        episode=str(episode),
+        quality=selected_quality,
+    )
+
     rows = [
-        [InlineKeyboardButton("▶️ Assistir", url=detected_video or "https://t.me")],
+        [
+            InlineKeyboardButton(
+                "▶️ Assistir",
+                web_app=WebAppInfo(url=miniapp_episode_url),
+            )
+        ],
         [watch_toggle_button],
         [
             InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
@@ -404,7 +428,6 @@ async def start(update, context):
                         timeout=25,
                     )
 
-                    detected_video = (player.get("video") or "").strip()
                     total_episodes = player.get("total_episodes", 0)
                     quality = _normalize_quality(player.get("quality", "HD"))
                     prev_episode = player.get("prev_episode")
@@ -422,7 +445,7 @@ async def start(update, context):
                     keyboard = _player_keyboard(
                         anime_id=anime_id,
                         episode=str(episode),
-                        detected_video=detected_video,
+                        detected_video=(player.get("video") or "").strip(),
                         prev_episode=prev_episode,
                         next_episode=next_episode,
                         selected_quality=quality,
