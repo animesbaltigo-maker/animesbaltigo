@@ -1,6 +1,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1001,7 +1002,7 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    video, iframe {
+    video, video {
       width: 100%;
       height: 100%;
       display: block;
@@ -2213,7 +2214,7 @@ if (!sources.length) {
     </div>
   `;
 } else {
-  // SEMPRE usa VIDEO (nunca iframe)
+  // SEMPRE usa VIDEO (nunca video)
   playerHtml = `
     <video id="main-video" controls autoplay playsinline preload="metadata" style="width:100%;height:100%;background:#000;"></video>
   `;
