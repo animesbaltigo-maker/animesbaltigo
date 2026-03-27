@@ -1157,6 +1157,7 @@ async def _url_exists_with_client(client, url: str) -> bool:
                     "video" in content_type
                     or "mp4" in content_type
                     or "octet-stream" in content_type
+                    or "text/html" in content_type
                 ):
                     return True
         except Exception:
@@ -1263,15 +1264,15 @@ async def _resolve_video_map(base_slug: str, episode: str, anime_id: str | None 
 
         quality_map = await _try_lightspeed_urls(target_slug, episode)
 
-        alt_url = await _try_blogger_or_googlevideo(target_slug, episode)
-        if alt_url:
-            alt_quality = _normalize_quality_label(_extract_quality_name(alt_url)) or "HD"
-
-            if alt_quality not in quality_map:
+        if not quality_map:
+            alt_url = await _try_blogger_or_googlevideo(target_slug, episode)
+            if alt_url:
+                alt_quality = _normalize_quality_label(_extract_quality_name(alt_url)) or "HD"
                 quality_map[alt_quality] = alt_url
 
-            if "HD" not in quality_map:
-                quality_map["HD"] = alt_url
+        if not quality_map:
+            fallback = f"https://lightspeedst.net/s6/mp4/{target_slug}/sd/{episode}.mp4"
+            quality_map["SD"] = fallback
 
         return quality_map
 
