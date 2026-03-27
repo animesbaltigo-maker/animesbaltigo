@@ -11,6 +11,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from core.http_client import close_http_client
 from handlers.start import start
 from handlers.search import buscar
@@ -103,6 +104,10 @@ def main():
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CommandHandler("pedido", pedido))
     app.add_handler(CommandHandler("calendario", calendario))
+    app.add_handler(CommandHandler("epanime", epanime_command))
+    app.add_handler(CallbackQueryHandler(epanime_select_callback, pattern=r"^epanime_select:"))
+    app.add_handler(CallbackQueryHandler(epanime_page_callback, pattern=r"^epanime_page:"))
+    app.add_handler(CallbackQueryHandler(epanime_back_search_callback, pattern=r"^epanime_back_search$"))
 
     app.add_handler(CallbackQueryHandler(callback_info_anime, pattern=r"^info_anime:"))
     app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern=r"^bc\|"))
