@@ -203,6 +203,8 @@ def _anime_text(anime: dict) -> str:
 def _variant_keyboard(group_item: dict) -> InlineKeyboardMarkup:
     rows = []
 
+    base = MINIAPP_URL.rstrip("/")
+
     variants = group_item.get("variants") or []
     sub_variant = next((v for v in variants if not v.get("is_dubbed")), None)
     dub_variant = next((v for v in variants if v.get("is_dubbed")), None)
@@ -211,7 +213,9 @@ def _variant_keyboard(group_item: dict) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton(
                 "🇯🇵 Legendado",
-                callback_data=f"var|{sub_variant['id']}",
+                web_app=WebAppInfo(
+                    url=f"{base}/?anime={sub_variant['id']}"
+                ),
             )
         ])
 
@@ -219,7 +223,9 @@ def _variant_keyboard(group_item: dict) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton(
                 "🇧🇷 Dublado",
-                callback_data=f"var|{dub_variant['id']}",
+                web_app=WebAppInfo(
+                    url=f"{base}/?anime={dub_variant['id']}"
+                ),
             )
         ])
 
@@ -228,9 +234,13 @@ def _variant_keyboard(group_item: dict) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton(
                 "📺 Ver episódios",
-                callback_data=f"eps|{default_id}|0",
+                web_app=WebAppInfo(
+                    url=f"{base}/?anime={default_id}"
+                ),
             )
         ])
+
+    return InlineKeyboardMarkup(rows)
 
     return InlineKeyboardMarkup(rows)
 
