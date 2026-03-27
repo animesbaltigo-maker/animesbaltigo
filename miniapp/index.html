@@ -2162,206 +2162,117 @@
       );
 
       let playerHtml = "";
-      if (!source) {
-        playerHtml = `
-          <div style="display:flex;flex-direction:column;align-items:center;gap:14px;color:var(--muted);padding:40px 24px;">
-            <div style="font-size:36px;">⚠️</div>
-            <strong style="color:#e0e0f0;font-size:16px;">Vídeo indisponível</strong>
-            <span style="font-size:13.5px;text-align:center;">Este episódio não está disponível no momento.</span>
-          </div>
-        `;
-      } else if (isIframeSource(source)) {
-        playerHtml = `<iframe src="${esc(source)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
-      } else if (isM3u8Source(source)) {
-        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata"></video>`;
-      } else {
-        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata" crossorigin="anonymous"><source src="${esc(source)}" type="video/mp4"></video>`;
+
+// Detecta se é vídeo direto
+function isPlayableSource(url) {
+  return (
+    /\.m3u8($|\?)/i.test(url) ||
+    /\.mp4($|\?)/i.test(url) ||
+    /googlevideo\.com\/videoplayback/i.test(url)
+  );
+}
+
+// Monta lista inteligente de fontes
+function buildSmartSources(item, activeQ) {
+  const sources = [];
+  const seen = new Set();
+
+  const push = (url) => {
+    if (!url) return;
+
+    const normalized = normalizeSourceUrl(url);
+    if (!normalized || seen.has(normalized)) return;
+
+    seen.add(normalized);
+    sources.push(normalized);
+  };
+
+  // principal
+  push(item.video);
+
+  // qualidades
+  if (item.videos) {
+    push(item.videos[activeQ]);
+    push(item.videos.FULLHD);
+    push(item.videos.HD);
+    push(item.videos.SD);
+  }
+
+  return sources;
+}
+
+const sources = buildSmartSources(item, activeQ);
+
+// SEM FONTE
+if (!sources.length) {
+  playerHtml = `
+    <div style="display:flex;flex-direction:column;align-items:center;gap:14px;color:var(--muted);padding:40px 24px;">
+      <div style="font-size:36px;">⚠️</div>
+      <strong style="color:#e0e0f0;font-size:16px;">Vídeo indisponível</strong>
+      <span style="font-size:13.5px;text-align:center;">Este episódio não está disponível no momento.</span>
+    </div>
+  `;
+} else {
+  // SEMPRE usa VIDEO (nunca iframe)
+  playerHtml = `
+    <video id="main-video" controls autoplay playsinline preload="metadata" style="width:100%;height:100%;background:#000;"></video>
+  `;
+
+  // inicia player com fallback automático
+  setTimeout(() => {
+    const video = document.getElementById("main-video");
+    if (!video) return;
+
+    let index = 0;
+
+    function tryNext() {
+      if (index >= sources.length) {
+        console.error("Nenhuma fonte funcionou");
+        return;
       }
 
-      // Save to history
-      saveHistory({
-        id: animeId,
-        episode,
-        quality: activeQ,
-        time: Date.now(),
-        title: item.title || animeId,
-        cover_url: item.thumb || "",
-        prefix: item.is_dubbed ? "DUB" : "LEG",
-      });
+      const src = sources[index++];
+      
+      // limpa player
+      if (video._hls) {
+        video._hls.destroy();
+        video._hls = null;
+      }
 
-      // Mark as watched
-      markWatched(animeId, episode);
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
 
-      if (item.next_episode) prefetchEpisode(animeId, item.next_episode, activeQ);
+      // M3U8 (HLS)
+      if (/\.m3u8/i.test(src)) {
+        if (window.Hls && Hls.isSupported()) {
+          const hls = new Hls();
+          video._hls = hls;
 
-      app.innerHTML = `
-        <section class="player-wrap fade-in">
-          <div class="player-header">
-            <div>
-              <h1 class="player-title">${esc(safe(item.title, animeId))}</h1>
-              <div class="player-sub">Episódio ${esc(episode)} · ${esc(activeQ)}</div>
-            </div>
-            <button class="btn btn-ghost" onclick="openAnime('${esc(animeId)}')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg>
-              Todos os episódios
-            </button>
-          </div>
+          hls.on(Hls.Events.ERROR, function (_, data) {
+            if (data && data.fatal) {
+              hls.destroy();
+              tryNext();
+            }
+          });
 
-          <div class="player-panel">
-            <div class="video-box">${playerHtml}</div>
-          </div>
-
-          <div class="player-below">
-            <div class="player-info-card">
-              <div class="control-label">Descrição</div>
-              <p style="color:#c8c8d8;font-size:14px;line-height:1.65;margin:0;">
-                ${esc(safe(item.description, "Sem descrição para este episódio."))}
-              </p>
-              <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted);">
-                <span>Total: <strong style="color:#e0e0f0;">${item.total_episodes || "N/A"} eps</strong></span>
-                <span>Ep atual: <strong style="color:#e0e0f0;">${esc(episode)}</strong></span>
-              </div>
-            </div>
-
-            <div class="player-controls-card">
-              ${(item.available_qualities || []).length > 0 ? `
-                <div>
-                  <div class="control-label">Qualidade</div>
-                  <div class="quality-row">
-                    ${(item.available_qualities || []).map(q => `
-                      <button class="chip ${q === activeQ ? "active" : ""}"
-                              onclick="openEpisode('${esc(animeId)}', '${esc(episode)}', '${esc(q)}')">${esc(q)}</button>
-                    `).join("")}
-                  </div>
-                </div>
-              ` : ""}
-
-              <div>
-                <div class="control-label">Navegação</div>
-                <div class="nav-row">
-                  ${item.prev_episode ? `
-                    <button class="chip" onclick="openEpisode('${esc(animeId)}', '${esc(item.prev_episode)}', '${esc(activeQ)}')">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg>
-                      Ep ${esc(item.prev_episode)}
-                    </button>
-                  ` : ""}
-                  ${item.next_episode ? `
-                    <button class="chip" onclick="openEpisode('${esc(animeId)}', '${esc(item.next_episode)}', '${esc(activeQ)}')">
-                      Ep ${esc(item.next_episode)}
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
-                    </button>
-                  ` : ""}
-                </div>
-              </div>
-
-              <div class="autoplay-box" id="autoplayBox">
-                <span class="countdown-text">
-                  Próximo em <span class="countdown-num" id="autoplayNum">8</span>s
-                </span>
-                ${item.next_episode ? `
-                  <button class="btn btn-primary" style="padding:8px 14px;font-size:12px;"
-                          onclick="clearAutoplay();openEpisode('${esc(animeId)}', '${esc(item.next_episode)}', '${esc(activeQ)}')">
-                    Assistir agora
-                  </button>
-                ` : ""}
-              </div>
-            </div>
-          </div>
-        </section>
-      `;
-
-      // HLS
-      if (isM3u8Source(source)) {
-        const initHls = () => {
-          const video = document.getElementById("main-video");
-          if (!video) return;
-          if (window.Hls?.isSupported()) {
-            const hls = new Hls();
-            hls.loadSource(source);
-            hls.attachMedia(video);
-          } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-            video.src = source;
-          }
-        };
-
-        if (window.Hls) {
-          initHls();
+          hls.loadSource(src);
+          hls.attachMedia(video);
         } else {
-          const s = document.createElement("script");
-          s.src = "https://cdn.jsdelivr.net/npm/hls.js@latest";
-          s.onload = initHls;
-          document.body.appendChild(s);
+          video.src = src;
         }
-      } else if (source && !isIframeSource(source)) {
-        enhanceNativeVideo(source);
+      } else {
+        // MP4 / GoogleVideo
+        video.src = src;
       }
 
-      if (source && !isIframeSource(source)) {
-        bindAutoplay(animeId, item.next_episode, activeQ);
-      }
+      video.onerror = () => {
+        tryNext();
+      };
 
-      setStatus("Episódio carregado");
-      scrollUp();
+      video.play().catch(() => {});
     }
 
-    // ─── Callbacks ───
-    window.goHome = goHome;
-    window.goSection = goSection;
-    window.openAnime = openAnime;
-    window.openEpisode = openEpisode;
-    window.prefetchAnime = window.prefetchAnime;
-    window.prefetchEpisode = window.prefetchEpisode;
-    window.clearAutoplay = clearAutoplay;
-
-    window.changeSectionPage = (page) => goSection(currentSection, page);
-    window.changeSearchPage = (page) => doSearch(currentSearch, page);
-
-    function clearSearch() {
-      searchInput.value = "";
-      searchClear.classList.remove("visible");
-      goHome();
-    }
-
-    window.clearSearch = clearSearch;
-
-    // ─── Search events ───
-    searchInput.addEventListener("input", () => {
-      const v = searchInput.value.trim();
-      searchClear.classList.toggle("visible", v.length > 0);
-      clearTimeout(searchTimeout);
-      if (v.length >= 2) {
-        searchTimeout = setTimeout(() => doSearch(v, 1), 480);
-      }
-    });
-
-    searchInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        clearTimeout(searchTimeout);
-        doSearch(searchInput.value, 1);
-      }
-      if (e.key === "Escape") {
-        clearSearch();
-      }
-    });
-
-    // ─── Auto-refresh ───
-    setInterval(() => {
-      if (currentMode === "home") {
-        // Clear recent cache to refresh
-        cache.delete(`${API}/api/catalog/home`);
-      }
-    }, 3 * 60 * 1000); // every 3 min
-
-    // ─── Init ───
-    initTelegramMiniApp();
-
-    goHome().catch(err => {
-      setStatus("Erro ao carregar");
-      heroTitle.textContent = "Erro de conexão";
-      heroDesc.textContent = err.message || "Falha inesperada";
-      console.error(err);
-    });
-  </script>
-</body>
-</html>
+    tryNext();
+  }, 50);
+}
