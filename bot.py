@@ -109,7 +109,7 @@ def main():
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CommandHandler("pedido", pedido))
     app.add_handler(CommandHandler("calendario", calendario))
-    app.add_handler(CommandHandler("epanime", epanime_command))
+    app.add_handler(CommandHandler("epanime", epanime))
     app.add_handler(CallbackQueryHandler(epanime_select_callback, pattern=r"^epanime_select:"))
     app.add_handler(CallbackQueryHandler(epanime_page_callback, pattern=r"^epanime_page:"))
     app.add_handler(CallbackQueryHandler(epanime_back_search_callback, pattern=r"^epanime_back_search$"))
