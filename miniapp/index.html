@@ -1115,8 +1115,39 @@
         );
         const item = data.item || {};
         const activeQ = item.quality || quality;
-        const sources = buildSmartSources(item, activeQ);
 
+        function isPlayableSource(url) {
+          return /(\.m3u8($|\?)|\.mp4($|\?)|googlevideo\.com\/videoplayback)/i.test(url || "");
+        }
+
+        function isIframeSource(url) {
+          return /(blogger\.com\/video\.g|\/embed\/|player|iframe)/i.test(url || "");
+        }
+
+        function buildSmartSources(epItem, selectedQ) {
+          const sources = [];
+          const seen = new Set();
+
+          const push = (url, kind = "video") => {
+            const normalized = normalizeSourceUrl(url);
+            if (!normalized || seen.has(normalized)) return;
+            seen.add(normalized);
+            sources.push({ url: normalized, kind });
+          };
+
+          push(epItem.video, isIframeSource(epItem.video) && !isPlayableSource(epItem.video) ? "iframe" : "video");
+
+          if (epItem.videos) {
+            [selectedQ, "FULLHD", "HD", "SD"].forEach((q) => {
+              const value = epItem.videos[q];
+              push(value, isIframeSource(value) && !isPlayableSource(value) ? "iframe" : "video");
+            });
+          }
+
+          return sources;
+        }
+
+        const sources = buildSmartSources(item, activeQ);
         console.log("[openEpisode] fontes disponíveis:", sources.length, sources);
 
         let videoBoxHtml;
@@ -1183,70 +1214,140 @@
         if (sources.length) {
           setTimeout(() => {
             const video = document.getElementById("main-video");
-            if (!video) return;
+            const box = document.querySelector(".video-box");
+            if (!video || !box) return;
+
             let index = 0;
+            let changing = false;
+            let loadTimeout = null;
 
-            function tryNext() {
-              if (index >= sources.length) {
-                console.error("[player] Nenhuma fonte funcionou");
-                return;
+            function cleanup() {
+              if (loadTimeout) {
+                clearTimeout(loadTimeout);
+                loadTimeout = null;
               }
-
-              const src = sources[index++];
-              console.log("[player] tentando fonte:", src);
-
+              video.onerror = null;
+              video.onloadedmetadata = null;
+              video.oncanplay = null;
+              video.onplaying = null;
               if (video._hls) {
                 try { video._hls.destroy(); } catch (_) {}
                 video._hls = null;
               }
-
               try { video.pause(); } catch (_) {}
               try { video.removeAttribute("src"); } catch (_) {}
               try { video.load(); } catch (_) {}
+            }
 
-              let timedOut = false;
-              const timeout = setTimeout(() => {
-                timedOut = true;
-                console.warn("[player] timeout, tentando próxima");
+            function renderFailure(message, details = "") {
+              box.innerHTML = `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);padding:40px 24px;height:100%;text-align:center;">
+                  <div style="font-size:36px;">⚠️</div>
+                  <strong style="color:#e0e0f0;font-size:16px;">${message}</strong>
+                  <span style="font-size:13.5px;max-width:720px;">${details || "Nenhuma fonte conseguiu reproduzir este episódio dentro do player interno."}</span>
+                </div>
+              `;
+            }
+
+            function renderIframe(src) {
+              cleanup();
+              box.innerHTML = `
+                <iframe
+                  src="${src}"
+                  allow="autoplay; fullscreen; picture-in-picture"
+                  allowfullscreen
+                  referrerpolicy="no-referrer"
+                  style="width:100%;height:100%;border:0;background:#000;"
+                ></iframe>
+              `;
+            }
+
+            function fail(reason) {
+              if (changing) return;
+              changing = true;
+              console.warn("[player] fonte falhou:", reason);
+              cleanup();
+              setTimeout(() => {
+                changing = false;
                 tryNext();
+              }, 50);
+            }
+
+            function armTimeout(src) {
+              if (loadTimeout) clearTimeout(loadTimeout);
+              loadTimeout = setTimeout(() => {
+                const readyState = Number(video.readyState || 0);
+                const currentTime = Number(video.currentTime || 0);
+                if (readyState < 2 && currentTime === 0) {
+                  fail(`timeout @ ${src}`);
+                }
               }, 8000);
+            }
 
-              video.onerror = () => {
-                clearTimeout(timeout);
-                console.warn("[player] fonte falhou, tentando próxima");
-                tryNext();
+            function tryNext() {
+              if (index >= sources.length) {
+                console.error("[player] Nenhuma fonte funcionou");
+                renderFailure("Vídeo bloqueado ou indisponível", "As fontes retornaram, mas o navegador não conseguiu tocar nenhuma dentro do player interno. Isso normalmente indica bloqueio do host por referer ou hotlink.");
+                return;
+              }
+
+              const entry = sources[index++];
+              const src = entry.url;
+              console.log("[player] tentando fonte:", entry);
+
+              if (entry.kind === "iframe") {
+                renderIframe(src);
+                return;
+              }
+
+              cleanup();
+              armTimeout(src);
+
+              video.onerror = () => fail(`video.onerror @ ${src}`);
+              video.onloadedmetadata = () => {
+                if (loadTimeout) {
+                  clearTimeout(loadTimeout);
+                  loadTimeout = null;
+                }
+              };
+              video.oncanplay = () => {
+                if (loadTimeout) {
+                  clearTimeout(loadTimeout);
+                  loadTimeout = null;
+                }
+              };
+              video.onplaying = () => {
+                if (loadTimeout) {
+                  clearTimeout(loadTimeout);
+                  loadTimeout = null;
+                }
               };
 
-              video.onloadedmetadata = () => clearTimeout(timeout);
-              video.oncanplay = () => clearTimeout(timeout);
-
-              if (/\.m3u8/i.test(src)) {
+              if (/\.m3u8($|\?)/i.test(src)) {
                 if (window.Hls && Hls.isSupported()) {
-                  const hls = new Hls();
+                  const hls = new Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 90 });
                   video._hls = hls;
-
                   hls.on(Hls.Events.ERROR, function (_, data) {
-                    if (data?.fatal && !timedOut) {
-                      clearTimeout(timeout);
-                      try { hls.destroy(); } catch (_) {}
-                      tryNext();
-                    }
+                    if (data && data.fatal) fail(`hls fatal @ ${src}`);
                   });
-
                   hls.loadSource(src);
                   hls.attachMedia(video);
                 } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
                   video.src = src;
                 } else {
-                  clearTimeout(timeout);
-                  tryNext();
+                  fail(`sem suporte hls @ ${src}`);
                   return;
                 }
               } else {
                 video.src = src;
               }
 
-              video.play().catch(() => {});
+              const promise = video.play?.();
+              if (promise && typeof promise.catch === "function") {
+                promise.catch((error) => {
+                  console.warn("[player] play() falhou:", error);
+                });
+              }
             }
 
             tryNext();
