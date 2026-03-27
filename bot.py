@@ -41,7 +41,7 @@ from services.animefire_client import preload_popular_cache
 
 from telegram.ext import InlineQueryHandler
 from handlers.inline import inline_query
-from handlers.testminiapp import testminiapp_command
+from handlers.testminiapp import testminiapp
 
 
 init_metrics_db()
