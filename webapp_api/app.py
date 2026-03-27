@@ -1,8 +1,3 @@
-"""
-webapp_api/app.py — API principal do QG BALTIGO
-Coloque este arquivo em: ~/animesbaltigo/webapp_api/app.py
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -10,14 +5,21 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-# ── Caminhos ─────────────────────────────────────────────────────────────────
-BASE_DIR    = Path(__file__).resolve().parent.parent   # ~/animesbaltigo
-MINIAPP_DIR = BASE_DIR / "miniapp"                     # ~/animesbaltigo/miniapp
+from services.animefire_client import (
+    search_anime,
+    get_anime_details,
+    get_episodes,
+    get_episode_player,
+    preload_popular_cache,
+)
+from services.recent_episodes_client import get_recent_episodes
 
-# ── App ───────────────────────────────────────────────────────────────────────
+BASE_DIR = Path(__file__).resolve().parent.parent
+MINIAPP_DIR = BASE_DIR / "miniapp"
+
 app = FastAPI(title="QG BALTIGO API", docs_url="/docs", redoc_url=None)
 
 app.add_middleware(
@@ -27,16 +29,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Importações dos serviços ──────────────────────────────────────────────────
-from services.animefire_client import (
-    search_anime,
-    get_anime_details,
-    get_episodes,
-    get_episode_player,
-    preload_popular_cache,
-)
+if MINIAPP_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(MINIAPP_DIR)), name="static")
 
-# ── Página raiz (index.html) ──────────────────────────────────────────────────
+
 @app.get("/", include_in_schema=False)
 async def serve_index():
     index_file = MINIAPP_DIR / "index.html"
@@ -45,98 +41,124 @@ async def serve_index():
     raise HTTPException(status_code=404, detail=f"index.html não encontrado em {index_file}")
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
     return {"ok": True}
 
 
-# ── Catálogo: home ────────────────────────────────────────────────────────────
+def _normalize_card(item: dict) -> dict:
+    anime_id = item.get("anime_id") or item.get("id") or ""
+    title = item.get("title") or anime_id.replace("-", " ").title()
+    episode = item.get("episode")
+    thumb = (
+        item.get("thumb")
+        or item.get("cover_url")
+        or item.get("banner_url")
+        or item.get("image")
+        or ""
+    )
+
+    is_dubbed = "dub" in title.lower() or "dublado" in title.lower()
+
+    return {
+        "id": anime_id,
+        "anime_id": anime_id,
+        "title": title,
+        "display_title": title,
+        "episode": episode,
+        "cover_url": thumb,
+        "banner_url": thumb,
+        "thumb": thumb,
+        "prefix": "DUB" if is_dubbed else "LEG",
+        "is_dubbed": is_dubbed,
+        "status": "",
+        "year": None,
+        "episodes": None,
+        "score": None,
+        "genres": [],
+        "studio": "",
+        "description": "",
+    }
+
+
 @app.get("/api/catalog/home")
 async def catalog_home():
-    """
-    Retorna várias seções: recentes, em lançamento, top, legendados, dublados.
-    Cada seção tem: key, title, items[], total_pages, has_next.
-    """
-    from services.recent_episodes_client import (
-        get_recent_dubbed,
-        get_recent_subbed,
-        get_launching,
-        get_top_animes,
-    )
+    try:
+        recent_raw = await get_recent_episodes(limit=120)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
-    async def _safe(coro, fallback=None):
-        try:
-            return await coro
-        except Exception as exc:
-            print(f"[HOME] erro: {repr(exc)}")
-            return fallback or []
+    recent_raw = recent_raw or []
+    normalized = [_normalize_card(x) for x in recent_raw if x.get("anime_id") or x.get("id")]
 
-    dubbed_raw, subbed_raw, launching_raw, top_raw = await asyncio.gather(
-        _safe(get_recent_dubbed()),
-        _safe(get_recent_subbed()),
-        _safe(get_launching()),
-        _safe(get_top_animes()),
-    )
-
-    def _build_section(key, title, raw_items, page_size=12):
-        items = (raw_items or [])[:page_size]
-        return {
-            "key": key,
-            "title": title,
-            "items": items,
-            "total_pages": 1,
-            "has_next": False,
-        }
+    dubbed = [x for x in normalized if x["is_dubbed"]]
+    subbed = [x for x in normalized if not x["is_dubbed"]]
 
     sections = [
-        _build_section("em_lancamento", "🔴 Em Lançamento Hoje", launching_raw),
-        _build_section("atualizados",   "Recém Atualizados",    subbed_raw),
-        _build_section("top",           "🔥 Os Mais Populares", top_raw),
-        _build_section("dublados",      "Dublados",             dubbed_raw),
-        _build_section("legendados",    "Legendados",           subbed_raw),
+        {
+            "key": "recentes",
+            "title": "Últimos Episódios",
+            "items": normalized[:12],
+            "total_pages": 1,
+            "has_next": False,
+        },
+        {
+            "key": "dublados",
+            "title": "Dublados",
+            "items": dubbed[:12],
+            "total_pages": 1,
+            "has_next": False,
+        },
+        {
+            "key": "legendados",
+            "title": "Legendados",
+            "items": subbed[:12],
+            "total_pages": 1,
+            "has_next": False,
+        },
+        {
+            "key": "atualizados",
+            "title": "Recém Atualizados",
+            "items": normalized[:12],
+            "total_pages": 1,
+            "has_next": False,
+        },
     ]
 
-    # remove seções vazias
     sections = [s for s in sections if s["items"]]
 
     return {"ok": True, "sections": sections}
 
 
-# ── Catálogo: listagem por seção ──────────────────────────────────────────────
 @app.get("/api/catalog/list")
 async def catalog_list(
-    section: str = Query("dublados"),
-    page:    int = Query(1, ge=1),
+    section: str = Query("recentes"),
+    page: int = Query(1, ge=1),
 ):
-    from services.recent_episodes_client import (
-        get_recent_dubbed,
-        get_recent_subbed,
-        get_launching,
-        get_top_animes,
-    )
-
     PAGE_SIZE = 24
 
-    SECTION_MAP = {
-        "dublados":      (get_recent_dubbed,  "Dublados"),
-        "legendados":    (get_recent_subbed,  "Legendados"),
-        "em_lancamento": (get_launching,      "Em Lançamento"),
-        "atualizados":   (get_recent_subbed,  "Recém Atualizados"),
-        "top":           (get_top_animes,     "Mais Populares"),
-        "recentes":      (get_recent_subbed,  "Últimos Episódios"),
-    }
-
-    fetcher, title = SECTION_MAP.get(section, (get_recent_subbed, section.replace("_", " ").title()))
-
     try:
-        all_items = await fetcher()
+        recent_raw = await get_recent_episodes(limit=300)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-    all_items = all_items or []
+    recent_raw = recent_raw or []
+    normalized = [_normalize_card(x) for x in recent_raw if x.get("anime_id") or x.get("id")]
+
+    dubbed = [x for x in normalized if x["is_dubbed"]]
+    subbed = [x for x in normalized if not x["is_dubbed"]]
+
+    section_map = {
+        "recentes": ("Últimos Episódios", normalized),
+        "atualizados": ("Recém Atualizados", normalized),
+        "dublados": ("Dublados", dubbed),
+        "legendados": ("Legendados", subbed),
+    }
+
+    title, all_items = section_map.get(section, ("Últimos Episódios", normalized))
+
     total = len(all_items)
-    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE) if total else 1
     page = max(1, min(page, total_pages))
     start = (page - 1) * PAGE_SIZE
     items = all_items[start : start + PAGE_SIZE]
@@ -153,13 +175,13 @@ async def catalog_list(
     }
 
 
-# ── Busca ─────────────────────────────────────────────────────────────────────
 @app.get("/api/search")
 async def search(
-    q:    str = Query(..., min_length=1),
+    q: str = Query(..., min_length=1),
     page: int = Query(1, ge=1),
 ):
     PAGE_SIZE = 24
+
     try:
         all_items = await search_anime(q)
     except Exception as exc:
@@ -167,7 +189,7 @@ async def search(
 
     all_items = all_items or []
     total = len(all_items)
-    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE) if total else 1
     page = max(1, min(page, total_pages))
     start = (page - 1) * PAGE_SIZE
     items = all_items[start : start + PAGE_SIZE]
@@ -183,10 +205,8 @@ async def search(
     }
 
 
-# ── Detalhes do anime ─────────────────────────────────────────────────────────
 @app.get("/api/anime/{anime_id:path}")
 async def anime_detail(anime_id: str):
-    # garante que não é uma rota de episódio (tratada abaixo)
     if "/episode/" in anime_id:
         raise HTTPException(status_code=404, detail="Use /api/anime/{id}/episode/{ep}")
 
@@ -204,16 +224,15 @@ async def anime_detail(anime_id: str):
     }
 
 
-# ── Player do episódio ────────────────────────────────────────────────────────
 @app.get("/api/anime/{anime_id}/episode/{episode}")
 async def episode_player(
     anime_id: str,
-    episode:  str,
-    quality:  str = Query("HD"),
+    episode: str,
+    quality: str = Query("HD"),
 ):
     try:
-        details  = await get_anime_details(anime_id)
-        player   = await get_episode_player(anime_id, episode, quality)
+        details = await get_anime_details(anime_id)
+        player = await get_episode_player(anime_id, episode, quality)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -227,7 +246,9 @@ async def episode_player(
     }
 
 
-# ── Startup: pré-aquece cache ─────────────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():
-    asyncio.create_task(preload_popular_cache())
+    try:
+        asyncio.create_task(preload_popular_cache())
+    except Exception:
+        pass
