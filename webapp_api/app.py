@@ -3,15 +3,12 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from core.http_client import get_http_client
 from services.animefire_client import (
@@ -25,20 +22,19 @@ from services.recent_episodes_client import get_recent_episodes
 BASE_URL = "https://animefire.io"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": BASE_URL,
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
 }
 
-HOME_SECTION_LIMIT = 10
-GRID_PAGE_LIMIT = 20
-MAX_EPISODES_FETCH = 400
+HOME_SECTION_LIMIT = 12
+GRID_PAGE_LIMIT = 24
 
-SECTION_TTL = 60 * 15
-RECENT_TTL = 60
-SEARCH_TTL = 60 * 10
-ANIME_TTL = 60 * 60 * 2
-EPISODE_TTL = 60 * 60
-HOME_TTL = 60 * 5
+SECTION_TTL = 60 * 15      # 15 min
+RECENT_TTL = 60            # 1 min
+SEARCH_TTL = 60 * 10       # 10 min
+ANIME_TTL = 60 * 60 * 2    # 2 h
+EPISODE_TTL = 60 * 60      # 1 h
 
 SECTIONS: dict[str, dict[str, str]] = {
     "recentes": {"title": "Últimos Episódios", "kind": "recent"},
@@ -57,7 +53,11 @@ SECTIONS: dict[str, dict[str, str]] = {
     "suspense": {"title": "Suspense", "slug": "genero/suspense"},
 }
 
-app = FastAPI(title="QG BALTIGO API")
+app = FastAPI(
+    title="QG BALTIGO API",
+    description="API para streaming de animes",
+    version="2.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -69,24 +69,12 @@ app.add_middleware(
 
 _CACHE: dict[str, dict[str, Any]] = {}
 _LOCKS: dict[str, asyncio.Lock] = {}
-_START_TS = time.time()
 
 
-class MissingMiniappFile(Exception):
-    pass
-
+# ─── String Helpers ───────────────────────────────────────────────────────────
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
-
-
-def _safe_int(value: Any, default: int | None = None) -> int | None:
-    try:
-        if value is None or value == "":
-            return default
-        return int(str(value).strip())
-    except Exception:
-        return default
 
 
 def _clean_description(text: str) -> str:
@@ -98,6 +86,9 @@ def _clean_description(text: str) -> str:
         r"Dê o máximo de detalhes.*",
         r"se o vídeo não carregar.*",
         r"quer ser notificado sempre que um episódio novo for lançado\?.*",
+        r"Clique aqui.*",
+        r"assista também.*",
+        r"veja também.*",
     ]
     for pattern in junk_patterns:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
@@ -108,14 +99,14 @@ def _clean_genres(genres: list[str] | None) -> list[str]:
     if not genres:
         return []
     seen: set[str] = set()
-    cleaned: list[str] = []
+    cleaned = []
+    skip_prefixes = ("animes de ", "oie", "clique")
     for genre in genres:
         g = _clean(str(genre))
         if not g:
             continue
-        if g.lower().startswith("animes de "):
-            continue
-        if g.lower() in {"oie ツ", "clique aqui"}:
+        g_lower = g.lower()
+        if any(g_lower.startswith(p) for p in skip_prefixes):
             continue
         if g not in seen:
             seen.add(g)
@@ -126,13 +117,11 @@ def _clean_genres(genres: list[str] | None) -> list[str]:
 def _clean_alt_titles(values: list[str] | None) -> list[str]:
     if not values:
         return []
-    cleaned: list[str] = []
+    cleaned = []
     seen: set[str] = set()
     for value in values:
         v = _clean_description(str(value))
-        if not v:
-            continue
-        if len(v) > 120:
+        if not v or len(v) > 120:
             continue
         if v not in seen:
             seen.add(v)
@@ -140,78 +129,17 @@ def _clean_alt_titles(values: list[str] | None) -> list[str]:
     return cleaned
 
 
-def _cover_fallback() -> str:
-    return "https://placehold.co/600x900/111111/ffffff?text=QG+BALTIGO"
+def _is_dubbed(anime_id: str, title: str) -> bool:
+    return (
+        "dublado" in (anime_id or "").lower()
+        or "dublado" in (title or "").lower()
+        or "(dub)" in (title or "").lower()
+    )
 
 
-def _banner_fallback() -> str:
-    return "https://placehold.co/1280x720/111111/ffffff?text=QG+BALTIGO"
+# ─── Cache ────────────────────────────────────────────────────────────────────
 
-
-def _normalize_title(title: str, anime_id: str) -> str:
-    value = _clean(title)
-    if value:
-        return value
-    return anime_id.replace("-", " ").title()
-
-
-def _infer_dubbed(title: str, anime_id: str) -> bool:
-    check = f"{title} {anime_id}".lower()
-    return "dublado" in check or "dub" in check
-
-
-def _strip_audio_tag_from_title(title: str) -> str:
-    value = _clean(title)
-    value = re.sub(r"\s*\[(?:DUB|LEG)\]\s*", "", value, flags=re.IGNORECASE)
-    value = re.sub(r"\s*-\s*(?:dublado|legendado)$", "", value, flags=re.IGNORECASE)
-    value = re.sub(r"\s+\((?:dublado|legendado)\)$", "", value, flags=re.IGNORECASE)
-    return _clean(value)
-
-
-def _make_card_payload(data: dict[str, Any]) -> dict[str, Any]:
-    anime_id = _clean(str(data.get("id") or ""))
-    title = _normalize_title(str(data.get("title") or ""), anime_id)
-    title = _strip_audio_tag_from_title(title)
-    is_dubbed = bool(data.get("is_dubbed")) or _infer_dubbed(title, anime_id)
-    cover = data.get("cover_url") or data.get("media_image_url") or data.get("banner_url") or ""
-    banner = data.get("banner_url") or data.get("cover_url") or data.get("media_image_url") or ""
-    episodes = _safe_int(data.get("episodes"))
-    available = bool(episodes and episodes > 0)
-
-    payload = {
-        "id": anime_id,
-        "title": title,
-        "display_title": title,
-        "audio_tag": "DUB" if is_dubbed else "LEG",
-        "prefix": "DUB" if is_dubbed else "LEG",
-        "is_dubbed": is_dubbed,
-        "cover_url": cover or _cover_fallback(),
-        "banner_url": banner or cover or _banner_fallback(),
-        "description": _clean_description(str(data.get("description") or "")),
-        "genres": _clean_genres(data.get("genres") or []),
-        "score": data.get("score"),
-        "status": _clean(str(data.get("status") or "")),
-        "episodes": episodes,
-        "year": _safe_int(data.get("season_year"), _safe_int(data.get("year"))),
-        "studio": _clean(str(data.get("studio") or "")),
-        "alt_titles": _clean_alt_titles(data.get("alt_titles") or []),
-        "episode": data.get("episode"),
-        "url": data.get("url") or "",
-        "available": available,
-        "watch_label": "Assistir agora" if available else "Não disponível no momento",
-    }
-    return payload
-
-
-def _shape_details(data: dict[str, Any], fallback_id: str = "") -> dict[str, Any]:
-    anime_id = data.get("id") or fallback_id
-    shaped = _make_card_payload({**data, "id": anime_id})
-    shaped["available"] = bool(shaped.get("episodes") and int(shaped["episodes"]) > 0)
-    shaped["watch_label"] = "Assistir agora" if shaped["available"] else "Não disponível no momento"
-    return shaped
-
-
-def _cache_get(key: str, ttl: int):
+def _cache_get(key: str, ttl: int) -> Any | None:
     item = _CACHE.get(key)
     if not item:
         return None
@@ -226,7 +154,7 @@ def _cache_set(key: str, data: Any) -> Any:
     return data
 
 
-async def _cached(key: str, ttl: int, factory):
+async def _cached(key: str, ttl: int, factory) -> Any:
     cached = _cache_get(key, ttl)
     if cached is not None:
         return cached
@@ -240,14 +168,14 @@ async def _cached(key: str, ttl: int, factory):
         return _cache_set(key, data)
 
 
-def _drop_cache(prefixes: list[str] | None = None) -> None:
-    if not prefixes:
-        _CACHE.clear()
-        return
+def _invalidate_prefix(prefix: str) -> None:
+    """Remove all cache keys that start with the given prefix."""
     for key in list(_CACHE.keys()):
-        if any(key.startswith(prefix) for prefix in prefixes):
+        if key.startswith(prefix):
             _CACHE.pop(key, None)
 
+
+# ─── HTTP ─────────────────────────────────────────────────────────────────────
 
 async def _get(url: str) -> str:
     client = await get_http_client()
@@ -256,9 +184,11 @@ async def _get(url: str) -> str:
     return response.text
 
 
+# ─── Scrapers ─────────────────────────────────────────────────────────────────
+
 def _extract_slug_from_href(href: str) -> str:
     href = (href or "").strip()
-    match = re.search(r"/animes/([^/]+?)(?:/)?$", href)
+    match = re.search(r"/animes/([^/?#]+?)(?:/)?(?:\?.*)?$", href)
     return match.group(1).strip() if match else ""
 
 
@@ -267,16 +197,17 @@ def _extract_last_page(page_html: str, slug: str) -> int:
     max_page = 1
     for anchor in soup.select("a[href]"):
         href = (anchor.get("href") or "").strip()
-        pattern = rf"/{re.escape(slug)}/(\d+)(?:/)?$"
+        pattern = rf"/{re.escape(slug)}/(\d+)(?:/)?(?:\?.*)?$"
         match = re.search(pattern, href)
         if match:
-            max_page = max(max_page, int(match.group(1)))
+            page_num = int(match.group(1))
+            max_page = max(max_page, page_num)
     return max_page
 
 
-def _extract_listing_cards(page_html: str) -> list[dict[str, Any]]:
+def _extract_listing_cards(page_html: str) -> list[dict]:
     soup = BeautifulSoup(page_html, "html.parser")
-    found: dict[str, dict[str, Any]] = {}
+    found: dict[str, dict] = {}
 
     for anchor in soup.select("a[href*='/animes/']"):
         href = (anchor.get("href") or "").strip()
@@ -284,20 +215,28 @@ def _extract_listing_cards(page_html: str) -> list[dict[str, Any]]:
         if not anime_id:
             continue
 
+        # Title
         title = ""
         title_el = anchor.select_one(".animeTitle")
         if title_el:
             title = _clean(title_el.get_text(" ", strip=True))
 
+        # Cover image
         img = anchor.find("img")
         cover = ""
         if img:
             cover = img.get("data-src") or img.get("src") or ""
             title = title or _clean(img.get("alt") or "")
 
-        raw = {
+        title = title or anime_id.replace("-", " ").title()
+        dubbed = _is_dubbed(anime_id, title)
+
+        found[anime_id] = {
             "id": anime_id,
             "title": title,
+            "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+            "prefix": "DUB" if dubbed else "LEG",
+            "is_dubbed": dubbed,
             "cover_url": cover,
             "banner_url": cover,
             "description": "",
@@ -309,9 +248,41 @@ def _extract_listing_cards(page_html: str) -> list[dict[str, Any]]:
             "studio": "",
             "url": urljoin(BASE_URL, href),
         }
-        found[anime_id] = _make_card_payload(raw)
 
     return list(found.values())
+
+
+def _shape_details(data: dict, fallback_id: str = "") -> dict:
+    anime_id = data.get("id") or fallback_id
+    title = data.get("title") or anime_id.replace("-", " ").title()
+    dubbed = bool(data.get("is_dubbed")) or _is_dubbed(anime_id, title)
+    return {
+        "id": anime_id,
+        "title": title,
+        "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+        "prefix": "DUB" if dubbed else "LEG",
+        "is_dubbed": dubbed,
+        "cover_url": (
+            data.get("cover_url")
+            or data.get("media_image_url")
+            or data.get("banner_url")
+            or ""
+        ),
+        "banner_url": (
+            data.get("banner_url")
+            or data.get("cover_url")
+            or data.get("media_image_url")
+            or ""
+        ),
+        "description": _clean_description(data.get("description") or ""),
+        "genres": _clean_genres(data.get("genres") or []),
+        "score": data.get("score"),
+        "status": data.get("status") or "",
+        "episodes": data.get("episodes"),
+        "year": data.get("season_year"),
+        "studio": _clean(data.get("studio") or ""),
+        "alt_titles": _clean_alt_titles(data.get("alt_titles") or []),
+    }
 
 
 def _section_conf(section: str) -> dict[str, str] | None:
@@ -324,28 +295,13 @@ def _section_url(slug: str, page: int) -> str:
     return f"{BASE_URL}/{slug}/{page}"
 
 
-def _episode_number_sort_key(item: dict[str, Any]) -> tuple[int, str]:
-    raw = str(item.get("episode") or "")
-    numeric = _safe_int(re.sub(r"[^0-9]", "", raw), 10**9)
-    return (numeric if numeric is not None else 10**9, raw)
+# ─── Pagination Helpers ───────────────────────────────────────────────────────
 
-
-def _shape_episode_item(anime_id: str, episode: dict[str, Any]) -> dict[str, Any]:
-    ep = str(episode.get("episode") or "").strip()
-    return {
-        "anime_id": anime_id,
-        "episode": ep,
-        "title": _clean(str(episode.get("title") or f"Episódio {ep}")),
-        "thumb": episode.get("thumb") or episode.get("image") or episode.get("cover") or "",
-        "available": bool(ep),
-    }
-
-
-async def _get_recent_page(page: int) -> dict[str, Any]:
+async def _get_recent_page(page: int) -> dict:
     async def factory():
         recent = await get_recent_episodes(limit=200)
         seen: set[str] = set()
-        items: list[dict[str, Any]] = []
+        items = []
 
         for item in recent:
             anime_id = item.get("anime_id")
@@ -354,35 +310,55 @@ async def _get_recent_page(page: int) -> dict[str, Any]:
             seen.add(anime_id)
 
             title = item.get("title") or anime_id.replace("-", " ").title()
-            cover = item.get("thumb") or item.get("image") or item.get("cover") or item.get("cover_url") or ""
+            dubbed = _is_dubbed(anime_id, title)
+            cover = (
+                item.get("thumb")
+                or item.get("image")
+                or item.get("cover")
+                or item.get("cover_url")
+                or ""
+            )
+
+            # Fallback: fetch cover from anime details if missing
             if not cover:
                 try:
                     details = await get_anime_details(anime_id)
-                    cover = details.get("cover_url") or details.get("media_image_url") or details.get("banner_url") or ""
+                    cover = (
+                        details.get("cover_url")
+                        or details.get("media_image_url")
+                        or details.get("banner_url")
+                        or ""
+                    )
                 except Exception:
                     cover = ""
 
-            items.append(
-                _make_card_payload(
-                    {
-                        "id": anime_id,
-                        "title": title,
-                        "cover_url": cover,
-                        "banner_url": cover,
-                        "episode": item.get("episode"),
-                    }
-                )
-            )
+            items.append({
+                "id": anime_id,
+                "title": title,
+                "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+                "prefix": "DUB" if dubbed else "LEG",
+                "is_dubbed": dubbed,
+                "cover_url": cover,
+                "banner_url": cover,
+                "episode": item.get("episode"),
+                "description": "",
+                "genres": [],
+                "score": None,
+                "status": "",
+                "episodes": None,
+                "year": None,
+                "studio": "",
+            })
 
         total = len(items)
         total_pages = max(1, (total + GRID_PAGE_LIMIT - 1) // GRID_PAGE_LIMIT)
-        current_page = min(page, total_pages)
+        current_page = min(max(1, page), total_pages)
         start = (current_page - 1) * GRID_PAGE_LIMIT
         end = start + GRID_PAGE_LIMIT
 
         return {
             "section": "recentes",
-            "title": _section_conf("recentes")["title"],
+            "title": _section_conf("recentes")["title"],  # type: ignore[index]
             "page": current_page,
             "limit": GRID_PAGE_LIMIT,
             "total_items": total,
@@ -390,13 +366,12 @@ async def _get_recent_page(page: int) -> dict[str, Any]:
             "has_next": current_page < total_pages,
             "has_prev": current_page > 1,
             "items": items[start:end],
-            "last_refreshed": int(time.time()),
         }
 
     return await _cached(f"recentes:{page}", RECENT_TTL, factory)
 
 
-async def _get_paginated_section_page(section: str, page: int) -> dict[str, Any]:
+async def _get_paginated_section_page(section: str, page: int) -> dict:
     conf = _section_conf(section)
     if not conf:
         return {
@@ -409,7 +384,6 @@ async def _get_paginated_section_page(section: str, page: int) -> dict[str, Any]
             "has_next": False,
             "has_prev": page > 1,
             "items": [],
-            "last_refreshed": int(time.time()),
         }
 
     if conf.get("kind") == "recent":
@@ -427,7 +401,10 @@ async def _get_paginated_section_page(section: str, page: int) -> dict[str, Any]
     current_page = min(max(1, page), total_pages)
 
     async def page_factory():
-        page_html = meta["first_html"] if current_page == 1 else await _get(_section_url(slug, current_page))
+        if current_page == 1:
+            page_html = meta["first_html"]
+        else:
+            page_html = await _get(_section_url(slug, current_page))
         items = _extract_listing_cards(page_html)
         return {
             "section": section,
@@ -439,13 +416,51 @@ async def _get_paginated_section_page(section: str, page: int) -> dict[str, Any]
             "has_next": current_page < total_pages,
             "has_prev": current_page > 1,
             "items": items[:GRID_PAGE_LIMIT],
-            "last_refreshed": int(time.time()),
         }
 
     return await _cached(f"page:{section}:{current_page}", SECTION_TTL, page_factory)
 
 
-async def _load_home_payload() -> dict[str, Any]:
+# ─── Background Tasks ─────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+async def _startup_refresh_task():
+    async def refresher():
+        while True:
+            try:
+                _invalidate_prefix("recentes:")
+                _invalidate_prefix("page:recentes")
+            except Exception:
+                pass
+            await asyncio.sleep(60)
+
+    asyncio.create_task(refresher())
+
+
+# ─── Routes ───────────────────────────────────────────────────────────────────
+
+@app.get("/")
+def root():
+    return {
+        "ok": True,
+        "name": "QG BALTIGO API",
+        "version": "2.0.0",
+        "sections": list(SECTIONS.keys()),
+    }
+
+
+@app.get("/api/health")
+def health():
+    cache_size = len(_CACHE)
+    return {
+        "ok": True,
+        "cache_entries": cache_size,
+        "timestamp": int(time.time()),
+    }
+
+
+@app.get("/api/catalog/home")
+async def catalog_home():
     ordered_sections = [
         "recentes",
         "em_lancamento",
@@ -458,93 +473,38 @@ async def _load_home_payload() -> dict[str, Any]:
         "comedia",
     ]
 
+    # Fetch all sections concurrently
+    tasks = [_get_paginated_section_page(section, 1) for section in ordered_sections]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
     payload = []
-    for section in ordered_sections:
-        page_data = await _get_paginated_section_page(section, 1)
-        payload.append(
-            {
+    for section, result in zip(ordered_sections, results):
+        if isinstance(result, Exception):
+            # Include empty section on error rather than failing the whole home
+            payload.append({
                 "key": section,
-                "title": page_data["title"],
+                "title": _section_conf(section)["title"] if _section_conf(section) else section,
                 "page": 1,
-                "total_pages": page_data["total_pages"],
-                "items": page_data["items"][:HOME_SECTION_LIMIT],
-                "last_refreshed": page_data.get("last_refreshed", int(time.time())),
-            }
-        )
+                "total_pages": 0,
+                "items": [],
+            })
+        else:
+            payload.append({
+                "key": section,
+                "title": result["title"],
+                "page": 1,
+                "total_pages": result["total_pages"],
+                "items": result["items"][:HOME_SECTION_LIMIT],
+            })
 
-    hero_item = None
-    for section in payload:
-        if section["items"]:
-            hero_item = section["items"][0]
-            break
-
-    return {
-        "ok": True,
-        "sections": payload,
-        "hero": hero_item,
-        "last_refreshed": int(time.time()),
-        "recommended_poll_seconds": 90,
-    }
-
-
-async def _safe_get_anime_details(anime_id: str) -> dict[str, Any] | None:
-    try:
-        return await get_anime_details(anime_id)
-    except Exception:
-        return None
-
-
-async def _safe_get_episodes(anime_id: str) -> list[dict[str, Any]]:
-    try:
-        episodes_payload = await get_episodes(anime_id, 0, MAX_EPISODES_FETCH)
-    except Exception:
-        return []
-    episodes = episodes_payload.get("all_items") or episodes_payload.get("items") or []
-    shaped = [_shape_episode_item(anime_id, ep) for ep in episodes if ep]
-    shaped.sort(key=_episode_number_sort_key)
-    return shaped
-
-
-@app.on_event("startup")
-async def _startup_refresh_task():
-    async def refresher():
-        while True:
-            try:
-                _drop_cache(["recentes:", "home:"])
-            except Exception:
-                pass
-            await asyncio.sleep(60)
-
-    asyncio.create_task(refresher())
-
-
-@app.get("/")
-def root():
-    return {
-        "ok": True,
-        "name": "QG BALTIGO API",
-        "sections": list(SECTIONS.keys()),
-        "uptime_seconds": int(time.time() - _START_TS),
-    }
-
-
-@app.get("/api/health")
-def health():
-    return {
-        "ok": True,
-        "uptime_seconds": int(time.time() - _START_TS),
-        "cache_keys": len(_CACHE),
-        "last_refreshed": int(time.time()),
-    }
-
-
-@app.get("/api/catalog/home")
-async def catalog_home():
-    return await _cached("home:payload", HOME_TTL, _load_home_payload)
+    return {"ok": True, "sections": payload}
 
 
 @app.get("/api/catalog/list")
-async def catalog_list(section: str = Query("dublados"), page: int = Query(1, ge=1)):
+async def catalog_list(
+    section: str = Query("dublados"),
+    page: int = Query(1, ge=1),
+):
     data = await _get_paginated_section_page(section, page)
     return {"ok": bool(data["items"]), **data}
 
@@ -559,9 +519,31 @@ async def api_search(
 
     async def factory():
         raw_items = await search_anime(query)
-        return [_make_card_payload(item) for item in raw_items if item.get("id")]
+        shaped = []
+        for item in raw_items:
+            anime_id = item.get("id") or ""
+            title = item.get("title") or anime_id
+            dubbed = bool(item.get("is_dubbed")) or _is_dubbed(anime_id, title)
+            shaped.append({
+                "id": anime_id,
+                "title": title,
+                "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+                "prefix": "DUB" if dubbed else "LEG",
+                "is_dubbed": dubbed,
+                "cover_url": item.get("cover_url") or item.get("banner_url") or "",
+                "banner_url": item.get("banner_url") or item.get("cover_url") or "",
+                "description": "",
+                "genres": [],
+                "score": None,
+                "status": "",
+                "episodes": None,
+                "year": None,
+                "studio": "",
+            })
+        return shaped
 
     shaped = await _cached(f"search:{query.lower()}", SEARCH_TTL, factory)
+
     total = len(shaped)
     total_pages = max(1, (total + limit - 1) // limit) if total else 0
     current_page = min(page, total_pages) if total_pages else 1
@@ -578,124 +560,105 @@ async def api_search(
         "total_pages": total_pages,
         "has_next": current_page < total_pages if total_pages else False,
         "has_prev": current_page > 1,
-        "last_refreshed": int(time.time()),
     }
 
 
 @app.get("/api/anime/{anime_id}")
 async def api_anime(anime_id: str):
     async def factory():
-        data = await _safe_get_anime_details(anime_id)
+        data = await get_anime_details(anime_id)
         if not data:
             return None
-        episodes = await _safe_get_episodes(anime_id)
-        item = _shape_details(data, anime_id)
-        if not item.get("episodes"):
-            item["episodes"] = len(episodes)
-        item["available"] = bool(episodes)
-        item["watch_label"] = "Assistir agora" if episodes else "Não disponível no momento"
+
+        episodes_payload = await get_episodes(anime_id, 0, 400)
+        episodes = (
+            episodes_payload.get("all_items")
+            or episodes_payload.get("items")
+            or []
+        )
         return {
-            "item": item,
+            "item": _shape_details(data, anime_id),
             "episodes": episodes,
-            "last_refreshed": int(time.time()),
-            "recommended_poll_seconds": 120,
         }
 
     payload = await _cached(f"anime:{anime_id}", ANIME_TTL, factory)
     if not payload:
         raise HTTPException(status_code=404, detail="Anime não encontrado")
+
     return {"ok": True, **payload}
 
 
 @app.get("/api/anime/{anime_id}/episode/{episode}")
-async def api_episode(anime_id: str, episode: str, response: Response, quality: str = Query("HD")):
-    normalized_quality = quality.upper().strip() or "HD"
-    key = f"episode:{anime_id}:{episode}:{normalized_quality}"
+async def api_episode(
+    anime_id: str,
+    episode: str,
+    quality: str = Query("HD"),
+):
+    key = f"episode:{anime_id}:{episode}:{quality.upper()}"
 
     async def factory():
-        item = await get_episode_player(anime_id, episode, normalized_quality)
+        item = await get_episode_player(anime_id, episode, quality.upper())
         if not item:
             return None
-
-        details = await _safe_get_anime_details(anime_id) or {}
-        anime = _shape_details(details, anime_id) if details else _make_card_payload({"id": anime_id, "title": anime_id.replace('-', ' ').title()})
-        thumb = item.get("thumb") or item.get("image") or anime.get("cover_url") or _cover_fallback()
-        banner = anime.get("banner_url") or anime.get("cover_url") or _banner_fallback()
-        available_qualities = item.get("available_qualities") or []
-        available_qualities = [str(q).upper() for q in available_qualities if q]
-        if normalized_quality not in available_qualities and normalized_quality:
-            available_qualities.insert(0, normalized_quality)
-        available_qualities = list(dict.fromkeys(available_qualities))
-
-        video = item.get("video") or ""
-        videos = item.get("videos") or {}
-        has_video = bool(video or videos)
-
         return {
             "anime_id": anime_id,
-            "anime": anime,
-            "episode": str(episode),
-            "video": video,
-            "videos": videos,
-            "quality": item.get("quality") or normalized_quality,
-            "available_qualities": available_qualities,
-            "title": item.get("title") or f"{anime.get('title', anime_id)} - Episódio {episode}",
+            "episode": episode,
+            "video": item.get("video") or "",
+            "videos": item.get("videos") or {},
+            "quality": item.get("quality") or quality.upper(),
+            "available_qualities": item.get("available_qualities") or [],
+            "title": item.get("title") or "",
             "description": _clean_description(item.get("description") or ""),
-            "thumb": thumb,
-            "banner": banner,
+            "thumb": item.get("thumb") or item.get("image") or "",
+            "is_dubbed": bool(item.get("is_dubbed")),
             "prev_episode": item.get("prev_episode"),
             "next_episode": item.get("next_episode"),
-            "total_episodes": item.get("total_episodes") or anime.get("episodes"),
-            "available": has_video,
-            "watch_label": "Assistindo" if has_video else "Não disponível no momento",
-            "last_refreshed": int(time.time()),
+            "total_episodes": item.get("total_episodes"),
         }
 
     payload = await _cached(key, EPISODE_TTL, factory)
     if not payload:
         raise HTTPException(status_code=404, detail="Episódio não encontrado")
-    response.headers["Cache-Control"] = "no-store, max-age=0"
+
     return {"ok": True, "item": payload}
 
 
-@app.post("/api/catalog/refresh")
-async def api_refresh(scope: str = Query("all")):
-    scope = (scope or "all").strip().lower()
-    if scope == "home":
-        _drop_cache(["home:"])
-    elif scope == "recent":
-        _drop_cache(["recentes:", "home:"])
-    elif scope == "anime":
-        _drop_cache(["anime:", "episode:"])
-    else:
-        _drop_cache()
-    return {"ok": True, "scope": scope, "last_refreshed": int(time.time())}
+# ─── Cache management endpoint ───────────────────────────────────────────────
 
+@app.post("/api/cache/clear")
+async def clear_cache(prefix: str = Query("", description="Prefix of cache keys to clear (empty = all)")):
+    if prefix:
+        _invalidate_prefix(prefix)
+        cleared = "prefixed"
+    else:
+        count = len(_CACHE)
+        _CACHE.clear()
+        cleared = f"all ({count} entries)"
+    return {"ok": True, "cleared": cleared}
+
+
+# ─── Static files ─────────────────────────────────────────────────────────────
+
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MINIAPP_DIR = BASE_DIR / "miniapp"
-app.mount("/miniapp", StaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
 
-
-def _file_or_raise(path: Path) -> Path:
-    if not path.exists():
-        raise MissingMiniappFile(str(path))
-    return path
-
-
-@app.exception_handler(MissingMiniappFile)
-async def _missing_miniapp_handler(_, exc: MissingMiniappFile):
-    return JSONResponse(status_code=404, content={"ok": False, "detail": f"Arquivo miniapp não encontrado: {exc}"})
-
+if MINIAPP_DIR.exists():
+    app.mount("/miniapp", StaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
 
 @app.get("/app")
 async def app_index():
-    return FileResponse(_file_or_raise(MINIAPP_DIR / "index.html"))
-
+    index_path = MINIAPP_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend not found")
+    return FileResponse(index_path)
 
 @app.get("/watch")
 async def app_watch():
-    watch_file = MINIAPP_DIR / "watch.html"
-    if watch_file.exists():
-        return FileResponse(watch_file)
-    return FileResponse(_file_or_raise(MINIAPP_DIR / "index.html"))
+    watch_path = MINIAPP_DIR / "watch.html"
+    if not watch_path.exists():
+        raise HTTPException(status_code=404, detail="Watch page not found")
+    return FileResponse(watch_path)
