@@ -1,9 +1,10 @@
 import asyncio
+import html as html_lib
 import random
 import re
 import time
 import unicodedata
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urljoin
 
 import httpx
 from bs4 import BeautifulSoup
@@ -211,6 +212,9 @@ def _extract_server_name(url: str) -> str:
     if "googlevideo.com" in value:
         return "GOOGLEVIDEO"
 
+    if ".m3u8" in value:
+        return "HLS"
+
     match = re.search(r"lightspeedst\.net/(s\d+)", value)
     return match.group(1).upper() if match else "S6"
 
@@ -225,6 +229,14 @@ def _extract_quality_name(url: str) -> str:
     if "fmt=18" in value or "480p" in value or "/sd/" in value:
         return "SD"
     if "blogger.com/video.g" in value:
+        return "HD"
+    if ".m3u8" in value:
+        if "1080" in value:
+            return "FULLHD"
+        if "720" in value:
+            return "HD"
+        if "480" in value or "360" in value:
+            return "SD"
         return "HD"
 
     return "HD"
@@ -335,7 +347,6 @@ def _normalize_display_for_final_dedupe(title: str) -> str:
     value = re.sub(r"\(\s*\d{4}\s*\)", " ", value)
     value = re.sub(r"\b\d{4}\b", " ", value)
 
-    # remove marcadores de versão
     value = re.sub(
         r"\b(dublado|legendado|dub|dual audio|audio dual|pt br|ptbr|portugues|português)\b",
         " ",
@@ -574,6 +585,201 @@ def _extract_googlevideo_url(html: str) -> str:
     return match.group(0) if match else ""
 
 
+def _decode_possible_escaped_url(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+
+    value = html_lib.unescape(value)
+    value = value.replace("\\/", "/")
+    value = value.replace("\\u0026", "&")
+    value = value.replace("\\x26", "&")
+    value = value.replace("&amp;", "&")
+    value = value.strip(" '\"")
+    return value
+
+
+def _make_absolute_url(url: str, base_url: str) -> str:
+    url = _decode_possible_escaped_url(url)
+    if not url:
+        return ""
+    return urljoin(base_url, url)
+
+
+def _is_direct_video_url(url: str) -> bool:
+    value = (url or "").lower()
+    return any(
+        token in value
+        for token in (
+            ".m3u8",
+            ".mp4",
+            "googlevideo.com/videoplayback",
+            "/videoplayback?",
+        )
+    )
+
+
+def _looks_like_embed_url(url: str) -> bool:
+    value = (url or "").lower()
+    return any(
+        token in value
+        for token in (
+            "blogger.com/video.g",
+            "/embed/",
+            "player",
+            "iframe",
+        )
+    )
+
+
+def _extract_direct_video_urls(html: str, base_url: str = "") -> list[str]:
+    if not html:
+        return []
+
+    candidates = []
+    seen = set()
+
+    def _push(url: str):
+        url = _decode_possible_escaped_url(url)
+        if not url:
+            return
+
+        if base_url:
+            url = _make_absolute_url(url, base_url)
+
+        if not url.startswith(("http://", "https://")):
+            return
+
+        if not _is_direct_video_url(url):
+            return
+
+        if url in seen:
+            return
+
+        seen.add(url)
+        candidates.append(url)
+
+    patterns = [
+        r'https?://[^\s"\'<>\\]+\.m3u8(?:\?[^\s"\'<>\\]*)?',
+        r'https?://[^\s"\'<>\\]+\.mp4(?:\?[^\s"\'<>\\]*)?',
+        r'https?://[^\s"\'<>\\]*googlevideo\.com/videoplayback[^\s"\'<>\\]*',
+        r'https?:\\/\\/[^\s"\'<>]+\.m3u8(?:\?[^\s"\'<>]*)?',
+        r'https?:\\/\\/[^\s"\'<>]+\.mp4(?:\?[^\s"\'<>]*)?',
+        r'https?:\\/\\/[^\s"\'<>]*googlevideo\.com\\/videoplayback[^\s"\'<>]*',
+    ]
+
+    for pattern in patterns:
+        for match in re.findall(pattern, html, flags=re.IGNORECASE):
+            _push(match)
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    for tag in soup.find_all(["source", "video"]):
+        for attr in ("src", "data-src"):
+            value = (tag.get(attr) or "").strip()
+            if value:
+                _push(value)
+
+    for tag in soup.find_all(attrs={"data-video": True}):
+        value = (tag.get("data-video") or "").strip()
+        if value:
+            _push(value)
+
+    attr_patterns = [
+        r'''["'](?:file|src|video|stream|url|hls|playlist)["']\s*:\s*["']([^"']+)["']''',
+        r"""(?:file|src|video|stream|url|hls|playlist)\s*=\s*["']([^"']+)["']""",
+    ]
+
+    for pattern in attr_patterns:
+        for match in re.findall(pattern, html, flags=re.IGNORECASE):
+            _push(match)
+
+    return candidates
+
+
+def _extract_iframe_sources(html: str, base_url: str = "") -> list[str]:
+    if not html:
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    seen = set()
+
+    for iframe in soup.find_all("iframe"):
+        src = (iframe.get("src") or "").strip()
+        src = _make_absolute_url(src, base_url) if base_url else _decode_possible_escaped_url(src)
+        if not src:
+            continue
+        if src in seen:
+            continue
+        seen.add(src)
+        results.append(src)
+
+    return results
+
+
+def _map_quality_urls(urls: list[str]) -> dict[str, str]:
+    quality_map = {}
+
+    for url in urls:
+        quality = _normalize_quality_label(_extract_quality_name(url)) or "HD"
+        quality_map.setdefault(quality, url)
+
+    if "HD" not in quality_map:
+        if "FULLHD" in quality_map:
+            quality_map["HD"] = quality_map["FULLHD"]
+        elif "SD" in quality_map:
+            quality_map["HD"] = quality_map["SD"]
+
+    return quality_map
+
+
+async def _fetch_remote_html(url: str, referer: str = "") -> str:
+    headers = dict(_HTTP_HEADERS)
+    headers["Referer"] = referer or BASE_URL
+    return await _request_text(url, headers=headers)
+
+
+async def _resolve_embed_to_direct_urls(url: str, referer: str = "", depth: int = 0, visited: set[str] | None = None) -> list[str]:
+    if not url or depth > 2:
+        return []
+
+    if visited is None:
+        visited = set()
+
+    normalized_url = _decode_possible_escaped_url(url)
+    if normalized_url in visited:
+        return []
+
+    visited.add(normalized_url)
+
+    if _is_direct_video_url(normalized_url):
+        return [normalized_url]
+
+    try:
+        html = await _fetch_remote_html(normalized_url, referer=referer or BASE_URL)
+    except Exception as error:
+        print(f"[EMBED] erro_ao_buscar_embed={repr(error)} url={normalized_url}")
+        return []
+
+    direct_urls = _extract_direct_video_urls(html, base_url=normalized_url)
+    if direct_urls:
+        return direct_urls
+
+    iframe_urls = _extract_iframe_sources(html, base_url=normalized_url)
+    for iframe_url in iframe_urls:
+        resolved = await _resolve_embed_to_direct_urls(
+            iframe_url,
+            referer=normalized_url,
+            depth=depth + 1,
+            visited=visited,
+        )
+        if resolved:
+            return resolved
+
+    return []
+
+
 async def _get_episode_page_html(base_slug: str, episode: str) -> str:
     safe_slug = _normalize_episode_slug(base_slug)
     url = f"{BASE_URL}/animes/{safe_slug}/{episode}"
@@ -590,7 +796,7 @@ def _merge_anime_data(local_data: dict, anilist_data: dict | None) -> dict:
     anilist_description = (anilist_data.get("description") or "").strip()
 
     if not local_description and anilist_description:
-        merged["description"] = anilist_description
+        merged["description"] = anilist_data["description"]
 
     if anilist_data.get("cover_url"):
         merged["cover_url"] = anilist_data["cover_url"]
@@ -1141,23 +1347,30 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
 async def _url_exists_with_client(client, url: str) -> bool:
     async with VIDEO_CHECK_SEMAPHORE:
         try:
-            response = await client.head(url)
+            response = await client.head(url, follow_redirects=True)
             if response.status_code == 200:
                 content_type = (response.headers.get("content-type") or "").lower()
-                if "video" in content_type or "mp4" in content_type or content_type == "":
+                if (
+                    "video" in content_type
+                    or "mp4" in content_type
+                    or "mpegurl" in content_type
+                    or ".m3u8" in url.lower()
+                    or content_type == ""
+                ):
                     return True
         except Exception:
             pass
 
         try:
-            response = await client.get(url, headers={"Range": "bytes=0-0"})
+            response = await client.get(url, headers={"Range": "bytes=0-0"}, follow_redirects=True)
             if response.status_code in (200, 206):
                 content_type = (response.headers.get("content-type") or "").lower()
                 if (
                     "video" in content_type
                     or "mp4" in content_type
+                    or "mpegurl" in content_type
                     or "octet-stream" in content_type
-                    or "text/html" in content_type
+                    or ".m3u8" in url.lower()
                 ):
                     return True
         except Exception:
@@ -1237,21 +1450,54 @@ async def _try_lightspeed_urls(base_slug: str, episode: str):
     return quality_map
 
 
-async def _try_blogger_or_googlevideo(base_slug: str, episode: str) -> str:
+async def _try_blogger_or_googlevideo(base_slug: str, episode: str) -> dict[str, str]:
+    quality_map: dict[str, str] = {}
+
     try:
         episode_html = await _get_episode_page_html(base_slug, episode)
+        episode_url = f"{BASE_URL}/animes/{_normalize_episode_slug(base_slug)}/{episode}"
+
+        direct_from_page = _extract_direct_video_urls(episode_html, base_url=episode_url)
+        if direct_from_page:
+            quality_map.update(_map_quality_urls(direct_from_page))
+            if quality_map:
+                return quality_map
 
         direct_googlevideo = _extract_googlevideo_url(episode_html)
         if direct_googlevideo:
-            return direct_googlevideo
+            quality = _normalize_quality_label(_extract_quality_name(direct_googlevideo)) or "HD"
+            quality_map[quality] = direct_googlevideo
+            return quality_map
 
         blogger_iframe = _extract_blogger_iframe(episode_html)
         if blogger_iframe:
-            return blogger_iframe
+            resolved_urls = await _resolve_embed_to_direct_urls(
+                blogger_iframe,
+                referer=episode_url,
+            )
+            if resolved_urls:
+                quality_map.update(_map_quality_urls(resolved_urls))
+                if quality_map:
+                    return quality_map
+
+        iframe_sources = _extract_iframe_sources(episode_html, base_url=episode_url)
+        for iframe_src in iframe_sources:
+            if not _looks_like_embed_url(iframe_src) and not _is_direct_video_url(iframe_src):
+                continue
+
+            resolved_urls = await _resolve_embed_to_direct_urls(
+                iframe_src,
+                referer=episode_url,
+            )
+            if resolved_urls:
+                quality_map.update(_map_quality_urls(resolved_urls))
+                if quality_map:
+                    return quality_map
+
     except Exception as error:
         print(f"[BLOGGER] erro_na_extracao={repr(error)}")
 
-    return ""
+    return quality_map
 
 
 async def _resolve_video_map(base_slug: str, episode: str, anime_id: str | None = None):
@@ -1265,10 +1511,11 @@ async def _resolve_video_map(base_slug: str, episode: str, anime_id: str | None 
         quality_map = await _try_lightspeed_urls(target_slug, episode)
 
         if not quality_map:
-            alt_url = await _try_blogger_or_googlevideo(target_slug, episode)
-            if alt_url:
-                alt_quality = _normalize_quality_label(_extract_quality_name(alt_url)) or "HD"
-                quality_map[alt_quality] = alt_url
+            alt_quality_map = await _try_blogger_or_googlevideo(target_slug, episode)
+            if alt_quality_map:
+                for quality in ("FULLHD", "HD", "SD"):
+                    if quality in alt_quality_map:
+                        quality_map[quality] = alt_quality_map[quality]
 
         if not quality_map:
             fallback = f"https://lightspeedst.net/s6/mp4/{target_slug}/sd/{episode}.mp4"
