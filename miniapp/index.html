@@ -1,4 +1,6 @@
 
+
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -7,6 +9,7 @@
   <title>QG BALTIGO</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
       --bg: #080810;
@@ -31,6 +34,10 @@
       --topbar-h: 68px;
       --font-display: 'Syne', sans-serif;
       --font-body: 'DM Sans', sans-serif;
+      --tg-safe-top: 0px;
+      --tg-safe-bottom: 0px;
+      --tg-safe-left: 0px;
+      --tg-safe-right: 0px;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -46,7 +53,22 @@
       -webkit-font-smoothing: antialiased;
       text-rendering: optimizeLegibility;
       min-height: 100vh;
+      min-height: 100dvh;
       overscroll-behavior-y: none;
+      padding-left: var(--tg-safe-left);
+      padding-right: var(--tg-safe-right);
+      padding-bottom: var(--tg-safe-bottom);
+    }
+
+    #shell {
+      min-height: 100vh;
+      min-height: 100dvh;
+      padding-top: var(--tg-safe-top);
+    }
+
+    body.tg-miniapp {
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     /* Subtle grid texture */
@@ -1354,6 +1376,79 @@
     const statusText = document.getElementById("statusText");
     const toolbar = document.getElementById("toolbar");
     const topbar = document.getElementById("topbar");
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+
+    function syncTelegramViewportVars() {
+      const root = document.documentElement;
+      const style = root.style;
+      const fallbackTop = "0px";
+      const fallbackBottom = "0px";
+      const fallbackLeft = "0px";
+      const fallbackRight = "0px";
+
+      const contentInsets = tg && tg.contentSafeAreaInset ? tg.contentSafeAreaInset : null;
+      const safeInsets = tg && tg.safeAreaInset ? tg.safeAreaInset : null;
+      const insetSource = contentInsets || safeInsets || {};
+
+      style.setProperty("--tg-safe-top", `${Number(insetSource.top || 0)}px` || fallbackTop);
+      style.setProperty("--tg-safe-bottom", `${Number(insetSource.bottom || 0)}px` || fallbackBottom);
+      style.setProperty("--tg-safe-left", `${Number(insetSource.left || 0)}px` || fallbackLeft);
+      style.setProperty("--tg-safe-right", `${Number(insetSource.right || 0)}px` || fallbackRight);
+    }
+
+    function initTelegramMiniApp() {
+      if (!tg) return;
+
+      document.body.classList.add("tg-miniapp");
+
+      try { tg.ready(); } catch (_) {}
+      try { tg.expand(); } catch (_) {}
+      try { tg.disableVerticalSwipes?.(); } catch (_) {}
+      try { tg.requestFullscreen?.(); } catch (_) {}
+      try { tg.setHeaderColor?.("#080810"); } catch (_) {}
+      try { tg.setBackgroundColor?.("#080810"); } catch (_) {}
+
+      syncTelegramViewportVars();
+
+      if (typeof tg.onEvent === "function") {
+        tg.onEvent("viewportChanged", syncTelegramViewportVars);
+        tg.onEvent("safeAreaChanged", syncTelegramViewportVars);
+        tg.onEvent("contentSafeAreaChanged", syncTelegramViewportVars);
+      }
+    }
+
+    function updateTelegramBackButton() {
+      if (!tg || !tg.BackButton) return;
+      tg.BackButton.hide();
+      tg.BackButton.offClick?.(handleTelegramBack);
+
+      if (currentMode === "section" || currentMode === "search" || currentMode === "anime" || currentMode === "player") {
+        tg.BackButton.onClick(handleTelegramBack);
+        tg.BackButton.show();
+      }
+    }
+
+    function handleTelegramBack() {
+      if (currentMode === "player" && lastAnimeId) {
+        openAnime(lastAnimeId);
+        return;
+      }
+      if (currentMode === "anime") {
+        if (currentSearch) {
+          doSearch(currentSearch, currentPage);
+        } else if (currentSection) {
+          goSection(currentSection, currentPage);
+        } else {
+          goHome();
+        }
+        return;
+      }
+      if (currentMode === "search" || currentMode === "section") {
+        goHome();
+        return;
+      }
+      goHome();
+    }
 
     // State
     let currentSection = "dublados";
@@ -1364,6 +1459,7 @@
     let activeRequestId = 0;
     let autoplayTimer = null;
     let searchTimeout = null;
+    let lastAnimeId = null;
 
     // Scroll detection
     window.addEventListener("scroll", () => {
@@ -1689,6 +1785,7 @@
     // ─── HOME ───
     async function goHome() {
       currentMode = "home";
+      updateTelegramBackButton();
       currentSearch = "";
       currentPage = 1;
       clearAutoplay();
@@ -1724,6 +1821,7 @@
     // ─── SECTION ───
     async function goSection(section, page = 1) {
       currentMode = "section";
+      updateTelegramBackButton();
       currentSection = section;
       currentPage = page;
       currentSearch = "";
@@ -1788,6 +1886,7 @@
       if (!q) { goHome(); return; }
 
       currentMode = "search";
+      updateTelegramBackButton();
       currentSearch = q;
       currentPage = page;
       clearAutoplay();
@@ -1844,6 +1943,8 @@
     // ─── ANIME PAGE ───
     async function openAnime(animeId) {
       currentMode = "anime";
+      lastAnimeId = animeId;
+      updateTelegramBackButton();
       clearAutoplay();
 
       setToolbar(`
@@ -1952,10 +2053,81 @@
       scrollUp();
     }
 
+    function normalizeSourceUrl(value) {
+      return String(value || "").trim();
+    }
+
+    function isM3u8Source(source) {
+      return /\.m3u8(\?|#|$)/i.test(source || "");
+    }
+
+    function isIframeSource(source) {
+      const value = String(source || "").toLowerCase();
+      return (
+        value.includes("blogger.com/video.g") ||
+        value.includes("/embed") ||
+        value.includes("embed-") ||
+        value.includes("streamtape") ||
+        value.includes("filemoon") ||
+        value.includes("voe.sx") ||
+        value.includes("yourupload") ||
+        value.includes("ok.ru/videoembed") ||
+        value.includes("sibnet")
+      );
+    }
+
+    function enhanceNativeVideo(source) {
+      const video = document.getElementById("main-video");
+      if (!video || !source || isM3u8Source(source)) return;
+
+      const sourceNode = video.querySelector("source");
+      if (sourceNode) {
+        if (sourceNode.getAttribute("src") !== source) {
+          sourceNode.setAttribute("src", source);
+        }
+      } else if (video.getAttribute("src") !== source) {
+        video.setAttribute("src", source);
+      }
+
+      const markUnavailable = () => {
+        if (!video.parentElement || video.dataset.failed === "1") return;
+        video.dataset.failed = "1";
+        video.parentElement.innerHTML = `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);padding:40px 24px;height:100%;">
+            <div style="font-size:36px;">⚠️</div>
+            <strong style="color:#e0e0f0;font-size:16px;">Vídeo indisponível</strong>
+            <span style="font-size:13.5px;text-align:center;">Este episódio não pôde ser reproduzido no player interno.</span>
+          </div>
+        `;
+      };
+
+      video.addEventListener("loadedmetadata", () => {
+        video.dataset.loaded = "1";
+      }, { once: true });
+
+      video.addEventListener("error", () => {
+        markUnavailable();
+      }, { once: true });
+
+      setTimeout(() => {
+        if (video.dataset.loaded === "1") return;
+        const ready = Number(video.readyState || 0);
+        if (ready >= 2) return;
+      }, 5000);
+
+      try { video.load(); } catch (_) {}
+      const playPromise = video.play?.();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {});
+      }
+    }
+
     // ─── EPISODE PLAYER ───
     async function openEpisode(animeId, episode, quality = "HD") {
       clearAutoplay();
       currentMode = "player";
+      lastAnimeId = animeId;
+      updateTelegramBackButton();
 
       setToolbar(`
         <button class="crumb" onclick="openAnime('${esc(animeId)}')">
@@ -1985,7 +2157,9 @@
       );
       const item = data.item || {};
       const activeQ = item.quality || quality;
-      const source = item.video || (item.videos && (item.videos[activeQ] || item.videos.HD || item.videos.SD)) || "";
+      const source = normalizeSourceUrl(
+        item.video || (item.videos && (item.videos[activeQ] || item.videos.HD || item.videos.SD)) || ""
+      );
 
       let playerHtml = "";
       if (!source) {
@@ -1996,12 +2170,12 @@
             <span style="font-size:13.5px;text-align:center;">Este episódio não está disponível no momento.</span>
           </div>
         `;
-      } else if (source.includes("blogger.com/video.g")) {
-        playerHtml = `<iframe src="${esc(source)}" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
-      } else if (source.includes(".m3u8")) {
-        playerHtml = `<video id="main-video" controls autoplay playsinline></video>`;
+      } else if (isIframeSource(source)) {
+        playerHtml = `<iframe src="${esc(source)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
+      } else if (isM3u8Source(source)) {
+        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata"></video>`;
       } else {
-        playerHtml = `<video id="main-video" controls autoplay playsinline><source src="${esc(source)}" type="video/mp4"></video>`;
+        playerHtml = `<video id="main-video" controls autoplay playsinline preload="metadata" crossorigin="anonymous"><source src="${esc(source)}" type="video/mp4"></video>`;
       }
 
       // Save to history
@@ -2097,7 +2271,7 @@
       `;
 
       // HLS
-      if (source.includes(".m3u8")) {
+      if (isM3u8Source(source)) {
         const initHls = () => {
           const video = document.getElementById("main-video");
           if (!video) return;
@@ -2118,9 +2292,11 @@
           s.onload = initHls;
           document.body.appendChild(s);
         }
+      } else if (source && !isIframeSource(source)) {
+        enhanceNativeVideo(source);
       }
 
-      if (source && !source.includes("blogger.com")) {
+      if (source && !isIframeSource(source)) {
         bindAutoplay(animeId, item.next_episode, activeQ);
       }
 
@@ -2178,6 +2354,8 @@
     }, 3 * 60 * 1000); // every 3 min
 
     // ─── Init ───
+    initTelegramMiniApp();
+
     goHome().catch(err => {
       setStatus("Erro ao carregar");
       heroTitle.textContent = "Erro de conexão";
