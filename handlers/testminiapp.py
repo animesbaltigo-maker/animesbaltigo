@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from telegram.ext import ContextTypes
 
-MINIAPP_URL = "https://SEU_DOMINIO/miniapp/index.html"
+MINIAPP_URL = "https://scenic-miss-tech-limitation.trycloudflare.com/miniapp/index.html"
 
 
 async def testminiapp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
