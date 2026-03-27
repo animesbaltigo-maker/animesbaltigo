@@ -43,6 +43,7 @@ from telegram.ext import InlineQueryHandler
 from handlers.inline import inline_query
 from handlers.testminiapp import testminiapp
 
+
 init_metrics_db()
 
 
