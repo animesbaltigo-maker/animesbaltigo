@@ -639,7 +639,8 @@ async def clear_cache(prefix: str = Query("", description="Prefix of cache keys 
 
 # ─── Static files ─────────────────────────────────────────────────────────────
 
-from fastapi.responses import FileResponse
+from fastapi import Request
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
@@ -654,7 +655,12 @@ async def app_index():
     index_path = MINIAPP_DIR / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Frontend not found")
-    return FileResponse(index_path)
+
+    response = FileResponse(index_path)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @app.get("/watch")
 async def app_watch():
@@ -663,29 +669,49 @@ async def app_watch():
         raise HTTPException(status_code=404, detail="Watch page not found")
     return FileResponse(watch_path)
 
-from fastapi.responses import StreamingResponse
-
 @app.get("/api/proxy-stream")
-async def proxy_stream(url: str):
+async def proxy_stream(request: Request, url: str):
     client = await get_http_client()
 
-    response = await client.get(
+    outgoing_headers = {
+        "User-Agent": HEADERS["User-Agent"],
+        "Referer": "https://animefire.io/",
+        "Origin": "https://animefire.io",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+    }
+
+    range_header = request.headers.get("range")
+    if range_header:
+        outgoing_headers["Range"] = range_header
+
+    upstream = await client.get(
         url,
-        headers={
-            "User-Agent": HEADERS["User-Agent"],
-            "Referer": "https://animefire.io/",
-            "Origin": "https://animefire.io",
-        },
+        headers=outgoing_headers,
         follow_redirects=True,
     )
 
-    def iterfile():
-        yield from response.iter_bytes()
+    passthrough_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
+        "Content-Type": upstream.headers.get("content-type", "application/octet-stream"),
+        "Cache-Control": "no-store",
+    }
+
+    for name in (
+        "content-length",
+        "content-range",
+        "content-disposition",
+        "etag",
+        "last-modified",
+    ):
+        value = upstream.headers.get(name)
+        if value:
+            passthrough_headers[name.title()] = value
 
     return StreamingResponse(
-        iterfile(),
-        media_type=response.headers.get("content-type", "video/mp4"),
-        headers={
-            "Access-Control-Allow-Origin": "*",
-        },
+        upstream.aiter_bytes(),
+        status_code=upstream.status_code,
+        headers=passthrough_headers,
+        media_type=upstream.headers.get("content-type", "application/octet-stream"),
     )
