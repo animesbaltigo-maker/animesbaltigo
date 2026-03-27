@@ -1,0 +1,33 @@
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, Update
+from telegram.ext import ContextTypes, CommandHandler
+
+# 🔥 coloca teu link real aqui (HTTPS obrigatorio)
+MINIAPP_URL = "https://SEU_DOMINIO/miniapp/index.html"
+
+
+async def testminiapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                text="🚀 Abrir Mini App",
+                web_app=WebAppInfo(url=MINIAPP_URL)
+            )
+        ]
+    ])
+
+    text = (
+        f"🎌 <b>Baltigo Mini App</b>\n\n"
+        f"Fala {user.first_name}, clica abaixo pra abrir 👇"
+    )
+
+    await update.message.reply_text(
+        text=text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+
+def register_testminiapp(application):
+    application.add_handler(CommandHandler("testminiapp", testminiapp))
