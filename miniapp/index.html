@@ -1333,13 +1333,13 @@
                   hls.loadSource(src);
                   hls.attachMedia(video);
                 } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-                  video.src = src;
+                  video.src = `/api/proxy-stream?url=${encodeURIComponent(src)}`;
                 } else {
                   fail(`sem suporte hls @ ${src}`);
                   return;
                 }
               } else {
-                video.src = src;
+                video.src = `/api/proxy-stream?url=${encodeURIComponent(src)}`;
               }
 
               const promise = video.play?.();
