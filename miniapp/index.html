@@ -1,8 +1,12 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>QG BALTIGO</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -1355,8 +1359,13 @@
   </div>
 
   <script>
-    const API = window.location.origin + "?v=" + Date.now();
+    const API = window.location.origin;
+    const FRONT_VERSION = "miniapp-2026-03-27-01";
     const cache = new Map();
+
+    console.log("[QG] frontend version:", FRONT_VERSION);
+    console.log("[QG] api base:", API);
+    console.log("[QG] location href:", window.location.href);
 
     // DOM refs
     const app = document.getElementById("app");
@@ -1530,29 +1539,79 @@
     }
 
     // ─── API ───
+    function buildApiUrl(url) {
+      return url + (url.includes("?") ? "&" : "?") + "_v=" + encodeURIComponent(FRONT_VERSION);
+    }
+
     async function getJson(url, abortPrevious = false) {
-      if (cache.has(url)) return cache.get(url);
+      const finalUrl = buildApiUrl(url);
+      console.log("[QG] GET:", finalUrl);
+
+      if (cache.has(finalUrl)) {
+        console.log("[QG] CACHE HIT:", finalUrl);
+        return cache.get(finalUrl);
+      }
+
       const rid = ++activeRequestId;
       let ctrl = null;
+
       if (abortPrevious) {
         if (currentController) currentController.abort();
         ctrl = new AbortController();
         currentController = ctrl;
       }
-      const res = await fetch(url, ctrl ? { signal: ctrl.signal } : {});
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      let res;
+      try {
+        res = await fetch(finalUrl, {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache"
+          },
+          ...(ctrl ? { signal: ctrl.signal } : {})
+        });
+      } catch (error) {
+        console.error("[QG] FETCH FAIL:", finalUrl, error);
+        throw error;
+      }
+
+      console.log("[QG] STATUS:", res.status, finalUrl);
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        console.error("[QG] BAD RESPONSE:", finalUrl, res.status, text);
+        throw new Error(`HTTP ${res.status} @ ${finalUrl}`);
+      }
+
       const data = await res.json();
-      if (rid === activeRequestId) cache.set(url, data);
+
+      if (rid === activeRequestId) {
+        cache.set(finalUrl, data);
+      }
+
       return data;
     }
 
     async function prefetch(url) {
-      if (cache.has(url)) return;
+      const finalUrl = buildApiUrl(url);
+      if (cache.has(finalUrl)) return;
+
       try {
-        const res = await fetch(url);
+        const res = await fetch(finalUrl, {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache"
+          }
+        });
         if (!res.ok) return;
-        cache.set(url, await res.json());
-      } catch (_) {}
+        cache.set(finalUrl, await res.json());
+      } catch (error) {
+        console.warn("[QG] PREFETCH FAIL:", finalUrl, error);
+      }
     }
 
     window.prefetchAnime = (id) => prefetch(`${API}/api/anime/${encodeURIComponent(id)}`);
