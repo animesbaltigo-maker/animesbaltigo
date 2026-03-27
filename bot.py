@@ -41,7 +41,7 @@ from services.animefire_client import preload_popular_cache
 
 from telegram.ext import InlineQueryHandler
 from handlers.inline import inline_query
-from handlers.testminiapp import get_testminiapp_handler
+from handlers.testminiapp import testminiapp_command
 
 
 init_metrics_db()
@@ -81,7 +81,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("testminiapp", testminiapp))
+    app.add_handler(CommandHandler("testminiapp", testminiapp_command))
     app.add_handler(CommandHandler("buscar", buscar))
     app.add_handler(CommandHandler("ajuda", ajuda))
     app.add_handler(CommandHandler("infoanime", infoanime))
