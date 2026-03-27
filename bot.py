@@ -43,14 +43,6 @@ from telegram.ext import InlineQueryHandler
 from handlers.inline import inline_query
 from handlers.testminiapp import testminiapp
 
-from handlers.callbacks import (
-    callbacks,
-    epanime_select_callback,
-    epanime_page_callback,
-    epanime_back_search_callback,
-)
-from handlers.epanime import epanime
-
 init_metrics_db()
 
 
@@ -110,10 +102,6 @@ def main():
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CommandHandler("pedido", pedido))
     app.add_handler(CommandHandler("calendario", calendario))
-    app.add_handler(CommandHandler("epanime", epanime))
-    app.add_handler(CallbackQueryHandler(epanime_select_callback, pattern=r"^epanime_select:"))
-    app.add_handler(CallbackQueryHandler(epanime_page_callback, pattern=r"^epanime_page:"))
-    app.add_handler(CallbackQueryHandler(epanime_back_search_callback, pattern=r"^epanime_back_search$"))
 
     app.add_handler(CallbackQueryHandler(callback_info_anime, pattern=r"^info_anime:"))
     app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern=r"^bc\|"))
