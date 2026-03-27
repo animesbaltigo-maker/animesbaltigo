@@ -93,7 +93,7 @@ def _player_keyboard(
     watched = is_episode_watched(user_id, anime_id, episode)
 
     watch_toggle_button = InlineKeyboardButton(
-        "↩️ Desmarcar como visto" if watched else "✅ Marcar como visto",
+        "❌ Desmarcar como visto" if watched else "✅ Marcar como visto",
         callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
     )
 
@@ -569,11 +569,15 @@ async def start(update, context):
             keyboard = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
-                        "➕ Adicionar ao grupo",
-                        url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
+                        "🔎 Buscar anime",
+                        switch_inline_query_current_chat=""
                     )
                 ],
                 [
+                    InlineKeyboardButton(
+                        "➕ Adicionar ao grupo",
+                        url=f"https://t.me/{BOT_USERNAME}?startgroup=true"
+                    ),
                     InlineKeyboardButton(
                         "🏴‍☠️ QG Baltigo",
                         url="https://t.me/QG_BALTIGO"
