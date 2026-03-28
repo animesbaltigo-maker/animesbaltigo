@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
   <title>BALTIGO — Anime Streaming</title>
   <meta name="theme-color" content="#05060f" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
@@ -130,7 +133,7 @@
     .cw-prog-fill{height:100%;background:var(--grad-brand);border-radius:2px}
     .cw-ep-badge{position:absolute;top:5px;right:5px;background:rgba(5,6,15,0.82);font-size:10px;font-weight:700;color:var(--text-2);padding:2px 6px;border-radius:5px;backdrop-filter:blur(6px)}
     .cw-play-ov{position:absolute;inset:0;display:grid;place-items:center;background:rgba(5,6,15,0.5);opacity:0;transition:opacity .2s}
-    .cw-card:hover .cw-play-ov{opacity:1}
+    .cw-card:hover .cw-play-ov,.cw-card:active .cw-play-ov{opacity:1}
     .cw-play-ico{width:34px;height:34px;border-radius:50%;background:var(--grad-brand);display:grid;place-items:center;font-size:13px;box-shadow:var(--shadow-v)}
     .cw-info{padding:8px 10px 10px}
     .cw-title{font-size:12px;font-weight:700;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:2px}
@@ -177,7 +180,7 @@
     .card-watched-badge{position:absolute;top:8px;right:8px;z-index:2;width:20px;height:20px;border-radius:50%;background:rgba(34,197,94,0.9);display:grid;place-items:center;font-size:10px;backdrop-filter:blur(6px)}
     .card-ep-tag{position:absolute;bottom:8px;right:8px;z-index:2;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;background:rgba(124,58,237,0.9);color:#fff;backdrop-filter:blur(8px)}
     .card-play-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;background:rgba(5,6,15,0.5);opacity:0;transition:opacity .25s var(--ease)}
-    .anime-card:hover .card-play-overlay{opacity:1}
+    .anime-card:hover .card-play-overlay,.anime-card:active .card-play-overlay{opacity:1}
     .play-circle{width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.5);display:grid;place-items:center;font-size:18px;backdrop-filter:blur(4px);transform:scale(.8);transition:transform .25s var(--ease)}
     .anime-card:hover .play-circle{transform:scale(1)}
     .card-body{padding:10px 12px 12px}
@@ -211,7 +214,6 @@
     .detail-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
     .pill{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:999px;background:var(--bg-glass-2);border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text-2)}
     .pill.score{color:#fbbf24;border-color:rgba(251,191,36,0.25);background:rgba(251,191,36,0.08)}
-    /* collapsible description */
     .desc-block{margin-bottom:16px}
     .desc-text{font-size:14px;line-height:1.75;color:var(--text-2);overflow:hidden;transition:max-height .4s var(--ease)}
     .desc-text.coll{max-height:80px;-webkit-mask-image:linear-gradient(180deg,black 50%,transparent 100%);mask-image:linear-gradient(180deg,black 50%,transparent 100%)}
@@ -219,7 +221,8 @@
     .desc-toggle{font-size:12px;color:var(--violet-2);font-weight:600;cursor:pointer;background:none;border:none;padding:4px 0;margin-top:4px;display:block;transition:color .2s}
     .desc-toggle:hover{color:var(--cyan)}
     .genre-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
-    .genre-tag{padding:4px 12px;border-radius:999px;background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.2);font-size:12px;font-weight:600;color:var(--violet-2)}
+    .genre-tag{padding:4px 12px;border-radius:999px;background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.2);font-size:12px;font-weight:600;color:var(--violet-2);cursor:pointer;transition:all .2s var(--ease)}
+    .genre-tag:hover{background:rgba(124,58,237,0.2);border-color:var(--border-v)}
     .detail-actions{display:flex;gap:10px;flex-wrap:wrap}
 
     /* ─── PANEL ─── */
@@ -295,49 +298,90 @@
     .toast{background:var(--bg-float);border:1px solid var(--border-2);border-radius:var(--r-md);padding:13px 18px;font-size:14px;font-weight:600;color:var(--text);box-shadow:var(--shadow-lg);opacity:0;transform:translateY(12px);transition:opacity .22s var(--ease),transform .22s}
     .toast.show{opacity:1;transform:translateY(0)}
 
-    /* ─── CSS FULLSCREEN (Android/Telegram WebView workaround) ─── */
-    /* When native fullscreen fails, we expand the video-container to cover the full viewport with CSS */
-    .video-container.css-fs{
-      position:fixed!important;
-      top:0!important;left:0!important;right:0!important;bottom:0!important;
-      width:100vw!important;height:100dvh!important;
-      z-index:9999!important;
-      border-radius:0!important;
-      border:none!important;
+    /* ═══════════════════════════════════════════════════════════════════
+       CSS FULLSCREEN — Android / Telegram WebView fallback
+       Estratégia multi-camada:
+       1. Portrait + rotation: usa transform rotate(90deg) quando
+          screen.orientation.lock falha (Telegram WebView)
+       2. Landscape nativo: posição fixed cobrindo toda a tela
+       Botão X controlado 100% via JS (não depende de CSS sibling)
+    ═══════════════════════════════════════════════════════════════════ */
+    .video-container.css-fs {
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      z-index: 9999 !important;
+      border-radius: 0 !important;
+      border: none !important;
+      background: #000 !important;
     }
-    .video-container.css-fs .video-aspect{
-      position:absolute!important;
-      inset:0!important;
-      padding-top:0!important;
-      width:100%!important;
-      height:100%!important;
+    /* Landscape real — device já está em landscape ou lock funcionou */
+    .video-container.css-fs:not(.portrait-rotate) {
+      width: 100vw !important;
+      height: 100dvh !important;
+      right: 0 !important;
+      bottom: 0 !important;
+    }
+    /* Portrait → forçar landscape via CSS rotate */
+    .video-container.css-fs.portrait-rotate {
+      width: 100vh !important;
+      height: 100vw !important;
+      transform: rotate(90deg) translate(0, -100%) !important;
+      transform-origin: top left !important;
+    }
+    .video-container.css-fs .video-aspect {
+      position: absolute !important;
+      inset: 0 !important;
+      padding-top: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
     }
     .video-container.css-fs video,
-    .video-container.css-fs iframe{
-      position:absolute!important;
-      inset:0!important;
-      width:100%!important;
-      height:100%!important;
-      object-fit:contain!important;
+    .video-container.css-fs iframe {
+      position: absolute !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: contain !important;
     }
-    .css-fs-exit{
-      display:none;
-      position:fixed;
-      top:12px;right:12px;
-      z-index:10000;
-      background:rgba(5,6,15,0.85);
-      border:1px solid var(--border-2);
-      color:var(--text);
-      font-size:20px;
-      width:44px;height:44px;
-      border-radius:50%;
-      cursor:pointer;
-      place-items:center;
-      backdrop-filter:blur(8px);
+    /* Botão X do CSS fullscreen — display controlado via JS */
+    .css-fs-exit {
+      display: none;          /* JS seta display:flex ao entrar */
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 10000;
+      background: rgba(5,6,15,0.85);
+      border: 1px solid var(--border-2);
+      color: var(--text);
+      font-size: 20px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      transition: background .2s, transform .15s;
     }
-    .video-container.css-fs ~ .css-fs-exit{display:grid}
-    /* hide page scrollbar when css-fs active */
-    body.in-css-fs{overflow:hidden}
+    .css-fs-exit:hover { background: rgba(244,63,94,0.3); transform: scale(1.08); }
+    .css-fs-exit:active { transform: scale(0.94); }
+    /* Label informativo abaixo do X */
+    .css-fs-label {
+      display: none;
+      position: fixed;
+      top: 68px;
+      right: 8px;
+      z-index: 10000;
+      font-size: 10px;
+      color: rgba(255,255,255,0.5);
+      font-family: var(--font-b);
+      text-align: center;
+      pointer-events: none;
+    }
+    body.in-css-fs { overflow: hidden }
 
     /* ─── RESPONSIVE ─── */
     @media(max-width:1100px){
@@ -495,6 +539,7 @@
 
     <div class="player-layout">
       <div style="position:relative">
+        <!-- video-container: alvo do CSS fullscreen -->
         <div class="video-container" id="videoContainer">
           <div class="video-aspect">
             <video id="videoPlayer"
@@ -505,9 +550,10 @@
               x5-video-player-type="h5"
               x5-video-player-fullscreen="true"
               x-webkit-airplay="allow"
-              preload="metadata"></video>
+              preload="metadata"
+              style="background:#000"></video>
             <iframe id="iframePlayer"
-              allow="autoplay; fullscreen; picture-in-picture; xr-spatial-tracking"
+              allow="autoplay; fullscreen; picture-in-picture; xr-spatial-tracking; accelerometer; gyroscope"
               allowfullscreen
               webkitallowfullscreen
               mozallowfullscreen
@@ -520,8 +566,9 @@
             </div>
           </div>
         </div>
-        <!-- CSS-FS exit button (visible only when css-fs class is active) -->
+        <!-- Botão X para sair do CSS fullscreen — exibido via JS -->
         <button class="css-fs-exit" id="cssFsExit" aria-label="Sair da tela cheia">✕</button>
+        <div class="css-fs-label" id="cssFsLabel">Tela cheia</div>
       </div>
 
       <div class="player-side">
@@ -554,7 +601,7 @@
     </div>
   </main>
 
-</div>
+</div><!-- /.app -->
 
 <div class="loading-screen" id="loadingOverlay">
   <div class="loading-card">
@@ -567,12 +614,24 @@
 <div class="toast-host"><div class="toast" id="toast"></div></div>
 
 <script>
-// ── Telegram ──────────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════════════════════
+   BALTIGO — Anime Streaming · index.html
+   Versão com fullscreen multi-estratégia corrigido para Android + Telegram
+═══════════════════════════════════════════════════════════════════════════ */
+
+// ── Telegram WebApp ───────────────────────────────────────────────────────────
 const tg = window.Telegram?.WebApp || null;
 if (tg) {
-  try { tg.ready(); tg.expand(); tg.setHeaderColor?.("#05060f"); tg.setBackgroundColor?.("#05060f"); }
-  catch(e) { console.warn("Telegram WebApp init:", e); }
+  try {
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor?.("#05060f");
+    tg.setBackgroundColor?.("#05060f");
+  } catch(e) { console.warn("Telegram WebApp init:", e); }
 }
+
+// Detecta Telegram WebView uma vez — usado para pular APIs nativas de fullscreen
+const IS_TELEGRAM_WEBVIEW = !!window.Telegram?.WebApp;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const API_BASE           = window.location.origin;
@@ -581,335 +640,637 @@ const LINK_FETCH_TIMEOUT = 10000;
 const MAX_ATTEMPTS       = 4;
 const API_TIMEOUT        = 25000;
 
-// ── localStorage ──────────────────────────────────────────────────────────────
-function storageGet(k, def) { try { const v=localStorage.getItem(k); return v?JSON.parse(v):def; } catch(e){return def;} }
-function storageSet(k, v)   { try { localStorage.setItem(k,JSON.stringify(v)); } catch(e){} }
+// ── localStorage helpers ──────────────────────────────────────────────────────
+function storageGet(k, def) {
+  try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; }
+  catch(e) { return def; }
+}
+function storageSet(k, v) {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {}
+}
 
 const WATCH_KEY = "baltigo.watch.progress.v2";
-function getWatchMap()   { return storageGet(WATCH_KEY, {}); }
-function setWatchMap(m)  { storageSet(WATCH_KEY, m); }
+function getWatchMap()  { return storageGet(WATCH_KEY, {}); }
+function setWatchMap(m) { storageSet(WATCH_KEY, m); }
 
 function saveWatchProgress(p) {
-  const aid = String(p?.animeId||"").trim();
-  const ep  = String(p?.episode||"").trim();
-  if(!aid||!ep) return;
+  const aid = String(p?.animeId || "").trim();
+  const ep  = String(p?.episode  || "").trim();
+  if (!aid || !ep) return;
   const m = getWatchMap();
-  m[aid] = { animeId:aid, animeTitle:p.animeTitle||"Anime", episode:ep,
-    watchedSeconds:Number(p.watchedSeconds||0), durationSeconds:Number(p.durationSeconds||0),
-    cover:p.cover||"", updatedAt:Date.now(), completed:Boolean(p.completed) };
+  m[aid] = {
+    animeId: aid, animeTitle: p.animeTitle || "Anime", episode: ep,
+    watchedSeconds:  Number(p.watchedSeconds  || 0),
+    durationSeconds: Number(p.durationSeconds || 0),
+    cover: p.cover || "", updatedAt: Date.now(), completed: Boolean(p.completed),
+  };
   setWatchMap(m);
 }
 function getContinueWatching() {
-  return Object.values(getWatchMap()).sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0));
+  return Object.values(getWatchMap())
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
 }
-function getAnimeWatch(aid) { return getWatchMap()[aid]||null; }
+function getAnimeWatch(aid) { return getWatchMap()[aid] || null; }
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// ── App State ─────────────────────────────────────────────────────────────────
 const state = {
-  home:null, currentPage:"home",
-  searchQuery:"", searchResults:[],
-  anime:null, animeEpisodes:[], currentAnimeId:"", currentEpisode:"",
-  currentQuality:"HD", currentVideoUrl:"", currentEpisodeItem:null,
-  historyStack:[], autoBootDone:false,
-  openingEpisode:false, openEpisodeRequestId:0,
-  attempt:0, stallTimer:null, videoReady:false,
-  resultsMode:"section", currentSection:"", resultsPage:1, totalPages:1,
-  heroBanners:[], heroIdx:0, heroTimer:null, heroCurrent:null,
-  cssFsActive:false,
+  home: null, currentPage: "home",
+  searchQuery: "", searchResults: [],
+  anime: null, animeEpisodes: [], currentAnimeId: "", currentEpisode: "",
+  currentQuality: "HD", currentVideoUrl: "", currentEpisodeItem: null,
+  historyStack: [], autoBootDone: false,
+  openingEpisode: false, openEpisodeRequestId: 0,
+  attempt: 0, stallTimer: null, videoReady: false,
+  resultsMode: "section", currentSection: "", resultsPage: 1, totalPages: 1,
+  heroBanners: [], heroIdx: 0, heroTimer: null, heroCurrent: null,
+  // Fullscreen state
+  cssFsActive:      false,   // CSS fullscreen ativo
+  nativeFsActive:   false,   // fullscreen NATIVO ativo (controla o listener change)
 };
 
-// ── DOM ───────────────────────────────────────────────────────────────────────
+// ── DOM references ────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const els = {
-  headerSubtitle:$("headerSubtitle"),
-  loadingOverlay:$("loadingOverlay"), loadingTitle:$("loadingTitle"), loadingText:$("loadingText"),
-  toast:$("toast"),
-  backBtn:$("backBtn"), refreshBtn:$("refreshBtn"), homeBtn:$("homeBtn"),
-  homePage:$("homePage"), resultsPage:$("resultsPage"), animePage:$("animePage"), playerPage:$("playerPage"),
-  heroArea:$("heroArea"), continueSection:$("continueSection"),
-  searchInput:$("searchInput"), searchClear:$("searchClear"), homeSections:$("homeSections"),
-  resultsTitle:$("resultsTitle"), resultsSubtitle:$("resultsSubtitle"),
-  resultsGrid:$("resultsGrid"), resultsPagination:$("resultsPagination"), resultsBackBtn:$("resultsBackBtn"),
-  animeCover:$("animeCover"), animePrefix:$("animePrefix"), animeTitle:$("animeTitle"),
-  animeMeta:$("animeMeta"), animeDesc:$("animeDesc"), animeGenres:$("animeGenres"),
-  descToggle:$("descToggle"),
-  openFirstEpisodeBtn:$("openFirstEpisodeBtn"), goToPlayerBtn:$("goToPlayerBtn"),
-  backToHomeFromAnimeBtn:$("backToHomeFromAnimeBtn"),
-  episodesInfo:$("episodesInfo"), episodesGrid:$("episodesGrid"),
+  headerSubtitle:    $("headerSubtitle"),
+  loadingOverlay:    $("loadingOverlay"),
+  loadingTitle:      $("loadingTitle"),
+  loadingText:       $("loadingText"),
+  toast:             $("toast"),
+  backBtn:           $("backBtn"),
+  refreshBtn:        $("refreshBtn"),
+  homeBtn:           $("homeBtn"),
+  homePage:          $("homePage"),
+  resultsPage:       $("resultsPage"),
+  animePage:         $("animePage"),
+  playerPage:        $("playerPage"),
+  heroArea:          $("heroArea"),
+  continueSection:   $("continueSection"),
+  searchInput:       $("searchInput"),
+  searchClear:       $("searchClear"),
+  homeSections:      $("homeSections"),
+  resultsTitle:      $("resultsTitle"),
+  resultsSubtitle:   $("resultsSubtitle"),
+  resultsGrid:       $("resultsGrid"),
+  resultsPagination: $("resultsPagination"),
+  resultsBackBtn:    $("resultsBackBtn"),
+  animeCover:        $("animeCover"),
+  animePrefix:       $("animePrefix"),
+  animeTitle:        $("animeTitle"),
+  animeMeta:         $("animeMeta"),
+  animeDesc:         $("animeDesc"),
+  animeGenres:       $("animeGenres"),
+  descToggle:        $("descToggle"),
+  openFirstEpisodeBtn:    $("openFirstEpisodeBtn"),
+  goToPlayerBtn:          $("goToPlayerBtn"),
+  backToHomeFromAnimeBtn: $("backToHomeFromAnimeBtn"),
+  episodesInfo:      $("episodesInfo"),
+  episodesGrid:      $("episodesGrid"),
   playerPageSubtitle:$("playerPageSubtitle"),
-  videoContainer:$("videoContainer"),
-  videoPlayer:$("videoPlayer"), iframePlayer:$("iframePlayer"),
-  videoStatusOverlay:$("videoStatusOverlay"), videoStatusIconSlot:$("videoStatusIconSlot"),
-  videoStatusText:$("videoStatusText"), videoStatusSub:$("videoStatusSub"),
-  playerTitle:$("playerTitle"), playerMeta:$("playerMeta"),
-  qualityRow:$("qualityRow"), prevEpisodeBtn:$("prevEpisodeBtn"),
-  nextEpisodeBtn:$("nextEpisodeBtn"), episodeListBtn:$("episodeListBtn"),
-  backToAnimeBtn:$("backToAnimeBtn"), backToHomeFromPlayerBtn:$("backToHomeFromPlayerBtn"),
-  openInBrowserBtn:$("openInBrowserBtn"), retryPlayerBtn:$("retryPlayerBtn"),
-  fullscreenBtn:$("fullscreenBtn"), cssFsExit:$("cssFsExit"),
-  playerDesc:$("playerDesc"), playerNote:$("playerNote"),
+  videoContainer:    $("videoContainer"),
+  videoPlayer:       $("videoPlayer"),
+  iframePlayer:      $("iframePlayer"),
+  videoStatusOverlay:$("videoStatusOverlay"),
+  videoStatusIconSlot:$("videoStatusIconSlot"),
+  videoStatusText:   $("videoStatusText"),
+  videoStatusSub:    $("videoStatusSub"),
+  playerTitle:       $("playerTitle"),
+  playerMeta:        $("playerMeta"),
+  qualityRow:        $("qualityRow"),
+  prevEpisodeBtn:    $("prevEpisodeBtn"),
+  nextEpisodeBtn:    $("nextEpisodeBtn"),
+  episodeListBtn:    $("episodeListBtn"),
+  backToAnimeBtn:    $("backToAnimeBtn"),
+  backToHomeFromPlayerBtn: $("backToHomeFromPlayerBtn"),
+  openInBrowserBtn:  $("openInBrowserBtn"),
+  retryPlayerBtn:    $("retryPlayerBtn"),
+  fullscreenBtn:     $("fullscreenBtn"),
+  cssFsExit:         $("cssFsExit"),
+  cssFsLabel:        $("cssFsLabel"),
+  playerDesc:        $("playerDesc"),
+  playerNote:        $("playerNote"),
 };
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
-function esc(v){return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");}
-function normalizeQuality(v){const q=String(v||"HD").trim().toUpperCase();if(["FULLHD","FHD","1080P","HD","720P"].includes(q))return "HD";if(["SD","480P","360P"].includes(q))return "SD";return q||"HD";}
-function oppositeQuality(q){return normalizeQuality(q)==="HD"?"SD":"HD";}
-function imgSrc(src,title){if(src&&src.startsWith("http"))return src;return `https://placehold.co/600x900/0d1128/7c3aed?text=${encodeURIComponent(title||"Anime")}`;}
+function esc(v) {
+  return String(v ?? "")
+    .replaceAll("&","&amp;").replaceAll("<","&lt;")
+    .replaceAll(">","&gt;").replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+function normalizeQuality(v) {
+  const q = String(v || "HD").trim().toUpperCase();
+  if (["FULLHD","FHD","1080P","HD","720P"].includes(q)) return "HD";
+  if (["SD","480P","360P"].includes(q)) return "SD";
+  return q || "HD";
+}
+function oppositeQuality(q) { return normalizeQuality(q) === "HD" ? "SD" : "HD"; }
+function imgSrc(src, title) {
+  if (src && src.startsWith("http")) return src;
+  return `https://placehold.co/600x900/0d1128/7c3aed?text=${encodeURIComponent(title || "Anime")}`;
+}
 
-let toastTimer=null;
-function showToast(msg){if(!msg)return;clearTimeout(toastTimer);els.toast.textContent=msg;els.toast.classList.add("show");toastTimer=setTimeout(()=>els.toast.classList.remove("show"),3200);}
-function showLoading(t="Carregando...",x="Aguarde."){els.loadingTitle.textContent=t;els.loadingText.textContent=x;els.loadingOverlay.classList.add("active");}
-function hideLoading(){els.loadingOverlay.classList.remove("active");}
-function setSubtitle(t){els.headerSubtitle.textContent=t||"BALTIGO";}
+let toastTimer = null;
+function showToast(msg) {
+  if (!msg) return;
+  clearTimeout(toastTimer);
+  els.toast.textContent = msg;
+  els.toast.classList.add("show");
+  toastTimer = setTimeout(() => els.toast.classList.remove("show"), 3200);
+}
+function showLoading(t = "Carregando...", x = "Aguarde.") {
+  els.loadingTitle.textContent = t;
+  els.loadingText.textContent  = x;
+  els.loadingOverlay.classList.add("active");
+}
+function hideLoading() { els.loadingOverlay.classList.remove("active"); }
+function setSubtitle(t) { els.headerSubtitle.textContent = t || "BALTIGO"; }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-function setPage(page,push=true){
-  const prev=state.currentPage;
-  ["homePage","resultsPage","animePage","playerPage"].forEach(k=>els[k].classList.add("hidden"));
-  if(page==="home")    els.homePage.classList.remove("hidden");
-  if(page==="results") els.resultsPage.classList.remove("hidden");
-  if(page==="anime")   els.animePage.classList.remove("hidden");
-  if(page==="player")  els.playerPage.classList.remove("hidden");
-  state.currentPage=page;
-  const titles={home:"Início",results:"Resultados",anime:state.anime?.title||"Anime",player:"Player"};
-  setSubtitle(titles[page]||"BALTIGO");
-  if(push&&prev!==page) state.historyStack.push(prev);
-  window.scrollTo({top:0,behavior:"smooth"});
+function setPage(page, push = true) {
+  const prev = state.currentPage;
+  ["homePage","resultsPage","animePage","playerPage"]
+    .forEach(k => els[k].classList.add("hidden"));
+  if (page === "home")    els.homePage.classList.remove("hidden");
+  if (page === "results") els.resultsPage.classList.remove("hidden");
+  if (page === "anime")   els.animePage.classList.remove("hidden");
+  if (page === "player")  els.playerPage.classList.remove("hidden");
+  state.currentPage = page;
+  const titles = { home:"Início", results:"Resultados", anime: state.anime?.title || "Anime", player:"Player" };
+  setSubtitle(titles[page] || "BALTIGO");
+  if (push && prev !== page) state.historyStack.push(prev);
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
-function goBack(){setPage(state.historyStack.pop()||"home",false);}
+function goBack() { setPage(state.historyStack.pop() || "home", false); }
 
 // ── API ───────────────────────────────────────────────────────────────────────
-async function apiGet(path,ms=API_TIMEOUT){
-  const ctrl=new AbortController();
-  const timer=setTimeout(()=>ctrl.abort(),ms);
-  try{
-    const res=await fetch(`${API_BASE}${path}`,{headers:{"Accept":"application/json"},cache:"no-store",signal:ctrl.signal});
+async function apiGet(path, ms = API_TIMEOUT) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+      signal: ctrl.signal,
+    });
     clearTimeout(timer);
-    if(!res.ok){let d=`Erro ${res.status}`;try{d=(await res.json())?.detail||d;}catch(e){}throw new Error(d);}
+    if (!res.ok) {
+      let d = `Erro ${res.status}`;
+      try { d = (await res.json())?.detail || d; } catch(e) {}
+      throw new Error(d);
+    }
     return res.json();
-  }catch(err){clearTimeout(timer);if(err.name==="AbortError")throw new Error("Tempo limite excedido — servidor pode estar off.");throw err;}
+  } catch(err) {
+    clearTimeout(timer);
+    if (err.name === "AbortError") throw new Error("Tempo limite excedido — servidor pode estar off.");
+    throw err;
+  }
 }
 
 // ── Video overlay ─────────────────────────────────────────────────────────────
-function showVideoOverlay(type,text,sub=""){
-  if(type==="loading")els.videoStatusIconSlot.innerHTML='<div class="spinner-ring"></div>';
-  else if(type.startsWith("icon:"))els.videoStatusIconSlot.innerHTML=`<div class="overlay-icon">${type.slice(5)}</div>`;
-  els.videoStatusText.textContent=text;els.videoStatusSub.textContent=sub;
+function showVideoOverlay(type, text, sub = "") {
+  if (type === "loading")
+    els.videoStatusIconSlot.innerHTML = '<div class="spinner-ring"></div>';
+  else if (type.startsWith("icon:"))
+    els.videoStatusIconSlot.innerHTML = `<div class="overlay-icon">${type.slice(5)}</div>`;
+  els.videoStatusText.textContent = text;
+  els.videoStatusSub.textContent  = sub;
   els.videoStatusOverlay.classList.add("active");
 }
-function hideVideoOverlay(){els.videoStatusOverlay.classList.remove("active");}
+function hideVideoOverlay() { els.videoStatusOverlay.classList.remove("active"); }
 
 // ── Proxy ─────────────────────────────────────────────────────────────────────
-function buildProxyUrl(rawUrl,bust=0){const p=new URL(`${API_BASE}/api/proxy-stream`);p.searchParams.set("url",rawUrl);if(bust)p.searchParams.set("_t",String(bust));return p.toString();}
+function buildProxyUrl(rawUrl, bust = 0) {
+  const p = new URL(`${API_BASE}/api/proxy-stream`);
+  p.searchParams.set("url", rawUrl);
+  if (bust) p.searchParams.set("_t", String(bust));
+  return p.toString();
+}
 
 // ── Stall timer ───────────────────────────────────────────────────────────────
-function clearStallTimer(){if(state.stallTimer){clearTimeout(state.stallTimer);state.stallTimer=null;}}
-function startStallTimer(){clearStallTimer();state.stallTimer=setTimeout(()=>{if(!state.videoReady)_escalatePlayerFailure();},STALL_TIMEOUT_MS);}
+function clearStallTimer() {
+  if (state.stallTimer) { clearTimeout(state.stallTimer); state.stallTimer = null; }
+}
+function startStallTimer() {
+  clearStallTimer();
+  state.stallTimer = setTimeout(() => {
+    if (!state.videoReady) _escalatePlayerFailure();
+  }, STALL_TIMEOUT_MS);
+}
 
 // ── Player management ─────────────────────────────────────────────────────────
-function _resetVideoElement(){
-  clearStallTimer();state.videoReady=false;
-  try{els.videoPlayer.pause();}catch(e){}
-  els.videoPlayer.removeAttribute("src");els.videoPlayer.load();
-  els.videoPlayer.style.display="block";
-  els.iframePlayer.src="about:blank";els.iframePlayer.style.display="none";
+function _resetVideoElement() {
+  clearStallTimer();
+  state.videoReady = false;
+  try { els.videoPlayer.pause(); } catch(e) {}
+  els.videoPlayer.removeAttribute("src");
+  els.videoPlayer.load();
+  els.videoPlayer.style.display = "block";
+  els.iframePlayer.src          = "about:blank";
+  els.iframePlayer.style.display = "none";
 }
-function clearPlayerState(){_resetVideoElement();hideVideoOverlay();state.currentVideoUrl="";state.currentEpisodeItem=null;state.attempt=0;}
-function _loadVideoUrl(rawUrl){
-  state.currentVideoUrl=rawUrl;state.videoReady=false;_resetVideoElement();
-  showVideoOverlay("loading","Carregando vídeo...","Conectando ao servidor");
-  els.videoPlayer.dataset.rawUrl=rawUrl;els.videoPlayer.src=buildProxyUrl(rawUrl,Date.now());
-  els.videoPlayer.load();startStallTimer();
+function clearPlayerState() {
+  _resetVideoElement();
+  hideVideoOverlay();
+  state.currentVideoUrl    = "";
+  state.currentEpisodeItem = null;
+  state.attempt            = 0;
 }
-function _loadIframeUrl(url){
-  _resetVideoElement();hideVideoOverlay();
-  els.videoPlayer.style.display="none";els.iframePlayer.style.display="block";
-  els.iframePlayer.src=url;state.videoReady=true;
+function _loadVideoUrl(rawUrl) {
+  state.currentVideoUrl = rawUrl;
+  state.videoReady = false;
+  _resetVideoElement();
+  showVideoOverlay("loading", "Carregando vídeo...", "Conectando ao servidor");
+  els.videoPlayer.dataset.rawUrl = rawUrl;
+  els.videoPlayer.src            = buildProxyUrl(rawUrl, Date.now());
+  els.videoPlayer.load();
+  startStallTimer();
 }
-function _isDirectVideo(url){const l=String(url||"").toLowerCase();return l.includes(".m3u8")||l.includes(".mp4")||l.includes(".webm")||l.includes("videoplayback");}
-
-// ── FULLSCREEN — Multi-strategy with CSS fallback ─────────────────────────────
-// Strategy order:
-// 1. Native fullscreen API (works on most browsers)
-// 2. webkitRequestFullscreen (Safari desktop)
-// 3. video.webkitEnterFullscreen (iOS Safari — native video fullscreen)
-// 4. CSS-based fake fullscreen (Android WebView / Telegram — last resort)
-
-function enterCssFullscreen(){
-  state.cssFsActive=true;
-  els.videoContainer.classList.add("css-fs");
-  document.body.classList.add("in-css-fs");
-  // Try to lock landscape on mobile
-  if(screen.orientation?.lock){screen.orientation.lock("landscape").catch(()=>{});}
-  // Scroll to top so the fixed-positioned container is visible
-  window.scrollTo({top:0});
+function _loadIframeUrl(url) {
+  _resetVideoElement();
+  hideVideoOverlay();
+  els.videoPlayer.style.display  = "none";
+  els.iframePlayer.style.display = "block";
+  els.iframePlayer.src           = url;
+  state.videoReady               = true;
 }
-
-function exitCssFullscreen(){
-  state.cssFsActive=false;
-  els.videoContainer.classList.remove("css-fs");
-  document.body.classList.remove("in-css-fs");
-  if(screen.orientation?.unlock){try{screen.orientation.unlock();}catch(e){}}
+function _isDirectVideo(url) {
+  const l = String(url || "").toLowerCase();
+  return l.includes(".m3u8") || l.includes(".mp4") || l.includes(".webm") || l.includes("videoplayback");
 }
 
-async function requestFullscreen(){
-  const video=els.videoPlayer;
-  const iframe=els.iframePlayer;
+/* ═══════════════════════════════════════════════════════════════════════════
+   FULLSCREEN — Sistema multi-estratégia com CSS rotate fallback
+   ───────────────────────────────────────────────────────────────────────────
+   Ordem de prioridade:
+   1. Telegram WebView detectado → CSS fullscreen imediato (sem tentar APIs)
+   2. video.requestFullscreen()  → Chrome Android (alvo = <video>, não container)
+   3. video.webkitEnterFullscreen() → iOS Safari
+   4. container.requestFullscreen() → browsers genéricos
+   5. CSS fullscreen + transform rotate(90deg) → último recurso (Android WebView)
 
-  // If already in css-fs mode, exit
-  if(state.cssFsActive){exitCssFullscreen();return;}
+   CSS rotate: quando screen.orientation.lock falha (Telegram, alguns WebViews),
+   aplica transform para forçar landscape visualmente mesmo em portrait.
 
-  // Determine the element to fullscreen
-  const isVideo=video.style.display!=="none";
-  const isIframe=iframe.style.display!=="none";
+   Botão X: controlado 100% via JS — sem dependência de CSS sibling selector.
+   Flag nativeFsActive: protege o listener fullscreenchange de falsos disparos.
+═══════════════════════════════════════════════════════════════════════════ */
 
-  // Try native API on the container first (works in Chrome Android normally)
-  const containerEl=els.videoContainer;
-  try{
-    if(containerEl.requestFullscreen){
-      await containerEl.requestFullscreen({navigationUI:"hide"});
-      if(screen.orientation?.lock)screen.orientation.lock("landscape").catch(()=>{});
-      return;
-    }
-  }catch(e){console.warn("[FS] requestFullscreen failed:", e);}
+function enterCssFullscreen() {
+  state.cssFsActive = true;
+  const container   = els.videoContainer;
+  const isPortrait  = window.innerHeight > window.innerWidth;
 
-  // Webkit prefix (Safari desktop)
-  try{
-    if(containerEl.webkitRequestFullscreen){
-      containerEl.webkitRequestFullscreen();
-      return;
-    }
-  }catch(e){console.warn("[FS] webkitRequestFullscreen failed:", e);}
+  container.classList.add("css-fs");
 
-  // iOS Safari — webkitEnterFullscreen works directly on <video>
-  if(isVideo){
-    try{
-      if(video.webkitEnterFullscreen){video.webkitEnterFullscreen();return;}
-    }catch(e){console.warn("[FS] webkitEnterFullscreen failed:", e);}
+  // Portrait → aplicar rotate para simular landscape
+  if (isPortrait) {
+    container.classList.add("portrait-rotate");
   }
 
-  // Moz / MS fallbacks
-  try{
-    if(containerEl.mozRequestFullScreen){containerEl.mozRequestFullScreen();return;}
-    if(containerEl.msRequestFullscreen){containerEl.msRequestFullscreen();return;}
-  }catch(e){}
+  document.body.classList.add("in-css-fs");
 
-  // ── LAST RESORT: CSS fake fullscreen ──────────────────────────────────────
-  // This is the key fix for Android Telegram WebView where all native
-  // fullscreen APIs are sandboxed and throw "not allowed" errors.
-  console.info("[FS] All native APIs failed — using CSS fullscreen fallback");
+  // Exibir botão X e label via JS (não depende de CSS sibling)
+  els.cssFsExit.style.display  = "flex";
+  els.cssFsLabel.style.display = "block";
+
+  // Scroll para o topo garante que o container fixed seja visível
+  window.scrollTo({ top: 0 });
+
+  // Tentar lock de orientação landscape (pode falhar silenciosamente)
+  if (screen.orientation?.lock) {
+    screen.orientation.lock("landscape").catch(() => {
+      // rotate CSS já cobre este caso — ignorar erro
+    });
+  }
+
+  showToast("Toque ✕ para sair da tela cheia");
+}
+
+function exitCssFullscreen() {
+  state.cssFsActive = false;
+  const container   = els.videoContainer;
+
+  container.classList.remove("css-fs", "portrait-rotate");
+  container.style.cssText = ""; // limpa quaisquer inline styles residuais
+  document.body.classList.remove("in-css-fs");
+
+  // Esconder botão X e label via JS
+  els.cssFsExit.style.display  = "none";
+  els.cssFsLabel.style.display = "none";
+
+  // Desbloquear orientação
+  if (screen.orientation?.unlock) {
+    try { screen.orientation.unlock(); } catch(e) {}
+  }
+}
+
+async function requestFullscreen() {
+  const video  = els.videoPlayer;
+  const iframe = els.iframePlayer;
+
+  // Toggle: CSS-FS ativo → sair
+  if (state.cssFsActive) { exitCssFullscreen(); return; }
+
+  // Toggle: fullscreen nativo ativo → sair
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fsEl) {
+    const exitFn = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exitFn) exitFn.call(document).catch(() => {});
+    return;
+  }
+
+  const isVideo  = video.style.display  !== "none";
+
+  // ── ESTRATÉGIA 1: Telegram WebView → CSS imediato ─────────────────────────
+  // Telegram bloqueia todas as APIs nativas de fullscreen — pular direto
+  if (IS_TELEGRAM_WEBVIEW) {
+    console.info("[FS] Telegram WebView detectado → CSS fullscreen direto");
+    enterCssFullscreen();
+    return;
+  }
+
+  // ── ESTRATÉGIA 2: video.requestFullscreen() — Chrome Android ──────────────
+  // CHAVE: o alvo deve ser o <video>, não o container div.
+  // Chamar no container falha silenciosamente no Android Chrome.
+  if (isVideo && video.requestFullscreen) {
+    try {
+      await video.requestFullscreen({ navigationUI: "hide" });
+      state.nativeFsActive = true;
+      if (screen.orientation?.lock) screen.orientation.lock("landscape").catch(() => {});
+      return;
+    } catch(e) { console.warn("[FS] video.requestFullscreen:", e.message || e); }
+  }
+
+  // ── ESTRATÉGIA 3: webkitEnterFullscreen — iOS Safari ──────────────────────
+  // Única API que funciona no iOS para fullscreen nativo do vídeo
+  if (isVideo && video.webkitEnterFullscreen) {
+    try {
+      video.webkitEnterFullscreen();
+      state.nativeFsActive = true;
+      return;
+    } catch(e) { console.warn("[FS] webkitEnterFullscreen:", e.message || e); }
+  }
+
+  // ── ESTRATÉGIA 4: container.requestFullscreen — browsers genéricos ─────────
+  const container = els.videoContainer;
+  const fsMethod  =
+    container.requestFullscreen       ||
+    container.webkitRequestFullscreen ||
+    container.mozRequestFullScreen    ||
+    container.msRequestFullscreen;
+
+  if (fsMethod) {
+    try {
+      await fsMethod.call(container, { navigationUI: "hide" });
+      state.nativeFsActive = true;
+      if (screen.orientation?.lock) screen.orientation.lock("landscape").catch(() => {});
+      return;
+    } catch(e) { console.warn("[FS] container fullscreen:", e.message || e); }
+  }
+
+  // ── ESTRATÉGIA 5: CSS fullscreen + rotate — último recurso ────────────────
+  // Cobre Android WebView genérico onde todas as APIs acima falharam
+  console.info("[FS] Todas as APIs nativas falharam → CSS fullscreen com rotate");
   enterCssFullscreen();
 }
 
-// Exit CSS fullscreen when Escape is pressed
-document.addEventListener("keydown", e=>{if(e.key==="Escape"&&state.cssFsActive)exitCssFullscreen();});
-// Exit button
+// ── Fullscreen event listeners ────────────────────────────────────────────────
+
+// Escape sai do CSS-FS
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && state.cssFsActive) exitCssFullscreen();
+});
+
+// Botão X do CSS-FS — clique
 els.cssFsExit.addEventListener("click", exitCssFullscreen);
-// Double-click on video toggles fullscreen
+
+// Double-tap no vídeo entra/sai do fullscreen
 els.videoPlayer.addEventListener("dblclick", requestFullscreen);
 
+// Sync com fullscreen nativo — protegido por nativeFsActive
+// (evita que o evento dispare quando CSS-FS está ativo e o nativo nunca entrou)
+function _onNativeFsChange() {
+  if (!state.nativeFsActive) return;
+  const isNativeFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  if (!isNativeFs) {
+    state.nativeFsActive = false;
+    // fullscreen nativo saiu — não precisa fazer nada com CSS-FS
+  }
+}
+document.addEventListener("fullscreenchange",        _onNativeFsChange);
+document.addEventListener("webkitfullscreenchange",  _onNativeFsChange);
+
+// Reorientar o CSS-FS se o device for rotacionado enquanto está ativo
+window.addEventListener("orientationchange", () => {
+  if (!state.cssFsActive) return;
+  // Re-avaliar portrait vs landscape após a rotação
+  setTimeout(() => {
+    const isPortrait = window.innerHeight > window.innerWidth;
+    els.videoContainer.classList.toggle("portrait-rotate", isPortrait);
+  }, 150);
+});
+
 // ── Escalation ────────────────────────────────────────────────────────────────
-async function _escalatePlayerFailure(){
-  clearStallTimer();state.attempt++;
-  const {currentAnimeId:aid,currentEpisode:ep,currentQuality:q}=state;
-  if(state.attempt===1){
-    const rawUrl=state.currentVideoUrl;if(!rawUrl){_showFinalError();return;}
-    showToast("Reconectando...");showVideoOverlay("loading","Reconectando...",`Tentativa ${state.attempt+1} de ${MAX_ATTEMPTS}`);
-    _resetVideoElement();els.videoPlayer.dataset.rawUrl=rawUrl;els.videoPlayer.src=buildProxyUrl(rawUrl,Date.now());els.videoPlayer.load();startStallTimer();return;
-  }
-  if(state.attempt===2){
-    showToast("Buscando link atualizado...");showVideoOverlay("loading","Buscando link atualizado...","O link anterior expirou");
-    try{
-      const data=await _fetchEpisodeWithTimeout(aid,ep,q,true);const newUrl=data?.item?.video;if(!newUrl)throw new Error("no video");
-      state.currentEpisodeItem=data.item;state.currentVideoUrl=newUrl;_resetVideoElement();
-      els.videoPlayer.dataset.rawUrl=newUrl;els.videoPlayer.src=buildProxyUrl(newUrl,Date.now());els.videoPlayer.load();startStallTimer();
-    }catch(e){state.attempt++;await _escalatePlayerFailure();}
+async function _escalatePlayerFailure() {
+  clearStallTimer();
+  state.attempt++;
+  const { currentAnimeId: aid, currentEpisode: ep, currentQuality: q } = state;
+
+  if (state.attempt === 1) {
+    const rawUrl = state.currentVideoUrl;
+    if (!rawUrl) { _showFinalError(); return; }
+    showToast("Reconectando...");
+    showVideoOverlay("loading", "Reconectando...", `Tentativa ${state.attempt + 1} de ${MAX_ATTEMPTS}`);
+    _resetVideoElement();
+    els.videoPlayer.dataset.rawUrl = rawUrl;
+    els.videoPlayer.src = buildProxyUrl(rawUrl, Date.now());
+    els.videoPlayer.load();
+    startStallTimer();
     return;
   }
-  if(state.attempt===3){
-    const alt=oppositeQuality(q);showToast(`Tentando qualidade ${alt}...`);showVideoOverlay("loading",`Tentando ${alt}...`,"Última tentativa automática");
-    try{
-      const data=await _fetchEpisodeWithTimeout(aid,ep,alt,true);const newUrl=data?.item?.video;if(!newUrl)throw new Error("no video");
-      state.currentQuality=alt;state.currentEpisodeItem=data.item;state.currentVideoUrl=newUrl;renderQualityButtons(data.item);
-      _resetVideoElement();els.videoPlayer.dataset.rawUrl=newUrl;els.videoPlayer.src=buildProxyUrl(newUrl,Date.now());els.videoPlayer.load();startStallTimer();
-    }catch(e){_showFinalError();}
+
+  if (state.attempt === 2) {
+    showToast("Buscando link atualizado...");
+    showVideoOverlay("loading", "Buscando link atualizado...", "O link anterior expirou");
+    try {
+      const data   = await _fetchEpisodeWithTimeout(aid, ep, q, true);
+      const newUrl = data?.item?.video;
+      if (!newUrl) throw new Error("no video");
+      state.currentEpisodeItem = data.item;
+      state.currentVideoUrl    = newUrl;
+      _resetVideoElement();
+      els.videoPlayer.dataset.rawUrl = newUrl;
+      els.videoPlayer.src = buildProxyUrl(newUrl, Date.now());
+      els.videoPlayer.load();
+      startStallTimer();
+    } catch(e) { state.attempt++; await _escalatePlayerFailure(); }
     return;
   }
+
+  if (state.attempt === 3) {
+    const alt = oppositeQuality(q);
+    showToast(`Tentando qualidade ${alt}...`);
+    showVideoOverlay("loading", `Tentando ${alt}...`, "Última tentativa automática");
+    try {
+      const data   = await _fetchEpisodeWithTimeout(aid, ep, alt, true);
+      const newUrl = data?.item?.video;
+      if (!newUrl) throw new Error("no video");
+      state.currentQuality     = alt;
+      state.currentEpisodeItem = data.item;
+      state.currentVideoUrl    = newUrl;
+      renderQualityButtons(data.item);
+      _resetVideoElement();
+      els.videoPlayer.dataset.rawUrl = newUrl;
+      els.videoPlayer.src = buildProxyUrl(newUrl, Date.now());
+      els.videoPlayer.load();
+      startStallTimer();
+    } catch(e) { _showFinalError(); }
+    return;
+  }
+
   _showFinalError();
 }
 
-async function _fetchEpisodeWithTimeout(animeId,episode,quality,refresh=false){
-  const path=`/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(quality)}${refresh?"&refresh=1":""}`;
-  const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),LINK_FETCH_TIMEOUT);
-  try{const res=await fetch(`${API_BASE}${path}`,{headers:{"Accept":"application/json"},cache:"no-store",signal:ctrl.signal});if(!res.ok)throw new Error(`HTTP ${res.status}`);return await res.json();}
-  finally{clearTimeout(timer);}
+async function _fetchEpisodeWithTimeout(animeId, episode, quality, refresh = false) {
+  const path = `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(quality)}${refresh ? "&refresh=1" : ""}`;
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LINK_FETCH_TIMEOUT);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { "Accept": "application/json" }, cache: "no-store", signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally { clearTimeout(timer); }
 }
 
-function _showFinalError(){
-  clearStallTimer();showVideoOverlay("icon:⚠️","Vídeo indisponível","Tente recarregar ou use outra qualidade");
-  els.playerNote.textContent="Não foi possível carregar esse vídeo. Recarregue ou troque a qualidade.";showToast("Vídeo indisponível. Tente novamente.");
+function _showFinalError() {
+  clearStallTimer();
+  showVideoOverlay("icon:⚠️", "Vídeo indisponível", "Tente recarregar ou use outra qualidade");
+  els.playerNote.textContent = "Não foi possível carregar esse vídeo. Recarregue ou troque a qualidade.";
+  showToast("Vídeo indisponível. Tente novamente.");
 }
 
 // ── Video events ──────────────────────────────────────────────────────────────
-function bindVideoEvents(){
-  const v=els.videoPlayer;
-  v.addEventListener("loadedmetadata",()=>{state.videoReady=true;clearStallTimer();hideVideoOverlay();});
-  v.addEventListener("canplay",()=>{state.videoReady=true;clearStallTimer();hideVideoOverlay();});
-  v.addEventListener("playing",()=>{state.videoReady=true;clearStallTimer();hideVideoOverlay();state.attempt=0;});
-  v.addEventListener("waiting",()=>{if(!state.videoReady){showVideoOverlay("loading","Buffering...","Aguardando dados");startStallTimer();}});
-  v.addEventListener("stalled",()=>{console.warn("[PLAYER] stalled");if(!state.videoReady){showVideoOverlay("loading","Conexão lenta...","Tentando recuperar");startStallTimer();}});
-  v.addEventListener("error",async()=>{if(!v.src||v.src===window.location.href)return;console.warn("[PLAYER] error",v.error?.code);await _escalatePlayerFailure();});
-  v.addEventListener("timeupdate",()=>{
-    if(!state.currentAnimeId||!state.currentEpisode)return;
+function bindVideoEvents() {
+  const v = els.videoPlayer;
+
+  v.addEventListener("loadedmetadata", () => {
+    state.videoReady = true; clearStallTimer(); hideVideoOverlay();
+  });
+  v.addEventListener("canplay", () => {
+    state.videoReady = true; clearStallTimer(); hideVideoOverlay();
+  });
+  v.addEventListener("playing", () => {
+    state.videoReady = true; clearStallTimer(); hideVideoOverlay(); state.attempt = 0;
+  });
+  v.addEventListener("waiting", () => {
+    if (!state.videoReady) {
+      showVideoOverlay("loading", "Buffering...", "Aguardando dados");
+      startStallTimer();
+    }
+  });
+  v.addEventListener("stalled", () => {
+    console.warn("[PLAYER] stalled");
+    if (!state.videoReady) {
+      showVideoOverlay("loading", "Conexão lenta...", "Tentando recuperar");
+      startStallTimer();
+    }
+  });
+  v.addEventListener("error", async () => {
+    if (!v.src || v.src === window.location.href) return;
+    console.warn("[PLAYER] error", v.error?.code);
+    await _escalatePlayerFailure();
+  });
+  v.addEventListener("timeupdate", () => {
+    if (!state.currentAnimeId || !state.currentEpisode) return;
     saveWatchProgress({
-      animeId:state.currentAnimeId, animeTitle:state.anime?.title||state.currentEpisodeItem?.title||"Anime",
-      episode:state.currentEpisode, watchedSeconds:Math.floor(v.currentTime||0),
-      durationSeconds:Math.floor(v.duration||0), cover:state.anime?.cover_url||state.anime?.banner_url||state.currentEpisodeItem?.thumb||"",
-      completed:(v.duration||0)>0&&(v.currentTime||0)/(v.duration||1)>0.9,
+      animeId:         state.currentAnimeId,
+      animeTitle:      state.anime?.title || state.currentEpisodeItem?.title || "Anime",
+      episode:         state.currentEpisode,
+      watchedSeconds:  Math.floor(v.currentTime || 0),
+      durationSeconds: Math.floor(v.duration    || 0),
+      cover:           state.anime?.cover_url || state.anime?.banner_url || state.currentEpisodeItem?.thumb || "",
+      completed:       (v.duration || 0) > 0 && (v.currentTime || 0) / (v.duration || 1) > 0.9,
     });
   });
-  v.addEventListener("ended",()=>{
-    if(!state.currentAnimeId||!state.currentEpisode)return;
-    saveWatchProgress({animeId:state.currentAnimeId,animeTitle:state.anime?.title||"Anime",episode:state.currentEpisode,watchedSeconds:Math.floor(v.duration||0),durationSeconds:Math.floor(v.duration||0),cover:state.anime?.cover_url||state.anime?.banner_url||"",completed:true});
+  v.addEventListener("ended", () => {
+    if (!state.currentAnimeId || !state.currentEpisode) return;
+    saveWatchProgress({
+      animeId:         state.currentAnimeId,
+      animeTitle:      state.anime?.title || "Anime",
+      episode:         state.currentEpisode,
+      watchedSeconds:  Math.floor(v.duration || 0),
+      durationSeconds: Math.floor(v.duration || 0),
+      cover:           state.anime?.cover_url || state.anime?.banner_url || "",
+      completed:       true,
+    });
     renderContinueWatching();
+    // Auto-avançar para próximo episódio se disponível
+    const nextEp = els.nextEpisodeBtn.dataset.episode;
+    if (nextEp && !els.nextEpisodeBtn.disabled) {
+      setTimeout(() => {
+        showToast("Próximo episódio em 3s... Toque para cancelar");
+        const t = setTimeout(() => {
+          openEpisode(state.currentAnimeId, nextEp, state.currentQuality, { pushHistory: false, force: true });
+        }, 3000);
+        // Toque em qualquer lugar cancela
+        const cancel = () => { clearTimeout(t); document.removeEventListener("click", cancel); };
+        document.addEventListener("click", cancel, { once: true });
+      }, 500);
+    }
   });
 }
 
 // ── Render helpers ────────────────────────────────────────────────────────────
-function buildCard(item){
-  const cover=imgSrc(item.banner_url||item.cover_url,item.title);
-  const isDub=item.is_dubbed||(item.prefix==="DUB");
-  const badge=isDub?"DUB":"LEG";
-  const epTag=item.episode?`<div class="card-ep-tag">EP ${esc(item.episode)}</div>`:"";
-  const hasWatched=Object.keys(getWatchMap()).some(k=>k===item.id);
-  const watchBadge=hasWatched?`<div class="card-watched-badge">✓</div>`:"";
-  const meta=[item.status,item.year,item.episodes?`${item.episodes} eps`:""].filter(Boolean).map(esc);
+function buildCard(item) {
+  const cover = imgSrc(item.banner_url || item.cover_url, item.title);
+  const isDub  = item.is_dubbed || (item.prefix === "DUB");
+  const badge  = isDub ? "DUB" : "LEG";
+  const epTag  = item.episode ? `<div class="card-ep-tag">EP ${esc(item.episode)}</div>` : "";
+  const hasWatched = !!getWatchMap()[item.id];
+  const watchBadge = hasWatched ? `<div class="card-watched-badge">✓</div>` : "";
+  const meta   = [item.status, item.year, item.episodes ? `${item.episodes} eps` : ""]
+    .filter(Boolean).map(esc);
   return `<article class="anime-card" data-anime-id="${esc(item.id)}">
     <div class="card-thumb">
-      <div class="card-badge ${isDub?"dub":"leg"}">${badge}</div>
+      <div class="card-badge ${isDub ? "dub" : "leg"}">${badge}</div>
       ${watchBadge}${epTag}
       <div class="card-play-overlay"><div class="play-circle">▶</div></div>
-      <img src="${cover}" alt="${esc(item.title||"Anime")}" loading="lazy" onerror="this.src='https://placehold.co/300x450/0d1128/7c3aed?text=Sem+Capa'" />
+      <img src="${cover}" alt="${esc(item.title || "Anime")}" loading="lazy"
+           onerror="this.src='https://placehold.co/300x450/0d1128/7c3aed?text=Sem+Capa'" />
     </div>
     <div class="card-body">
-      <div class="card-title">${esc(item.title||"Sem título")}</div>
-      <div class="card-meta">${meta.join(" · ")||"Toque para abrir"}</div>
+      <div class="card-title">${esc(item.title || "Sem título")}</div>
+      <div class="card-meta">${meta.join(" · ") || "Toque para abrir"}</div>
     </div>
   </article>`;
 }
 
-function skeletonGrid(count=12){
-  let h='<div class="card-grid">';
-  for(let i=0;i<count;i++)h+=`<div class="skeleton-card"><div class="skeleton skeleton-thumb"></div><div class="skeleton-lines"><div class="skeleton skeleton-line w-80"></div><div class="skeleton skeleton-line w-50"></div></div></div>`;
-  return h+"</div>";
+function skeletonGrid(count = 12) {
+  let h = '<div class="card-grid">';
+  for (let i = 0; i < count; i++) {
+    h += `<div class="skeleton-card">
+      <div class="skeleton skeleton-thumb"></div>
+      <div class="skeleton-lines">
+        <div class="skeleton skeleton-line w-80"></div>
+        <div class="skeleton skeleton-line w-50"></div>
+      </div>
+    </div>`;
+  }
+  return h + "</div>";
 }
 
-function renderSectionBlock(section){
-  const items=Array.isArray(section.items)?section.items:[];
+function renderSectionBlock(section) {
+  const items = Array.isArray(section.items) ? section.items : [];
   return `<div class="section">
     <div class="section-head">
-      <div class="section-label"><div class="section-accent"></div>
-        <div><div class="section-title">${esc(section.title||"Seção")}</div><div class="section-count">${items.length} títulos</div></div>
+      <div class="section-label">
+        <div class="section-accent"></div>
+        <div>
+          <div class="section-title">${esc(section.title || "Seção")}</div>
+          <div class="section-count">${items.length} títulos</div>
+        </div>
       </div>
       <button class="btn btn-ghost btn-sm" data-open-section="${esc(section.key)}">Ver mais →</button>
     </div>
@@ -917,88 +1278,97 @@ function renderSectionBlock(section){
   </div>`;
 }
 
-function renderAnimeMeta(item){
-  const isDub=item.is_dubbed||item.prefix==="DUB";
-  const pills=[];
-  pills.push(`<span class="pill">${isDub?"🎙️ Dublado":"📝 Legendado"}</span>`);
-  if(item.score)    pills.push(`<span class="pill score">⭐ ${esc(item.score)}</span>`);
-  if(item.status)   pills.push(`<span class="pill">${esc(item.status)}</span>`);
-  if(item.year)     pills.push(`<span class="pill">📅 ${esc(item.year)}</span>`);
-  if(item.episodes) pills.push(`<span class="pill">🎬 ${esc(item.episodes)} eps</span>`);
-  if(item.studio)   pills.push(`<span class="pill">🏢 ${esc(item.studio)}</span>`);
+function renderAnimeMeta(item) {
+  const isDub  = item.is_dubbed || item.prefix === "DUB";
+  const pills  = [];
+  pills.push(`<span class="pill">${isDub ? "🎙️ Dublado" : "📝 Legendado"}</span>`);
+  if (item.score)    pills.push(`<span class="pill score">⭐ ${esc(item.score)}</span>`);
+  if (item.status)   pills.push(`<span class="pill">${esc(item.status)}</span>`);
+  if (item.year)     pills.push(`<span class="pill">📅 ${esc(item.year)}</span>`);
+  if (item.episodes) pills.push(`<span class="pill">🎬 ${esc(item.episodes)} eps</span>`);
+  if (item.studio)   pills.push(`<span class="pill">🏢 ${esc(item.studio)}</span>`);
   return pills.join("");
 }
 
-function renderEpisodeButtons(episodes){
-  if(!episodes.length){
-    els.episodesInfo.textContent="Sem episódios disponíveis.";
-    els.episodesGrid.innerHTML=`<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Sem episódios</div><div class="state-box-text">Esse anime não retornou episódios agora.</div></div>`;
+function renderEpisodeButtons(episodes) {
+  if (!episodes.length) {
+    els.episodesInfo.textContent = "Sem episódios disponíveis.";
+    els.episodesGrid.innerHTML   = `<div class="state-box">
+      <div class="state-box-icon">📭</div>
+      <div class="state-box-title">Sem episódios</div>
+      <div class="state-box-text">Esse anime não retornou episódios agora.</div>
+    </div>`;
     return;
   }
-  els.episodesInfo.textContent=`${episodes.length} episódio(s) disponíveis`;
-  els.episodesGrid.innerHTML=episodes.map(ep=>{
-    const num=String(ep.number??ep.episode??ep.ep??ep.slug??"").trim();
-    const lbl=num?num:(ep.title||"—");
-    const isActive=String(state.currentEpisode)===String(num);
-    const watchInfo=getAnimeWatch(state.currentAnimeId);
-    const isWatched=watchInfo&&String(watchInfo.episode)===String(num);
-    return `<button class="ep-btn ${isActive?"active":""} ${isWatched?"watched":""}" data-open-episode="${esc(num)}" ${num?"":"disabled"}>${esc(lbl)}</button>`;
+  els.episodesInfo.textContent = `${episodes.length} episódio(s) disponíveis`;
+  els.episodesGrid.innerHTML = episodes.map(ep => {
+    const num      = String(ep.number ?? ep.episode ?? ep.ep ?? ep.slug ?? "").trim();
+    const lbl      = num ? num : (ep.title || "—");
+    const isActive = String(state.currentEpisode) === String(num);
+    const watchInfo   = getAnimeWatch(state.currentAnimeId);
+    const isWatched   = watchInfo && String(watchInfo.episode) === String(num);
+    return `<button class="ep-btn ${isActive ? "active" : ""} ${isWatched ? "watched" : ""}"
+      data-open-episode="${esc(num)}" ${num ? "" : "disabled"}>${esc(lbl)}</button>`;
   }).join("");
 }
 
-function getAllQualities(playerItem){
-  const raw=Array.isArray(playerItem?.available_qualities)?playerItem.available_qualities:[];
-  const set=new Set(raw.map(normalizeQuality));
-  set.add(normalizeQuality(playerItem?.quality||state.currentQuality||"HD"));
-  if(!set.size)set.add("HD");
+function getAllQualities(playerItem) {
+  const raw = Array.isArray(playerItem?.available_qualities) ? playerItem.available_qualities : [];
+  const set = new Set(raw.map(normalizeQuality));
+  set.add(normalizeQuality(playerItem?.quality || state.currentQuality || "HD"));
+  if (!set.size) set.add("HD");
   return [...set].filter(Boolean);
 }
-function renderQualityButtons(playerItem){
-  const qualities=getAllQualities(playerItem);
-  els.qualityRow.innerHTML=qualities.map(q=>{
-    const active=normalizeQuality(q)===normalizeQuality(state.currentQuality);
-    return `<button class="quality-btn ${active?"active":""}" data-quality="${esc(q)}">${esc(q)}</button>`;
+function renderQualityButtons(playerItem) {
+  const qualities = getAllQualities(playerItem);
+  els.qualityRow.innerHTML = qualities.map(q => {
+    const active = normalizeQuality(q) === normalizeQuality(state.currentQuality);
+    return `<button class="quality-btn ${active ? "active" : ""}" data-quality="${esc(q)}">${esc(q)}</button>`;
   }).join("");
 }
 
 // ── Description toggle ────────────────────────────────────────────────────────
-els.descToggle.addEventListener("click",()=>{
-  const isCollapsed=els.animeDesc.classList.contains("coll");
-  els.animeDesc.classList.toggle("coll",!isCollapsed);
-  els.animeDesc.classList.toggle("exp",isCollapsed);
-  els.descToggle.textContent=isCollapsed?"Ver menos ▴":"Ver mais ▾";
+els.descToggle.addEventListener("click", () => {
+  const isCollapsed = els.animeDesc.classList.contains("coll");
+  els.animeDesc.classList.toggle("coll", !isCollapsed);
+  els.animeDesc.classList.toggle("exp",   isCollapsed);
+  els.descToggle.textContent = isCollapsed ? "Ver menos ▴" : "Ver mais ▾";
 });
 
 // ── Hero banner ───────────────────────────────────────────────────────────────
-function setupHeroBanner(items){
-  const banners=items.filter(i=>i.banner_url||i.cover_url).slice(0,5);
-  if(!banners.length){renderStaticHero();return;}
-  state.heroBanners=banners;
+function setupHeroBanner(items) {
+  const banners = items.filter(i => i.banner_url || i.cover_url).slice(0, 5);
+  if (!banners.length) { renderStaticHero(); return; }
+  state.heroBanners = banners;
   renderHeroBanner(0);
-  if(banners.length>1)startHeroTimer();
+  if (banners.length > 1) startHeroTimer();
 }
 
-function renderHeroBanner(idx){
-  const item=state.heroBanners[idx];if(!item)return;
-  state.heroIdx=idx;state.heroCurrent=item;
-  const cover=item.banner_url||item.cover_url||"";
-  const isDub=item.is_dubbed||item.prefix==="DUB";
-  const pills=[
-    item.status?`<span class="hero-pill">${esc(item.status)}</span>`:"",
-    item.year?`<span class="hero-pill">📅 ${esc(item.year)}</span>`:"",
-    item.episodes?`<span class="hero-pill">🎬 ${esc(item.episodes)} eps</span>`:"",
-    `<span class="hero-pill">${isDub?"🎙️ DUB":"📝 LEG"}</span>`,
+function renderHeroBanner(idx) {
+  const item = state.heroBanners[idx];
+  if (!item) return;
+  state.heroIdx    = idx;
+  state.heroCurrent = item;
+  const cover  = item.banner_url || item.cover_url || "";
+  const isDub  = item.is_dubbed  || item.prefix === "DUB";
+  const pills  = [
+    item.status   ? `<span class="hero-pill">${esc(item.status)}</span>`              : "",
+    item.year     ? `<span class="hero-pill">📅 ${esc(item.year)}</span>`             : "",
+    item.episodes ? `<span class="hero-pill">🎬 ${esc(item.episodes)} eps</span>`     : "",
+    `<span class="hero-pill">${isDub ? "🎙️ DUB" : "📝 LEG"}</span>`,
   ].join("");
-  const dots=state.heroBanners.map((_,i)=>`<button class="hero-dot ${i===idx?"on":""}" data-hidx="${i}"></button>`).join("");
-  els.heroArea.innerHTML=`
+  const dots = state.heroBanners
+    .map((_, i) => `<button class="hero-dot ${i === idx ? "on" : ""}" data-hidx="${i}"></button>`)
+    .join("");
+  els.heroArea.innerHTML = `
     <div class="hero-banner" id="heroBannerEl">
       <div class="hero-bg" style="background-image:url('${cover}')"></div>
       <div class="hero-grad"></div>
       <div class="hero-body">
         <div class="hero-eyebrow">Em Destaque</div>
-        <div class="hero-title-el">${esc(item.title||"Anime")}</div>
+        <div class="hero-title-el">${esc(item.title || "Anime")}</div>
         <div class="hero-meta-row">${pills}</div>
-        <p class="hero-desc-el">${esc(item.description||"")}</p>
+        <p class="hero-desc-el">${esc(item.description || "")}</p>
         <div class="hero-actions">
           <button class="btn btn-primary" id="heroWatchBtn">▶ Assistir Episódio 1</button>
           <button class="btn btn-ghost"   id="heroMoreBtn">+ Detalhes</button>
@@ -1006,35 +1376,41 @@ function renderHeroBanner(idx){
       </div>
       <div class="hero-dots">${dots}</div>
     </div>`;
-  $("heroWatchBtn")?.addEventListener("click",async()=>{
-    const id=state.heroCurrent?.id;if(!id)return;
-    if(!state.anime||state.currentAnimeId!==id)await openAnime(id,{pushHistory:false});
-    const ep=getFirstEpisodeNumber(state.animeEpisodes);
-    if(ep)await openEpisode(id,ep,state.currentQuality||"HD");
+
+  $("heroWatchBtn")?.addEventListener("click", async () => {
+    const id = state.heroCurrent?.id;
+    if (!id) return;
+    if (!state.anime || state.currentAnimeId !== id) await openAnime(id, { pushHistory: false });
+    const ep = getFirstEpisodeNumber(state.animeEpisodes);
+    if (ep) await openEpisode(id, ep, state.currentQuality || "HD");
   });
-  $("heroMoreBtn")?.addEventListener("click",()=>{if(state.heroCurrent?.id)openAnime(state.heroCurrent.id);});
-  $("heroBannerEl")?.addEventListener("click",e=>{
-    if(e.target.closest("button")||e.target.closest(".hero-dot"))return;
-    if(state.heroCurrent?.id)openAnime(state.heroCurrent.id);
+  $("heroMoreBtn")?.addEventListener("click", () => {
+    if (state.heroCurrent?.id) openAnime(state.heroCurrent.id);
+  });
+  $("heroBannerEl")?.addEventListener("click", e => {
+    if (e.target.closest("button") || e.target.closest(".hero-dot")) return;
+    if (state.heroCurrent?.id) openAnime(state.heroCurrent.id);
   });
 }
 
-function startHeroTimer(){
+function startHeroTimer() {
   clearTimeout(state.heroTimer);
-  state.heroTimer=setTimeout(()=>{
-    const next=(state.heroIdx+1)%state.heroBanners.length;
-    renderHeroBanner(next);startHeroTimer();
-  },6000);
+  state.heroTimer = setTimeout(() => {
+    const next = (state.heroIdx + 1) % state.heroBanners.length;
+    renderHeroBanner(next);
+    startHeroTimer();
+  }, 6000);
 }
 
-function renderStaticHero(){
-  els.heroArea.innerHTML=`
+function renderStaticHero() {
+  els.heroArea.innerHTML = `
     <div class="hero-static">
       <div class="hero-static-inner">
         <div>
           <div class="hero-eyebrow">Anime Streaming</div>
           <h1 style="font-family:var(--font-d);font-size:clamp(26px,4vw,48px);font-weight:800;line-height:1.05;letter-spacing:-.03em;margin-bottom:12px">
-            Assista seus<br/><span style="background:var(--grad-brand);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">animes favoritos</span>
+            Assista seus<br/>
+            <span style="background:var(--grad-brand);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">animes favoritos</span>
           </h1>
           <p style="color:var(--text-2);font-size:14px;line-height:1.7;max-width:480px">Pesquise, explore e assista direto no Telegram.</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:20px">
@@ -1045,33 +1421,38 @@ function renderStaticHero(){
         <div class="hero-art"><div class="hero-art-inner">⛩️</div></div>
       </div>
     </div>`;
-  $("heroExploreBtn")?.addEventListener("click",()=>{setPage("home");loadHome();});
-  $("heroSearchBtn")?.addEventListener("click",()=>{setPage("home");focusSearch();});
+  $("heroExploreBtn")?.addEventListener("click", () => { setPage("home"); loadHome(); });
+  $("heroSearchBtn")?.addEventListener("click",  () => { setPage("home"); focusSearch(); });
 }
 
 // ── Continue Watching ─────────────────────────────────────────────────────────
-function renderContinueWatching(){
-  const items=getContinueWatching().slice(0,8);
-  if(!items.length){els.continueSection.innerHTML="";return;}
-  const pct=item=>item.durationSeconds>0?Math.min(100,Math.round((item.watchedSeconds/item.durationSeconds)*100)):0;
-  const cards=items.map(item=>`
+function renderContinueWatching() {
+  const items = getContinueWatching().slice(0, 8);
+  if (!items.length) { els.continueSection.innerHTML = ""; return; }
+  const pct = item => item.durationSeconds > 0
+    ? Math.min(100, Math.round((item.watchedSeconds / item.durationSeconds) * 100)) : 0;
+  const cards = items.map(item => `
     <div class="cw-card" data-resume-anime="${esc(item.animeId)}" data-resume-ep="${esc(item.episode)}">
       <div class="cw-thumb">
-        <img src="${imgSrc(item.cover,item.animeTitle)}" alt="${esc(item.animeTitle)}" loading="lazy"/>
+        <img src="${imgSrc(item.cover, item.animeTitle)}" alt="${esc(item.animeTitle)}" loading="lazy"/>
         <div class="cw-prog-bar"><div class="cw-prog-fill" style="width:${pct(item)}%"></div></div>
         <div class="cw-ep-badge">EP ${esc(item.episode)}</div>
         <div class="cw-play-ov"><div class="cw-play-ico">▶</div></div>
       </div>
       <div class="cw-info">
-        <div class="cw-title">${esc(item.animeTitle||item.animeId)}</div>
+        <div class="cw-title">${esc(item.animeTitle || item.animeId)}</div>
         <div class="cw-sub">Continuar EP ${esc(item.episode)} · ${pct(item)}%</div>
       </div>
     </div>`).join("");
-  els.continueSection.innerHTML=`
+  els.continueSection.innerHTML = `
     <div class="section" style="margin-bottom:24px">
       <div class="section-head">
-        <div class="section-label"><div class="section-accent"></div>
-          <div><div class="section-title">Continue Assistindo</div><div class="section-count">Retome do onde parou</div></div>
+        <div class="section-label">
+          <div class="section-accent"></div>
+          <div>
+            <div class="section-title">Continue Assistindo</div>
+            <div class="section-count">Retome de onde parou</div>
+          </div>
         </div>
       </div>
       <div class="cw-scroll">${cards}</div>
@@ -1079,276 +1460,445 @@ function renderContinueWatching(){
 }
 
 // ── Pagination ────────────────────────────────────────────────────────────────
-function renderPagination(current, total, onPage){
-  if(total<=1){els.resultsPagination.innerHTML="";return;}
-  const delta=2;
-  const range=[];
-  for(let i=Math.max(2,current-delta);i<=Math.min(total-1,current+delta);i++)range.push(i);
-  if(current-delta>2)range.unshift("...");
-  if(current+delta<total-1)range.push("...");
-  const pages=[1,...range,total];
-  const btns=pages.map(p=>{
-    if(p==="...")return `<span class="pg-btn" style="border:none;pointer-events:none;opacity:.4">…</span>`;
-    return `<button class="pg-btn ${p===current?"active-pg":""}" data-pg="${p}">${p}</button>`;
+function renderPagination(current, total, onPage) {
+  if (total <= 1) { els.resultsPagination.innerHTML = ""; return; }
+  const delta = 2;
+  const range = [];
+  for (let i = Math.max(2, current - delta); i <= Math.min(total - 1, current + delta); i++) range.push(i);
+  if (current - delta > 2)       range.unshift("...");
+  if (current + delta < total-1) range.push("...");
+  const pages = [1, ...range, total];
+  const btns  = pages.map(p => {
+    if (p === "...") return `<span class="pg-btn" style="border:none;pointer-events:none;opacity:.4">…</span>`;
+    return `<button class="pg-btn ${p === current ? "active-pg" : ""}" data-pg="${p}">${p}</button>`;
   }).join("");
-  // "Ir para" input
-  const gotoHtml=`<div class="pg-input-wrap"><span>Ir para</span><input class="pg-input" id="pgGotoInput" type="number" min="1" max="${total}" value="${current}" /><button class="pg-btn" id="pgGotoBtn">→</button></div>`;
-  els.resultsPagination.innerHTML=`<div class="pagination-row">
-    <button class="pg-btn" data-pg="${current-1}" ${current<=1?"disabled":""}>← Ant</button>
-    ${btns}
-    <button class="pg-btn" data-pg="${current+1}" ${current>=total?"disabled":""}>Próx →</button>
-    <button class="pg-btn" data-pg="${total}" ${current>=total?"disabled":""}>Última ⏭</button>
-  </div><div class="pagination-row" style="margin-top:8px">${gotoHtml}</div>`;
-  els.resultsPagination.querySelectorAll("[data-pg]").forEach(btn=>{
-    const pg=parseInt(btn.dataset.pg);if(isNaN(pg)||btn.disabled)return;
-    btn.addEventListener("click",()=>onPage(pg));
+  const gotoHtml = `<div class="pg-input-wrap">
+    <span>Ir para</span>
+    <input class="pg-input" id="pgGotoInput" type="number" min="1" max="${total}" value="${current}" />
+    <button class="pg-btn" id="pgGotoBtn">→</button>
+  </div>`;
+  els.resultsPagination.innerHTML = `
+    <div class="pagination-row">
+      <button class="pg-btn" data-pg="${current - 1}" ${current <= 1 ? "disabled" : ""}>← Ant</button>
+      ${btns}
+      <button class="pg-btn" data-pg="${current + 1}" ${current >= total ? "disabled" : ""}>Próx →</button>
+      <button class="pg-btn" data-pg="${total}"       ${current >= total ? "disabled" : ""}>Última ⏭</button>
+    </div>
+    <div class="pagination-row" style="margin-top:8px">${gotoHtml}</div>`;
+
+  els.resultsPagination.querySelectorAll("[data-pg]").forEach(btn => {
+    const pg = parseInt(btn.dataset.pg);
+    if (isNaN(pg) || btn.disabled) return;
+    btn.addEventListener("click", () => onPage(pg));
   });
-  $("pgGotoBtn")?.addEventListener("click",()=>{
-    const v=parseInt($("pgGotoInput")?.value||"");
-    if(!isNaN(v)&&v>=1&&v<=total)onPage(v);
+  $("pgGotoBtn")?.addEventListener("click", () => {
+    const v = parseInt($("pgGotoInput")?.value || "");
+    if (!isNaN(v) && v >= 1 && v <= total) onPage(v);
   });
-  $("pgGotoInput")?.addEventListener("keydown",e=>{if(e.key==="Enter"){const v=parseInt(e.target.value||"");if(!isNaN(v)&&v>=1&&v<=total)onPage(v);}});
+  $("pgGotoInput")?.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      const v = parseInt(e.target.value || "");
+      if (!isNaN(v) && v >= 1 && v <= total) onPage(v);
+    }
+  });
 }
 
 // ── Page loaders ──────────────────────────────────────────────────────────────
-async function loadHome(){
+async function loadHome() {
   setSubtitle("Carregando...");
   renderContinueWatching();
   renderStaticHero();
-  els.homeSections.innerHTML=skeletonGrid(12);
-  try{
-    const data=await apiGet("/api/catalog/home");
-    state.home=data;
+  els.homeSections.innerHTML = skeletonGrid(12);
+  try {
+    const data     = await apiGet("/api/catalog/home");
+    state.home     = data;
     setSubtitle("Anime Streaming");
-    const sections=data?.sections||[];
-    if(!sections.length){
-      els.homeSections.innerHTML=`<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nada por aqui</div><div class="state-box-text">Nenhuma seção encontrada.</div></div>`;
+    const sections = data?.sections || [];
+    if (!sections.length) {
+      els.homeSections.innerHTML = `<div class="state-box">
+        <div class="state-box-icon">📭</div>
+        <div class="state-box-title">Nada por aqui</div>
+        <div class="state-box-text">Nenhuma seção encontrada.</div>
+      </div>`;
       return;
     }
-    els.homeSections.innerHTML=sections.map(renderSectionBlock).join("");
-    const featured=sections[0]?.items||[];
-    if(featured.length)setupHeroBanner(featured.slice(0,5));
-  }catch(err){
-    console.error("[loadHome]",err);
+    els.homeSections.innerHTML = sections.map(renderSectionBlock).join("");
+    const featured = sections[0]?.items || [];
+    if (featured.length) setupHeroBanner(featured.slice(0, 5));
+  } catch(err) {
+    console.error("[loadHome]", err);
     setSubtitle("Erro");
-    els.homeSections.innerHTML=`<div class="state-box error">
+    els.homeSections.innerHTML = `<div class="state-box error">
       <div class="state-box-icon">⚠️</div>
       <div class="state-box-title">Falha ao carregar</div>
-      <div class="state-box-text">${esc(err.message||"Erro desconhecido")}</div>
+      <div class="state-box-text">${esc(err.message || "Erro desconhecido")}</div>
       <button class="btn btn-primary btn-sm" onclick="loadHome()" style="margin-top:4px">↺ Tentar novamente</button>
     </div>`;
     showToast("Falha ao carregar catálogo.");
   }
 }
 
-async function loadSectionResults(sectionKey,page=1){
-  showLoading("Carregando seção","Buscando animes...");
+async function loadSectionResults(sectionKey, page = 1) {
+  showLoading("Carregando seção", "Buscando animes...");
   setPage("results");
-  state.resultsMode="section";state.currentSection=sectionKey;state.searchQuery="";
-  try{
-    const data=await apiGet(`/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=${page}`);
-    const items=data?.items||[];
-    state.searchResults=items;state.resultsPage=Number(data?.page||page);state.totalPages=Number(data?.total_pages||1);
-    els.resultsTitle.textContent=data?.title||"Seção";
-    els.resultsSubtitle.textContent=`${data?.total_items||items.length} título(s) · Pág. ${state.resultsPage}/${state.totalPages}`;
-    els.resultsGrid.innerHTML=items.length?`<div class="card-grid">${items.map(buildCard).join("")}</div>`
-      :`<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nenhum anime</div></div>`;
-    renderPagination(state.resultsPage,state.totalPages,p=>loadSectionResults(sectionKey,p));
-  }catch(err){
-    console.error("[loadSection]",err);
-    els.resultsTitle.textContent="Erro";els.resultsSubtitle.textContent=err.message||"";
-    els.resultsGrid.innerHTML=`<div class="state-box error"><div class="state-box-icon">⚠️</div><div class="state-box-title">Falha ao carregar</div><div class="state-box-text">${esc(err.message||"")}</div></div>`;
+  state.resultsMode    = "section";
+  state.currentSection = sectionKey;
+  state.searchQuery    = "";
+  // Highlight chip ativo
+  document.querySelectorAll(".chip").forEach(c => {
+    c.classList.toggle("active", c.dataset.section === sectionKey);
+  });
+  try {
+    const data  = await apiGet(`/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=${page}`);
+    const items = data?.items || [];
+    state.searchResults = items;
+    state.resultsPage   = Number(data?.page        || page);
+    state.totalPages    = Number(data?.total_pages  || 1);
+    els.resultsTitle.textContent    = data?.title || "Seção";
+    els.resultsSubtitle.textContent = `${data?.total_items || items.length} título(s) · Pág. ${state.resultsPage}/${state.totalPages}`;
+    els.resultsGrid.innerHTML = items.length
+      ? `<div class="card-grid">${items.map(buildCard).join("")}</div>`
+      : `<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nenhum anime</div></div>`;
+    renderPagination(state.resultsPage, state.totalPages, p => loadSectionResults(sectionKey, p));
+  } catch(err) {
+    console.error("[loadSection]", err);
+    els.resultsTitle.textContent    = "Erro";
+    els.resultsSubtitle.textContent = err.message || "";
+    els.resultsGrid.innerHTML = `<div class="state-box error">
+      <div class="state-box-icon">⚠️</div>
+      <div class="state-box-title">Falha ao carregar</div>
+      <div class="state-box-text">${esc(err.message || "")}</div>
+    </div>`;
     showToast("Erro ao abrir seção.");
-  }finally{hideLoading();}
+  } finally { hideLoading(); }
 }
 
-async function performSearch(query,page=1){
-  const q=String(query||"").trim();if(!q){showToast("Digite algo para buscar.");return;}
-  showLoading("Buscando anime","Procurando resultados...");
+async function performSearch(query, page = 1) {
+  const q = String(query || "").trim();
+  if (!q) { showToast("Digite algo para buscar."); return; }
+  showLoading("Buscando anime", "Procurando resultados...");
   setPage("results");
-  state.resultsMode="search";state.searchQuery=q;state.currentSection="";
-  try{
-    const data=await apiGet(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
-    const items=data?.items||[];
-    state.searchResults=items;state.resultsPage=Number(data?.page||page);state.totalPages=Number(data?.total_pages||1);
-    els.resultsTitle.textContent=`"${q}"`;
-    els.resultsSubtitle.textContent=`${data?.count??items.length} resultado(s)`;
-    els.resultsGrid.innerHTML=items.length?`<div class="card-grid">${items.map(buildCard).join("")}</div>`
-      :`<div class="state-box"><div class="state-box-icon">🔍</div><div class="state-box-title">Nada encontrado</div><div class="state-box-text">Nenhum anime para "${esc(q)}".</div></div>`;
-    renderPagination(state.resultsPage,state.totalPages,p=>performSearch(q,p));
-  }catch(err){
-    console.error("[search]",err);
-    els.resultsTitle.textContent="Erro na busca";els.resultsSubtitle.textContent=err.message||"";
-    els.resultsGrid.innerHTML=`<div class="state-box error"><div class="state-box-icon">⚠️</div><div class="state-box-title">Falha na busca</div></div>`;
+  state.resultsMode    = "search";
+  state.searchQuery    = q;
+  state.currentSection = "";
+  document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+  try {
+    const data  = await apiGet(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
+    const items = data?.items || [];
+    state.searchResults = items;
+    state.resultsPage   = Number(data?.page       || page);
+    state.totalPages    = Number(data?.total_pages || 1);
+    els.resultsTitle.textContent    = `"${q}"`;
+    els.resultsSubtitle.textContent = `${data?.count ?? items.length} resultado(s)`;
+    els.resultsGrid.innerHTML = items.length
+      ? `<div class="card-grid">${items.map(buildCard).join("")}</div>`
+      : `<div class="state-box">
+          <div class="state-box-icon">🔍</div>
+          <div class="state-box-title">Nada encontrado</div>
+          <div class="state-box-text">Nenhum anime para "${esc(q)}".</div>
+        </div>`;
+    renderPagination(state.resultsPage, state.totalPages, p => performSearch(q, p));
+  } catch(err) {
+    console.error("[search]", err);
+    els.resultsTitle.textContent    = "Erro na busca";
+    els.resultsSubtitle.textContent = err.message || "";
+    els.resultsGrid.innerHTML = `<div class="state-box error">
+      <div class="state-box-icon">⚠️</div>
+      <div class="state-box-title">Falha na busca</div>
+    </div>`;
     showToast("Falha na busca.");
-  }finally{hideLoading();}
+  } finally { hideLoading(); }
 }
 
-function getFirstEpisodeNumber(episodes){
-  if(!Array.isArray(episodes)||!episodes.length)return"";
-  for(const ep of episodes){const n=String(ep.number??ep.episode??ep.ep??"").trim();if(n)return n;}
-  return"";
+function getFirstEpisodeNumber(episodes) {
+  if (!Array.isArray(episodes) || !episodes.length) return "";
+  for (const ep of episodes) {
+    const n = String(ep.number ?? ep.episode ?? ep.ep ?? "").trim();
+    if (n) return n;
+  }
+  return "";
 }
 
-async function openAnime(animeId,options={}){
-  if(!animeId)return;
-  const push=options.pushHistory!==false;
-  showLoading("Abrindo anime","Carregando detalhes...");
-  try{
-    const data=await apiGet(`/api/anime/${encodeURIComponent(animeId)}`);
-    const item=data?.item||null;
-    const episodes=Array.isArray(data?.episodes)?data.episodes:[];
-    if(!item)throw new Error("Anime não encontrado");
-    state.anime=item;state.currentAnimeId=animeId;state.animeEpisodes=episodes;
-    const isDub=item.is_dubbed||item.prefix==="DUB";
-    els.animeCover.src=imgSrc(item.banner_url||item.cover_url,item.title);
-    els.animeCover.alt=item.title||"Anime";
-    els.animePrefix.textContent=isDub?"🎙️ DUBLADO":"📝 LEGENDADO";
-    els.animePrefix.className=`detail-kicker ${isDub?"dub":"leg"}`;
-    els.animeTitle.textContent=item.title||"Sem título";
-    els.animeMeta.innerHTML=renderAnimeMeta(item);
-    els.animeDesc.textContent=item.description||"Sem descrição disponível.";
-    els.animeDesc.className="desc-text coll";
-    els.descToggle.textContent="Ver mais ▾";
-    els.animeGenres.innerHTML=(item.genres||[]).map(g=>`<span class="genre-tag">${esc(g)}</span>`).join("");
+async function openAnime(animeId, options = {}) {
+  if (!animeId) return;
+  const push = options.pushHistory !== false;
+  showLoading("Abrindo anime", "Carregando detalhes...");
+  try {
+    const data     = await apiGet(`/api/anime/${encodeURIComponent(animeId)}`);
+    const item     = data?.item || null;
+    const episodes = Array.isArray(data?.episodes) ? data.episodes : [];
+    if (!item) throw new Error("Anime não encontrado");
+
+    state.anime         = item;
+    state.currentAnimeId = animeId;
+    state.animeEpisodes  = episodes;
+
+    const isDub = item.is_dubbed || item.prefix === "DUB";
+    els.animeCover.src       = imgSrc(item.banner_url || item.cover_url, item.title);
+    els.animeCover.alt       = item.title || "Anime";
+    els.animePrefix.textContent = isDub ? "🎙️ DUBLADO" : "📝 LEGENDADO";
+    els.animePrefix.className   = `detail-kicker ${isDub ? "dub" : "leg"}`;
+    els.animeTitle.textContent  = item.title || "Sem título";
+    els.animeMeta.innerHTML     = renderAnimeMeta(item);
+    els.animeDesc.textContent   = item.description || "Sem descrição disponível.";
+    els.animeDesc.className     = "desc-text coll";
+    els.descToggle.textContent  = "Ver mais ▾";
+    els.animeGenres.innerHTML   = (item.genres || [])
+      .map(g => `<span class="genre-tag" data-genre-search="${esc(g)}">${esc(g)}</span>`)
+      .join("");
     renderEpisodeButtons(episodes);
-    els.openFirstEpisodeBtn.disabled=!getFirstEpisodeNumber(episodes);
-    els.goToPlayerBtn.disabled=!state.currentEpisode;
-    setPage("anime",push);
-  }catch(err){console.error("[openAnime]",err);showToast("Não foi possível abrir esse anime.");}
-  finally{hideLoading();}
+    els.openFirstEpisodeBtn.disabled = !getFirstEpisodeNumber(episodes);
+    els.goToPlayerBtn.disabled       = !state.currentEpisode;
+    setPage("anime", push);
+  } catch(err) {
+    console.error("[openAnime]", err);
+    showToast("Não foi possível abrir esse anime.");
+  } finally { hideLoading(); }
 }
 
-async function openEpisode(animeId,episode,quality="HD",options={}){
-  if(!animeId||!episode){showToast("Anime ou episódio inválido.");return;}
-  if(state.openingEpisode&&!options.force)return;
-  const requestId=++state.openEpisodeRequestId;state.openingEpisode=true;
-  const q=normalizeQuality(quality||state.currentQuality||"HD");
-  const push=options.pushHistory!==false;
-  showLoading("Abrindo episódio",`Carregando EP ${episode} em ${q}...`);
-  try{
-    if(!state.anime||state.currentAnimeId!==animeId)await openAnime(animeId,{pushHistory:false});
-    const data=await apiGet(`/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(q)}`);
-    if(requestId!==state.openEpisodeRequestId)return;
-    const item=data?.item||null;if(!item)throw new Error("Episódio não encontrado");
-    state.currentAnimeId=animeId;state.currentEpisode=String(episode);
-    state.currentQuality=normalizeQuality(item.quality||q);state.currentEpisodeItem=item;state.attempt=0;
-    // Save progress immediately on episode open
-    saveWatchProgress({animeId,animeTitle:state.anime?.title||item.title||"Anime",episode,watchedSeconds:0,durationSeconds:0,cover:state.anime?.cover_url||state.anime?.banner_url||item.thumb||""});
+async function openEpisode(animeId, episode, quality = "HD", options = {}) {
+  if (!animeId || !episode) { showToast("Anime ou episódio inválido."); return; }
+  if (state.openingEpisode && !options.force) return;
+  const requestId         = ++state.openEpisodeRequestId;
+  state.openingEpisode    = true;
+  const q    = normalizeQuality(quality || state.currentQuality || "HD");
+  const push = options.pushHistory !== false;
+  showLoading("Abrindo episódio", `Carregando EP ${episode} em ${q}...`);
+  try {
+    if (!state.anime || state.currentAnimeId !== animeId)
+      await openAnime(animeId, { pushHistory: false });
+
+    const data = await apiGet(
+      `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(q)}`
+    );
+    if (requestId !== state.openEpisodeRequestId) return;
+    const item = data?.item || null;
+    if (!item) throw new Error("Episódio não encontrado");
+
+    state.currentAnimeId     = animeId;
+    state.currentEpisode     = String(episode);
+    state.currentQuality     = normalizeQuality(item.quality || q);
+    state.currentEpisodeItem = item;
+    state.attempt            = 0;
+
+    // Salvar progresso imediatamente ao abrir episódio
+    saveWatchProgress({
+      animeId, animeTitle: state.anime?.title || item.title || "Anime",
+      episode, watchedSeconds: 0, durationSeconds: 0,
+      cover: state.anime?.cover_url || state.anime?.banner_url || item.thumb || "",
+    });
     renderContinueWatching();
-    const animeTitle=state.anime?.title||item.title||"Anime";
-    els.playerPageSubtitle.textContent=`${animeTitle} • EP ${episode}`;
-    els.playerTitle.textContent=animeTitle;
-    els.playerMeta.textContent=[`EP ${episode}`,state.currentQuality,item.total_episodes?`de ${item.total_episodes}`:"",item.is_dubbed?"Dublado":"Legendado"].filter(Boolean).join(" · ");
-    els.playerDesc.textContent=item.description||"";
-    els.playerNote.textContent=item.video?"Player reforçado: reconecta automaticamente se o link expirar.":"Esse episódio não retornou URL de vídeo.";
+
+    const animeTitle = state.anime?.title || item.title || "Anime";
+    els.playerPageSubtitle.textContent = `${animeTitle} • EP ${episode}`;
+    els.playerTitle.textContent        = animeTitle;
+    els.playerMeta.textContent = [
+      `EP ${episode}`, state.currentQuality,
+      item.total_episodes ? `de ${item.total_episodes}` : "",
+      item.is_dubbed ? "Dublado" : "Legendado",
+    ].filter(Boolean).join(" · ");
+    els.playerDesc.textContent = item.description || "";
+    els.playerNote.textContent = item.video
+      ? "Player reforçado: reconecta automaticamente se o link expirar."
+      : "Esse episódio não retornou URL de vídeo.";
+
     renderQualityButtons(item);
-    els.prevEpisodeBtn.disabled=!item.prev_episode;els.nextEpisodeBtn.disabled=!item.next_episode;
-    els.prevEpisodeBtn.dataset.episode=item.prev_episode||"";els.nextEpisodeBtn.dataset.episode=item.next_episode||"";
-    if(item.video){
-      _isDirectVideo(item.video)?_loadVideoUrl(item.video):_loadIframeUrl(item.video);
-      els.openInBrowserBtn.disabled=false;els.openInBrowserBtn.dataset.url=item.video;
-    }else{
-      clearPlayerState();showVideoOverlay("icon:⚠️","Sem vídeo","Esse episódio não tem URL de vídeo");
-      els.openInBrowserBtn.disabled=true;showToast("Esse episódio não retornou vídeo.");
+
+    els.prevEpisodeBtn.disabled       = !item.prev_episode;
+    els.nextEpisodeBtn.disabled       = !item.next_episode;
+    els.prevEpisodeBtn.dataset.episode = item.prev_episode || "";
+    els.nextEpisodeBtn.dataset.episode = item.next_episode || "";
+
+    if (item.video) {
+      _isDirectVideo(item.video) ? _loadVideoUrl(item.video) : _loadIframeUrl(item.video);
+      els.openInBrowserBtn.disabled    = false;
+      els.openInBrowserBtn.dataset.url = item.video;
+    } else {
+      clearPlayerState();
+      showVideoOverlay("icon:⚠️", "Sem vídeo", "Esse episódio não tem URL de vídeo");
+      els.openInBrowserBtn.disabled = true;
+      showToast("Esse episódio não retornou vídeo.");
     }
+
     renderEpisodeButtons(state.animeEpisodes);
-    updateUrlParams({anime:animeId,ep:episode,q:state.currentQuality});
-    setPage("player",push);
-  }catch(err){console.error("[openEpisode]",err);showToast("Não foi possível abrir esse episódio.");}
-  finally{hideLoading();if(requestId===state.openEpisodeRequestId)state.openingEpisode=false;}
+    updateUrlParams({ anime: animeId, ep: episode, q: state.currentQuality });
+    setPage("player", push);
+  } catch(err) {
+    console.error("[openEpisode]", err);
+    showToast("Não foi possível abrir esse episódio.");
+  } finally {
+    hideLoading();
+    if (requestId === state.openEpisodeRequestId) state.openingEpisode = false;
+  }
 }
 
 // ── URL params ────────────────────────────────────────────────────────────────
-function getQueryParams(){const p=new URLSearchParams(window.location.search);return{anime:p.get("anime")||"",ep:p.get("ep")||"",q:normalizeQuality(p.get("q")||"HD")};}
-function updateUrlParams({anime,ep,q}){
-  const url=new URL(window.location.href);
-  anime?url.searchParams.set("anime",anime):url.searchParams.delete("anime");
-  ep?url.searchParams.set("ep",ep):url.searchParams.delete("ep");
-  q?url.searchParams.set("q",normalizeQuality(q)):url.searchParams.delete("q");
-  history.replaceState({},"",url.toString());
+function getQueryParams() {
+  const p = new URLSearchParams(window.location.search);
+  return { anime: p.get("anime") || "", ep: p.get("ep") || "", q: normalizeQuality(p.get("q") || "HD") };
+}
+function updateUrlParams({ anime, ep, q }) {
+  const url = new URL(window.location.href);
+  anime ? url.searchParams.set("anime", anime) : url.searchParams.delete("anime");
+  ep    ? url.searchParams.set("ep",    ep)    : url.searchParams.delete("ep");
+  q     ? url.searchParams.set("q",     normalizeQuality(q)) : url.searchParams.delete("q");
+  history.replaceState({}, "", url.toString());
 }
 
-async function bootFromUrl(){
-  if(state.autoBootDone)return;state.autoBootDone=true;
-  const{anime,ep,q}=getQueryParams();
-  try{
-    if(anime&&ep){await openEpisode(anime,ep,q,{pushHistory:false,force:true});return;}
-    if(anime){await openAnime(anime,{pushHistory:false});return;}
-  }catch(e){console.warn("[boot] failed to restore from URL",e);}
-  setPage("home",false);await loadHome();
+async function bootFromUrl() {
+  if (state.autoBootDone) return;
+  state.autoBootDone = true;
+  const { anime, ep, q } = getQueryParams();
+  try {
+    if (anime && ep) { await openEpisode(anime, ep, q, { pushHistory: false, force: true }); return; }
+    if (anime)       { await openAnime(anime, { pushHistory: false }); return; }
+  } catch(e) { console.warn("[boot] failed to restore from URL", e); }
+  setPage("home", false);
+  await loadHome();
 }
 
-function focusSearch(){els.searchInput.focus();els.searchInput.scrollIntoView({behavior:"smooth",block:"center"});}
+function focusSearch() {
+  els.searchInput.focus();
+  els.searchInput.scrollIntoView({ behavior: "smooth", block: "center" });
+}
 
-// ── Events ────────────────────────────────────────────────────────────────────
-document.addEventListener("click",async e=>{
+// ── Global event delegation ───────────────────────────────────────────────────
+document.addEventListener("click", async e => {
   // Hero dots
-  const hdot=e.target.closest("[data-hidx]");
-  if(hdot){const idx=parseInt(hdot.dataset.hidx);if(!isNaN(idx)){clearTimeout(state.heroTimer);renderHeroBanner(idx);startHeroTimer();}return;}
-  // Continue Watching
-  const cwCard=e.target.closest("[data-resume-anime]");
-  if(cwCard){await openEpisode(cwCard.dataset.resumeAnime,cwCard.dataset.resumeEp,state.currentQuality||"HD");return;}
-  // Anime card
-  const card=e.target.closest(".anime-card[data-anime-id]");
-  if(card){await openAnime(card.dataset.animeId);return;}
-  // Section "Ver mais"
-  const secBtn=e.target.closest("[data-open-section]");
-  if(secBtn){await loadSectionResults(secBtn.dataset.openSection);return;}
-  // Episode button
-  const epBtn=e.target.closest("[data-open-episode]");
-  if(epBtn){await openEpisode(state.currentAnimeId,epBtn.dataset.openEpisode,state.currentQuality);return;}
-  // Quality button
-  const qBtn=e.target.closest("[data-quality]");
-  if(qBtn){await openEpisode(state.currentAnimeId,state.currentEpisode,qBtn.dataset.quality,{pushHistory:false,force:true});return;}
-  // Filter chip
-  const chip=e.target.closest("[data-section]");
-  if(chip){await loadSectionResults(chip.dataset.section);}
-});
-
-// Search
-els.searchInput.addEventListener("keydown",async e=>{if(e.key==="Enter"){e.preventDefault();await performSearch(els.searchInput.value);}});
-let sdeb=null;
-els.searchInput.addEventListener("input",()=>{
-  const val=els.searchInput.value.trim();
-  els.searchClear.style.display=val?"block":"none";
-  clearTimeout(sdeb);
-  if(val.length>=3)sdeb=setTimeout(()=>performSearch(val),600);
-});
-els.searchClear.addEventListener("click",()=>{els.searchInput.value="";els.searchClear.style.display="none";els.searchInput.focus();});
-
-// Navigation
-els.resultsBackBtn.addEventListener("click",()=>goBack());
-els.backBtn.addEventListener("click",()=>goBack());
-els.homeBtn.addEventListener("click",async()=>{clearPlayerState();setPage("home");await loadHome();updateUrlParams({anime:"",ep:"",q:""});});
-els.refreshBtn.addEventListener("click",async()=>{
-  const p=state.currentPage;
-  if(p==="home"){await loadHome();return;}
-  if(p==="results"){
-    state.resultsMode==="search"&&state.searchQuery?await performSearch(state.searchQuery,state.resultsPage):await loadSectionResults(state.currentSection||"dublados",state.resultsPage);return;
+  const hdot = e.target.closest("[data-hidx]");
+  if (hdot) {
+    const idx = parseInt(hdot.dataset.hidx);
+    if (!isNaN(idx)) { clearTimeout(state.heroTimer); renderHeroBanner(idx); startHeroTimer(); }
+    return;
   }
-  if(p==="anime"&&state.currentAnimeId){await openAnime(state.currentAnimeId,{pushHistory:false});return;}
-  if(p==="player"&&state.currentAnimeId&&state.currentEpisode){await openEpisode(state.currentAnimeId,state.currentEpisode,state.currentQuality,{pushHistory:false,force:true});}
+  // Continue Watching
+  const cwCard = e.target.closest("[data-resume-anime]");
+  if (cwCard) {
+    await openEpisode(cwCard.dataset.resumeAnime, cwCard.dataset.resumeEp, state.currentQuality || "HD");
+    return;
+  }
+  // Anime card
+  const card = e.target.closest(".anime-card[data-anime-id]");
+  if (card) { await openAnime(card.dataset.animeId); return; }
+  // Section "Ver mais"
+  const secBtn = e.target.closest("[data-open-section]");
+  if (secBtn) { await loadSectionResults(secBtn.dataset.openSection); return; }
+  // Episode button
+  const epBtn = e.target.closest("[data-open-episode]");
+  if (epBtn) { await openEpisode(state.currentAnimeId, epBtn.dataset.openEpisode, state.currentQuality); return; }
+  // Quality button
+  const qBtn = e.target.closest("[data-quality]");
+  if (qBtn) { await openEpisode(state.currentAnimeId, state.currentEpisode, qBtn.dataset.quality, { pushHistory: false, force: true }); return; }
+  // Genre tag → busca por gênero
+  const genreTag = e.target.closest("[data-genre-search]");
+  if (genreTag) { await performSearch(genreTag.dataset.genreSearch); return; }
+  // Filter chip
+  const chip = e.target.closest("[data-section]");
+  if (chip) { await loadSectionResults(chip.dataset.section); }
 });
-els.backToHomeFromAnimeBtn.addEventListener("click",async()=>{setPage("home");await loadHome();updateUrlParams({anime:"",ep:"",q:""});});
-els.backToAnimeBtn.addEventListener("click",()=>setPage("anime"));
-els.backToHomeFromPlayerBtn.addEventListener("click",async()=>{clearPlayerState();setPage("home");await loadHome();updateUrlParams({anime:"",ep:"",q:""});});
-els.openFirstEpisodeBtn.addEventListener("click",async()=>{const ep=getFirstEpisodeNumber(state.animeEpisodes);if(!ep){showToast("Sem episódios disponíveis.");return;}await openEpisode(state.currentAnimeId,ep,state.currentQuality||"HD");});
-els.goToPlayerBtn.addEventListener("click",async()=>{
-  if(!state.currentEpisode){const ep=getFirstEpisodeNumber(state.animeEpisodes);if(!ep){showToast("Sem episódio.");return;}await openEpisode(state.currentAnimeId,ep,state.currentQuality||"HD");return;}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+els.searchInput.addEventListener("keydown", async e => {
+  if (e.key === "Enter") { e.preventDefault(); await performSearch(els.searchInput.value); }
+});
+let sdeb = null;
+els.searchInput.addEventListener("input", () => {
+  const val = els.searchInput.value.trim();
+  els.searchClear.style.display = val ? "block" : "none";
+  clearTimeout(sdeb);
+  if (val.length >= 3) sdeb = setTimeout(() => performSearch(val), 600);
+});
+els.searchClear.addEventListener("click", () => {
+  els.searchInput.value        = "";
+  els.searchClear.style.display = "none";
+  els.searchInput.focus();
+});
+
+// ── Navigation buttons ────────────────────────────────────────────────────────
+els.resultsBackBtn.addEventListener("click", () => goBack());
+els.backBtn.addEventListener("click",        () => goBack());
+
+els.homeBtn.addEventListener("click", async () => {
+  if (state.cssFsActive) exitCssFullscreen();
+  clearPlayerState();
+  setPage("home");
+  await loadHome();
+  updateUrlParams({ anime: "", ep: "", q: "" });
+});
+
+els.refreshBtn.addEventListener("click", async () => {
+  const p = state.currentPage;
+  if (p === "home")   { await loadHome(); return; }
+  if (p === "results") {
+    state.resultsMode === "search" && state.searchQuery
+      ? await performSearch(state.searchQuery, state.resultsPage)
+      : await loadSectionResults(state.currentSection || "dublados", state.resultsPage);
+    return;
+  }
+  if (p === "anime"  && state.currentAnimeId)                         { await openAnime(state.currentAnimeId, { pushHistory: false }); return; }
+  if (p === "player" && state.currentAnimeId && state.currentEpisode) {
+    await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false, force: true });
+  }
+});
+
+els.backToHomeFromAnimeBtn.addEventListener("click", async () => {
+  setPage("home");
+  await loadHome();
+  updateUrlParams({ anime: "", ep: "", q: "" });
+});
+els.backToAnimeBtn.addEventListener("click",           () => setPage("anime"));
+els.backToHomeFromPlayerBtn.addEventListener("click", async () => {
+  if (state.cssFsActive) exitCssFullscreen();
+  clearPlayerState();
+  setPage("home");
+  await loadHome();
+  updateUrlParams({ anime: "", ep: "", q: "" });
+});
+
+els.openFirstEpisodeBtn.addEventListener("click", async () => {
+  const ep = getFirstEpisodeNumber(state.animeEpisodes);
+  if (!ep) { showToast("Sem episódios disponíveis."); return; }
+  await openEpisode(state.currentAnimeId, ep, state.currentQuality || "HD");
+});
+
+els.goToPlayerBtn.addEventListener("click", async () => {
+  if (!state.currentEpisode) {
+    const ep = getFirstEpisodeNumber(state.animeEpisodes);
+    if (!ep) { showToast("Sem episódio."); return; }
+    await openEpisode(state.currentAnimeId, ep, state.currentQuality || "HD");
+    return;
+  }
   setPage("player");
 });
-els.prevEpisodeBtn.addEventListener("click",async()=>{const ep=els.prevEpisodeBtn.dataset.episode;if(ep)await openEpisode(state.currentAnimeId,ep,state.currentQuality,{pushHistory:false,force:true});});
-els.nextEpisodeBtn.addEventListener("click",async()=>{const ep=els.nextEpisodeBtn.dataset.episode;if(ep)await openEpisode(state.currentAnimeId,ep,state.currentQuality,{pushHistory:false,force:true});});
-els.episodeListBtn.addEventListener("click",()=>{setPage("anime");setTimeout(()=>$("episodesGrid")?.scrollIntoView({behavior:"smooth",block:"start"}),100);});
-els.openInBrowserBtn.addEventListener("click",()=>{const url=els.openInBrowserBtn.dataset.url;if(url)window.open(url,"_blank","noopener,noreferrer");});
-els.retryPlayerBtn.addEventListener("click",async()=>{if(!state.currentAnimeId||!state.currentEpisode)return;state.attempt=0;await openEpisode(state.currentAnimeId,state.currentEpisode,state.currentQuality,{pushHistory:false,force:true});});
-els.fullscreenBtn.addEventListener("click",requestFullscreen);
-window.addEventListener("popstate",()=>goBack());
 
-// Listen for native fullscreen change to sync state
-document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement&&state.cssFsActive)exitCssFullscreen();});
-document.addEventListener("webkitfullscreenchange",()=>{if(!document.webkitFullscreenElement&&state.cssFsActive)exitCssFullscreen();});
+els.prevEpisodeBtn.addEventListener("click", async () => {
+  const ep = els.prevEpisodeBtn.dataset.episode;
+  if (ep) await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false, force: true });
+});
+els.nextEpisodeBtn.addEventListener("click", async () => {
+  const ep = els.nextEpisodeBtn.dataset.episode;
+  if (ep) await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false, force: true });
+});
+
+els.episodeListBtn.addEventListener("click", () => {
+  setPage("anime");
+  setTimeout(() => $("episodesGrid")?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+});
+
+els.openInBrowserBtn.addEventListener("click", () => {
+  const url = els.openInBrowserBtn.dataset.url;
+  if (url) window.open(url, "_blank", "noopener,noreferrer");
+});
+
+els.retryPlayerBtn.addEventListener("click", async () => {
+  if (!state.currentAnimeId || !state.currentEpisode) return;
+  state.attempt = 0;
+  await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false, force: true });
+});
+
+els.fullscreenBtn.addEventListener("click", requestFullscreen);
+
+window.addEventListener("popstate", () => goBack());
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 bindVideoEvents();
