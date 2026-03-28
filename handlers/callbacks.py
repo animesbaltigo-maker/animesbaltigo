@@ -1,127 +1,109 @@
 import asyncio
-import html
+import html as html_lib
+import random
 import re
 import time
-import traceback
+import unicodedata
+from urllib.parse import quote, unquote, urljoin
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
-from telegram.ext import ContextTypes
+import httpx
+from bs4 import BeautifulSoup
 
-from services.animefire_client import (
-    get_anime_details,
-    get_episodes,
-    get_episode_player,
-    get_random_anime_by_genre,
-)
-from services.metrics import (
-    log_event,
-    mark_user_seen,
-    is_episode_watched,
-    mark_episode_watched,
-    unmark_episode_watched,
-)
+from core.http_client import get_http_client
 
-# ---------------------------------------------------------------------------
-# Constantes
-# ---------------------------------------------------------------------------
+BASE_URL = "https://animefire.io"
+ANILIST_API_URL = "https://graphql.anilist.co"
 
-EPISODES_PER_PAGE = 15
-SEARCH_RESULTS_PER_PAGE = 8
+PRIMARY_LIGHTSPEED_SERVERS = ["s6", "s7", "s5"]
+SECONDARY_LIGHTSPEED_SERVERS = ["s4", "s8", "s3", "s2", "s1", "s9"]
 
-CALLBACK_COOLDOWN = 0.8        # reduzido: 1.0 → 0.8s para melhor UX
-QUALITY_COOLDOWN = 0.5         # reduzido: 0.8 → 0.5s
+ENABLE_ANILIST = True
 
-ANIME_CACHE_TTL = 60 * 30
-EPISODES_CACHE_TTL = 60 * 10
-PLAYER_CACHE_TTL = 60 * 10
-RECOMMEND_CACHE_TTL = 60 * 5
+_SEARCH_CACHE = {}
+_DETAILS_CACHE = {}
+_EPISODES_CACHE = {}
+_VIDEO_CACHE = {}
+_ANILIST_CACHE = {}
+_HTML_CACHE = {}
+_PLAYER_CACHE = {}
 
-GLOBAL_FETCH_SEMAPHORE = asyncio.Semaphore(60)  # aumentado: 40 → 60
+_INFLIGHT_SEARCH = {}
+_INFLIGHT_DETAILS = {}
+_INFLIGHT_EPISODES = {}
+_INFLIGHT_VIDEO = {}
+_INFLIGHT_ANILIST = {}
+_INFLIGHT_HTML = {}
+_INFLIGHT_PLAYER = {}
 
-SEARCH_BANNER_URL = (
-    "https://photo.chelpbot.me/AgACAgEAAxkBaL-UMWnDPUdoNCaz4ZUFvzeOHSVXh0oRAALTC2sbdnEYRrjsVpeCeT08AQADAgADeQADOgQ/photo.jpg"
-)
+_SEARCH_CACHE_TTL = 1800
+_DETAILS_CACHE_TTL = 43200
+_EPISODES_CACHE_TTL = 21600
+_VIDEO_CACHE_TTL = 21600
+_ANILIST_CACHE_TTL = 86400
+_HTML_CACHE_TTL = 1800
+_PLAYER_CACHE_TTL = 21600
 
-# ---------------------------------------------------------------------------
-# Regex pré-compilados (evita recompilação a cada chamada)
-# ---------------------------------------------------------------------------
+_HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Referer": BASE_URL,
+}
 
-_RE_HTML_TAGS = re.compile(r"<[^>]+>")
-_RE_SCORE = re.compile(r"\b\d+\.\d+\b")
-_RE_CLASS = re.compile(r"\bA(?:10|12|14|16|18|L)\b", re.IGNORECASE)
-_RE_LIVRE = re.compile(r"\bLIVRE\b", re.IGNORECASE)
-_RE_NA = re.compile(r"\bN/?A\b", re.IGNORECASE)
-_RE_EMPTY_PARENS = re.compile(r"\(\s*\)")
-_RE_SPACES = re.compile(r"\s{2,}")
+_ANILIST_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+}
 
-# ---------------------------------------------------------------------------
-# Caches globais com tamanho máximo (evita leak de memória)
-# ---------------------------------------------------------------------------
+HTTP_SEMAPHORE = asyncio.Semaphore(25)
+VIDEO_CHECK_SEMAPHORE = asyncio.Semaphore(8)
 
-_MAX_CACHE_SIZE = 512
-
-_GLOBAL_ANIME_CACHE: dict = {}
-_GLOBAL_EPISODES_CACHE: dict = {}
-_GLOBAL_PLAYER_CACHE: dict = {}
-_GLOBAL_RECOMMEND_CACHE: dict = {}
-
-_INFLIGHT_ANIME: dict = {}
-_INFLIGHT_EPISODES: dict = {}
-_INFLIGHT_PLAYER: dict = {}
-_INFLIGHT_RECOMMEND: dict = {}
-
-# ---------------------------------------------------------------------------
-# Locks por usuário e por mensagem
-# ---------------------------------------------------------------------------
-
-_USER_CALLBACK_LOCKS: dict[int, asyncio.Lock] = {}
-_MESSAGE_EDIT_LOCKS: dict[str, asyncio.Lock] = {}
-_MESSAGE_INFLIGHT_ACTIONS: dict[str, str] = {}
+GENRE_ALIASES = {
+    "acao": ["acao", "ação", "action"],
+    "romance": ["romance", "romantico", "romântico", "shoujo", "shojo"],
+    "comedia": ["comedia", "comédia", "comedy"],
+    "terror": ["terror", "horror", "sobrenatural"],
+    "misterio": ["misterio", "mistério", "mystery", "suspense"],
+    "fantasia": ["fantasia", "fantasy", "aventura"],
+    "esportes": ["esporte", "esportes", "sports"],
+    "drama": ["drama"],
+}
 
 
-# ---------------------------------------------------------------------------
-# Helpers de tempo e cache
-# ---------------------------------------------------------------------------
-
-def _now() -> float:
-    return time.monotonic()
+def clear_search_cache():
+    _SEARCH_CACHE.clear()
+    _INFLIGHT_SEARCH.clear()
 
 
 def _cache_get(cache: dict, key: str, ttl: int):
     item = cache.get(key)
-    if item is None:
+    if not item:
         return None
-    if _now() - item["time"] > ttl:
-        del cache[key]
+
+    if time.time() - item["time"] > ttl:
+        cache.pop(key, None)
         return None
+
     return item["data"]
 
 
-def _cache_set(cache: dict, key: str, data, max_size: int = _MAX_CACHE_SIZE):
-    # Evicção simples: se exceder o limite, remove entradas mais antigas
-    if len(cache) >= max_size:
-        # Remove os 10% mais antigos
-        evict_count = max(1, max_size // 10)
-        oldest = sorted(cache.items(), key=lambda kv: kv[1]["time"])[:evict_count]
-        for k, _ in oldest:
-            cache.pop(k, None)
-
-    cache[key] = {"time": _now(), "data": data}
+def _cache_set(cache: dict, key: str, data):
+    cache[key] = {
+        "time": time.time(),
+        "data": data,
+    }
 
 
 async def _dedup_fetch(cache: dict, inflight: dict, key: str, ttl: int, coro_factory):
-    # Fast-path: sem lock, leitura direta
     cached = _cache_get(cache, key, ttl)
     if cached is not None:
         return cached
 
     task = inflight.get(key)
-    if task is not None:
+    if task:
         return await task
 
     async def _runner():
-        async with GLOBAL_FETCH_SEMAPHORE:
-            return await coro_factory()
+        return await coro_factory()
 
     task = asyncio.create_task(_runner())
     inflight[key] = task
@@ -134,1186 +116,1605 @@ async def _dedup_fetch(cache: dict, inflight: dict, key: str, ttl: int, coro_fac
         inflight.pop(key, None)
 
 
-# ---------------------------------------------------------------------------
-# Helpers Telegram
-# ---------------------------------------------------------------------------
+async def _request_text(url: str, headers: dict | None = None) -> str:
+    client = await get_http_client()
+    merged_headers = dict(_HTTP_HEADERS)
+    if headers:
+        merged_headers.update(headers)
 
-async def _safe_answer_query(query, text: str | None = None, show_alert: bool = False):
-    try:
-        if text is None:
-            await query.answer()
-        else:
-            await query.answer(text, show_alert=show_alert)
-    except Exception:
-        pass
+    last_exc = None
 
+    for attempt in range(3):
+        try:
+            async with HTTP_SEMAPHORE:
+                response = await client.get(url, headers=merged_headers)
+                response.raise_for_status()
+                return response.text
+        except (httpx.PoolTimeout, httpx.ReadTimeout, httpx.ConnectTimeout) as error:
+            last_exc = error
+            await asyncio.sleep(0.5 * (attempt + 1))
 
-async def _mark_user_seen_bg(user):
-    """Fire-and-forget: registra usuário ativo sem bloquear o callback."""
-    asyncio.create_task(_mark_user_seen_task(user))
-
-
-async def _mark_user_seen_task(user):
-    try:
-        result = mark_user_seen(user.id, user.username or user.first_name or "")
-        if asyncio.isfuture(result) or asyncio.iscoroutine(result):
-            await result
-    except Exception as e:
-        print("ERRO AO MARCAR USUÁRIO ATIVO:", repr(e))
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Falha inesperada ao buscar texto.")
 
 
-def _safe_log_event(**kwargs):
-    try:
-        log_event(**kwargs)
-    except Exception as e:
-        print("ERRO AO SALVAR MÉTRICA:", repr(e))
-
-
-# ---------------------------------------------------------------------------
-# Helpers de texto
-# ---------------------------------------------------------------------------
-
-def _strip_html(text: str) -> str:
-    return _RE_HTML_TAGS.sub("", text or "")
-
-
-def _truncate_text(text: str, limit: int) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
-
-
-def _anime_main_image(anime: dict) -> str:
-    return (
-        anime.get("cover_url")
-        or anime.get("media_image_url")
-        or anime.get("banner_url")
-        or ""
-    ).strip()
-
-
-def _anime_secondary_image(anime: dict) -> str:
-    return (
-        anime.get("media_image_url")
-        or anime.get("cover_url")
-        or anime.get("banner_url")
-        or ""
-    ).strip()
-
-
-def _anime_text(anime: dict) -> str:
-    title = html.escape((anime.get("title") or "Sem título").strip()).upper()
-
-    description = _strip_html(anime.get("description") or "Sem descrição disponível.")
-    description = _truncate_text(description, 280)
-    description = html.escape(description)
-
-    score = anime.get("score")
-    status = anime.get("status")
-    genres = anime.get("genres") or []
-    episodes = anime.get("episodes")
-    season_year = anime.get("season_year")
-
-    info_lines = []
-    if score:
-        info_lines.append(f"⭐ <b>Pontuação:</b> <code>{score}</code>")
-    if status:
-        info_lines.append(f"📡 <b>Situação:</b> <code>{html.escape(str(status))}</code>")
-    if season_year:
-        info_lines.append(f"📅 <b>Lançamento:</b> <code>{season_year}</code>")
-    if episodes:
-        info_lines.append(f"📚 <b>Episódios:</b> <code>{episodes}</code>")
-
-    genres_block = ""
-    if genres:
-        safe_genres = " • ".join(html.escape(str(g)) for g in genres[:5])
-        genres_block = f"\n🎭 <b>Gêneros:</b>\n<code>{safe_genres}</code>\n"
-
-    info_block = "\n".join(info_lines)
-
-    return (
-        f"🎬 <b>{title}</b>\n\n"
-        f"━━━━━━━━━━━━━━━━\n\n"
-        f"{info_block}"
-        f"{genres_block}\n"
-        f"━━━━━━━━━━━━━━━━\n\n"
-        f"📖 <b>Info:</b>\n"
-        f"{description}"
+async def _get(url: str) -> str:
+    return await _dedup_fetch(
+        _HTML_CACHE,
+        _INFLIGHT_HTML,
+        url,
+        _HTML_CACHE_TTL,
+        lambda: _request_text(url, headers=_HTTP_HEADERS),
     )
 
 
-def _episode_list_text(title: str, offset: int, total: int) -> str:
-    safe_title = html.escape((title or "Sem título").strip())
-    current_page = (offset // EPISODES_PER_PAGE) + 1
-    total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
-    return (
-        f"📺 <b>{safe_title}</b>\n\n"
-        f"🎞 <b>Total de episódios:</b> {total}\n"
-        f"📄 <b>Página:</b> {current_page}/{total_pages}\n\n"
-        f"Escolha um episódio abaixo:"
+async def _post_json(url: str, payload: dict, headers: dict | None = None) -> dict:
+    client = await get_http_client()
+
+    merged_headers = dict(_ANILIST_HEADERS)
+    if headers:
+        merged_headers.update(headers)
+
+    last_exc = None
+
+    for attempt in range(3):
+        try:
+            async with HTTP_SEMAPHORE:
+                response = await client.post(url, json=payload, headers=merged_headers)
+                response.raise_for_status()
+                return response.json()
+        except (httpx.PoolTimeout, httpx.ReadTimeout, httpx.ConnectTimeout) as error:
+            last_exc = error
+            await asyncio.sleep(0.5 * (attempt + 1))
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Falha inesperada ao fazer POST JSON.")
+
+
+def _clean(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip()
+
+
+def _normalize_slug_for_page(anime_id: str) -> str:
+    return (anime_id or "").strip().strip("/")
+
+
+def _normalize_episode_slug(slug: str) -> str:
+    slug = (slug or "").strip().strip("/")
+    slug = slug.replace("-todos-os-episodios", "")
+    return slug
+
+
+def _normalize_text(text: str) -> str:
+    text = (text or "").lower().strip()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = re.sub(r"[^\w\s-]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _search_path_term(query: str) -> str:
+    text = _normalize_text(query)
+    text = text.replace(" ", "-")
+    text = re.sub(r"-+", "-", text).strip("-")
+    return text
+
+
+def _extract_server_name(url: str) -> str:
+    value = (url or "").lower()
+
+    if "blogger.com/video.g" in value:
+        return "BLOGGER"
+
+    if "googlevideo.com" in value:
+        return "GOOGLEVIDEO"
+
+    if ".m3u8" in value:
+        return "HLS"
+
+    match = re.search(r"lightspeedst\.net/(s\d+)", value)
+    return match.group(1).upper() if match else "S6"
+
+
+def _extract_quality_name(url: str) -> str:
+    value = (url or "").lower()
+
+    if "fmt=37" in value or "1080p" in value:
+        return "FULLHD"
+    if "fmt=22" in value or "720p" in value or "/hd/" in value:
+        return "HD"
+    if "fmt=18" in value or "480p" in value or "/sd/" in value:
+        return "SD"
+    if "blogger.com/video.g" in value:
+        return "HD"
+    if ".m3u8" in value:
+        if "1080" in value:
+            return "FULLHD"
+        if "720" in value:
+            return "HD"
+        if "480" in value or "360" in value:
+            return "SD"
+        return "HD"
+
+    return "HD"
+
+
+def _normalize_quality_label(value: str) -> str:
+    value = (value or "").upper().strip()
+
+    if value in {"FULLHD", "FHD", "1080P"}:
+        return "FULLHD"
+    if value in {"HD", "720P"}:
+        return "HD"
+    if value in {"SD", "480P", "360P"}:
+        return "SD"
+
+    return ""
+
+
+def _extract_local_genres(soup: BeautifulSoup) -> list[str]:
+    genres = []
+    seen = set()
+
+    for anchor in soup.select("a[href*='/genero/']"):
+        text = _clean(anchor.get_text(" ", strip=True))
+        if not text:
+            continue
+
+        key = text.lower()
+        if key in seen:
+            continue
+
+        seen.add(key)
+        genres.append(text)
+
+    return genres
+
+
+def _extract_alternative_titles(soup: BeautifulSoup, main_title: str = "") -> list[str]:
+    titles = []
+    seen = set()
+
+    def _add(text: str):
+        text = _clean(text)
+        if not text or len(text) < 2:
+            return
+
+        low = text.lower()
+
+        if main_title and low == main_title.lower():
+            return
+
+        if low in seen:
+            return
+
+        seen.add(low)
+        titles.append(text)
+
+    for el in soup.select("h6"):
+        _add(el.get_text(" ", strip=True))
+
+    meta = soup.find("meta", attrs={"property": "og:title"})
+    if meta and meta.get("content"):
+        raw = meta["content"]
+        raw = re.sub(r"^Assistir\s+", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"\s*-\s*AnimeFire.*$", "", raw, flags=re.IGNORECASE)
+        _add(raw)
+
+    return titles
+
+
+def _is_dubbed_text(text: str) -> bool:
+    text = _normalize_text(text)
+    if not text:
+        return False
+
+    dubbed_terms = [
+        "dublado",
+        "dub",
+        "pt br",
+        "ptbr",
+        "portugues",
+        "português",
+    ]
+    return any(term in text for term in dubbed_terms)
+
+
+def _clean_display_title(title: str) -> str:
+    title = _clean(title)
+
+    title = re.sub(r"\[.*?\]", " ", title)
+    title = re.sub(r"\((?:tv|movie|filme|ova|ona|special)\)", " ", title, flags=re.IGNORECASE)
+
+    title = re.sub(
+        r"\b(dublado|legendado|dub|tv|movie|filme|ova|ona|special|online|hd|fullhd)\b",
+        " ",
+        title,
+        flags=re.IGNORECASE,
     )
 
-
-# Dict lookup é O(1) e mais rápido que if/elif em cadeia
-_SERVER_NAME_MAP = {
-    "BLOGGER": "BLOGGER",
-    "GOOGLEVIDEO": "GOOGLEVIDEO",
-}
-
-def _display_server_name(server: str) -> str:
-    return _SERVER_NAME_MAP.get((server or "").upper().strip(), server or "PADRÃO")
-
-
-_QUALITY_MAP = {
-    "FULLHD": "HD", "FHD": "HD", "1080P": "HD",
-    "HD": "HD", "720P": "HD",
-    "SD": "SD", "480P": "SD", "360P": "SD",
-}
-
-def _normalize_quality(value: str) -> str:
-    return _QUALITY_MAP.get((value or "").upper().strip(), "HD")
-
-
-def _player_text(title: str, episode: str, server: str, total_episodes: int, quality: str) -> str:
-    safe_title = html.escape((title or "Sem título").strip())
-    safe_ep = html.escape(str(episode))
-    safe_server = html.escape(_display_server_name(server))
-    safe_quality = html.escape(_normalize_quality(quality))
-    return (
-        f"▶️ <b>{safe_title}</b>\n\n"
-        f"🎞 <b>Episódio:</b> {safe_ep}\n"
-        f"🎚 <b>Qualidade:</b> {safe_quality}\n"
-        f"📚 <b>Total:</b> {total_episodes}\n\n"
-        f"Escolha uma opção abaixo para continuar."
-    )
-
-
-def _search_text(query: str, page: int, total: int) -> str:
-    total_pages = max(1, ((total - 1) // SEARCH_RESULTS_PER_PAGE) + 1)
-    safe_query = html.escape((query or "").strip())
-    return (
-        f"🔎 <b>Resultado da busca</b>\n\n"
-        f"━━━━━━━━━━━━━━\n\n"
-        f"🎬 <b>Pesquisa:</b> {safe_query}\n"
-        f"📚 <b>Resultados:</b> {total}\n"
-        f"📄 <b>Página:</b> {page}/{total_pages}\n\n"
-        f"Toque em uma obra abaixo para abrir os detalhes."
-    )
-
-
-def _clean_button_title(title: str) -> str:
-    title = (title or "").strip()
-    title = _RE_SCORE.sub("", title)
-    title = _RE_CLASS.sub("", title)
-    title = _RE_LIVRE.sub("", title)
-    title = _RE_NA.sub("", title)
-    title = _RE_EMPTY_PARENS.sub("", title)
-    title = _RE_SPACES.sub(" ", title).strip(" -–|•")
+    title = re.sub(r"\s{2,}", " ", title).strip(" -–|")
     return title or "Sem título"
 
 
-# ---------------------------------------------------------------------------
-# Teclados
-# ---------------------------------------------------------------------------
+def _normalize_display_for_final_dedupe(title: str) -> str:
+    value = _normalize_text(title)
 
-def _search_keyboard(results: list, page: int, total: int, token: str) -> InlineKeyboardMarkup:
-    rows = []
-    start = (page - 1) * SEARCH_RESULTS_PER_PAGE
-    end = start + SEARCH_RESULTS_PER_PAGE
-    page_items = results[start:end]
+    value = re.sub(r"\b(tv|movie|filme|ova|ona|special)\b", " ", value)
+    value = re.sub(r"\(\s*\d{4}\s*\)", " ", value)
+    value = re.sub(r"\b\d{4}\b", " ", value)
 
-    for idx, item in enumerate(page_items, start=start + 1):
-        title = _clean_button_title(item.get("title") or "Sem título")
-        if len(title) > 42:
-            title = title[:39].rstrip() + "..."
-        rows.append([
-            InlineKeyboardButton(
-                f"🎬 {idx}. {title}",
-                callback_data=f"sa|{token}|{idx - 1}",
-            )
-        ])
+    value = re.sub(
+        r"\b(dublado|legendado|dub|dual audio|audio dual|pt br|ptbr|portugues|português)\b",
+        " ",
+        value,
+        flags=re.IGNORECASE,
+    )
 
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"sp|{token}|{page - 1}"))
-    if end < total:
-        nav.append(InlineKeyboardButton("Próxima ➡️", callback_data=f"sp|{token}|{page + 1}"))
-    if nav:
-        rows.append(nav)
-
-    return InlineKeyboardMarkup(rows)
+    value = re.sub(r"\s+", " ", value).strip(" -–|")
+    return value
 
 
-def _anime_group_map_key(anime_id: str) -> str:
-    return f"ag:{anime_id}"
+def _base_title_for_grouping(title: str, slug: str = "", alt_titles: list[str] | None = None) -> str:
+    candidates = [title, slug.replace("-", " ")]
+
+    if alt_titles:
+        candidates.extend(alt_titles)
+
+    best = ""
+
+    for candidate in candidates:
+        value = _normalize_text(candidate)
+        if not value:
+            continue
+
+        value = re.sub(r"\[.*?\]", " ", value)
+        value = re.sub(r"\((?:tv|movie|filme|ova|ona|special)\)", " ", value, flags=re.IGNORECASE)
+
+        value = re.sub(
+            r"\b(dublado|legendado|dub|dual audio|audio dual|pt br|ptbr|portugues|português|online|hd|fullhd|tv|movie|filme|ova|ona|special)\b",
+            " ",
+            value,
+            flags=re.IGNORECASE,
+        )
+
+        value = re.sub(r"\s+", " ", value).strip(" -–|")
+        if not value:
+            continue
+
+        if not best or len(value) < len(best):
+            best = value
+
+    return best or _normalize_text(title) or _normalize_text(slug)
 
 
-def _remember_group_item(context: ContextTypes.DEFAULT_TYPE, item: dict):
-    if not item:
-        return
-    variants = item.get("variants") or []
-    default_id = item.get("default_anime_id") or item.get("id")
-    if default_id:
-        context.user_data[_anime_group_map_key(default_id)] = item
-    for variant in variants:
-        variant_id = variant.get("id")
-        if variant_id:
-            context.user_data[_anime_group_map_key(variant_id)] = item
+def _pick_group_display_title(variants: list[dict]) -> str:
+    if not variants:
+        return "Sem título"
+
+    def _title_score(item: dict):
+        title = _clean(item.get("title") or "")
+        normalized = _normalize_text(title)
+
+        score = 0
+
+        if not item.get("is_dubbed"):
+            score += 100
+
+        if "dublado" not in normalized:
+            score += 30
+        if "legendado" not in normalized:
+            score += 20
+        if "[" not in title and "]" not in title:
+            score += 15
+        if "(" not in title and ")" not in title:
+            score += 10
+
+        score -= len(title) * 0.1
+
+        return score
+
+    best = max(variants, key=_title_score)
+    return _clean_display_title(best.get("title") or "Sem título")
 
 
-def _get_group_item(context: ContextTypes.DEFAULT_TYPE, anime_id: str) -> dict | None:
-    return context.user_data.get(_anime_group_map_key(anime_id))
+def _score_candidate(query: str, title: str, slug: str, alt_titles: list[str] | None = None) -> float:
+    q = _normalize_text(query)
+
+    if not q:
+        return -9999
+
+    q_words = [w for w in q.split() if len(w) > 1]
+    if not q_words:
+        return -9999
+
+    candidates = [
+        title,
+        slug.replace("-", " "),
+    ]
+
+    if alt_titles:
+        candidates.extend(alt_titles)
+
+    best_score = -9999
+
+    for candidate_text in candidates:
+        t = _normalize_text(candidate_text)
+        if not t:
+            continue
+
+        score = 0.0
+
+        if q == t:
+            score += 1200
+        if q in t:
+            score += 600
+
+        if len(q_words) == 1:
+            word = q_words[0]
+            if word not in t:
+                score -= 500
+            elif t.startswith(word):
+                score += 140
+        else:
+            missing_words = 0
+            for word in q_words:
+                if word not in t:
+                    missing_words += 1
+            if missing_words >= max(1, len(q_words) // 2):
+                score -= 400
+
+        for word in q_words:
+            if word in t:
+                score += 80
+            else:
+                score -= 20
+
+        if "episodio" in t or "episódio" in t:
+            score -= 500
+
+        score += max(0, 50 - len(t))
+
+        if score > best_score:
+            best_score = score
+
+    return best_score
 
 
-def _pick_variant(item: dict, dubbed: bool):
-    for variant in (item.get("variants") or []):
-        if bool(variant.get("is_dubbed")) == dubbed:
-            return variant
-    return None
-
-
-def _variant_keyboard(item: dict, back_callback: str | None = None) -> InlineKeyboardMarkup:
-    rows = []
-    sub_variant = _pick_variant(item, dubbed=False)
-    dub_variant = _pick_variant(item, dubbed=True)
-
-    if sub_variant:
-        rows.append([InlineKeyboardButton("🇯🇵 Legendado", callback_data=f"var|{sub_variant['id']}")])
-    if dub_variant:
-        rows.append([InlineKeyboardButton("🇧🇷 Dublado", callback_data=f"var|{dub_variant['id']}")])
-
-    if not rows:
-        default_id = item.get("default_anime_id") or item.get("id")
-        rows.append([InlineKeyboardButton("📺 Ver episódios", callback_data=f"eps|{default_id}|0")])
-
-    if back_callback:
-        rows.append([InlineKeyboardButton("🔙 Voltar", callback_data=back_callback)])
-
-    return InlineKeyboardMarkup(rows)
-
-
-def _episodes_keyboard(anime_id: str, offset: int, items: list, total: int) -> InlineKeyboardMarkup:
-    rows = []
-    current = []
-    for item in items:
-        ep = str(item.get("episode", "?"))
-        current.append(InlineKeyboardButton(ep, callback_data=f"ep|{anime_id}|{ep}"))
-        if len(current) == 5:
-            rows.append(current)
-            current = []
-    if current:
-        rows.append(current)
-
-    total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
-    current_page = (offset // EPISODES_PER_PAGE) + 1
-    last_offset = max(0, (total_pages - 1) * EPISODES_PER_PAGE)
-
-    nav_row_1 = []
-    nav_row_2 = []
-
-    if current_page > 1:
-        nav_row_1.append(InlineKeyboardButton("⏪ Primeira", callback_data=f"eps|{anime_id}|0"))
-        prev_offset = max(0, offset - EPISODES_PER_PAGE)
-        nav_row_1.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"eps|{anime_id}|{prev_offset}"))
-
-    if current_page < total_pages:
-        next_offset = offset + EPISODES_PER_PAGE
-        nav_row_2.append(InlineKeyboardButton("Próxima ➡️", callback_data=f"eps|{anime_id}|{next_offset}"))
-        nav_row_2.append(InlineKeyboardButton("Última ⏩", callback_data=f"eps|{anime_id}|{last_offset}"))
-
-    if nav_row_1:
-        rows.append(nav_row_1)
-    if nav_row_2:
-        rows.append(nav_row_2)
-
-    rows.append([InlineKeyboardButton("🔙 Voltar", callback_data=f"anime|{anime_id}")])
-    return InlineKeyboardMarkup(rows)
-
-
-def _recommend_menu_text() -> str:
+def _best_title_from_anilist(media: dict) -> str:
+    title = media.get("title") or {}
     return (
-        "🎲 <b>Recomendação aleatória por gênero</b>\n\n"
-        "Escolha um gênero abaixo e eu vou sortear um anime aleatório dele."
+        title.get("userPreferred")
+        or title.get("romaji")
+        or title.get("english")
+        or title.get("native")
+        or "Sem título"
     )
 
 
-def _recommend_menu_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton("⚔️ Ação", callback_data="rec|genre|acao"),
-            InlineKeyboardButton("💖 Romance", callback_data="rec|genre|romance"),
-        ],
-        [
-            InlineKeyboardButton("😂 Comédia", callback_data="rec|genre|comedia"),
-            InlineKeyboardButton("😱 Terror", callback_data="rec|genre|terror"),
-        ],
-        [
-            InlineKeyboardButton("🧠 Mistério", callback_data="rec|genre|misterio"),
-            InlineKeyboardButton("🪄 Fantasia", callback_data="rec|genre|fantasia"),
-        ],
-        [
-            InlineKeyboardButton("🏐 Esportes", callback_data="rec|genre|esportes"),
-            InlineKeyboardButton("😭 Drama", callback_data="rec|genre|drama"),
-        ],
+def _strip_html_tags(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text or "")
+
+
+def _anilist_status_label(status: str) -> str:
+    mapping = {
+        "FINISHED": "Finalizado",
+        "RELEASING": "Em lançamento",
+        "NOT_YET_RELEASED": "Não lançado",
+        "CANCELLED": "Cancelado",
+        "HIATUS": "Em hiato",
+    }
+    return mapping.get((status or "").upper(), status or "")
+
+
+def _anilist_format_label(fmt: str) -> str:
+    mapping = {
+        "TV": "TV",
+        "TV_SHORT": "TV Short",
+        "MOVIE": "Filme",
+        "SPECIAL": "Especial",
+        "OVA": "OVA",
+        "ONA": "ONA",
+        "MUSIC": "Music",
+    }
+    return mapping.get((fmt or "").upper(), fmt or "")
+
+
+def _is_bad_description(text: str) -> bool:
+    text = (text or "").strip().lower()
+    if not text:
+        return True
+
+    bad_fragments = [
+        "este site não hospeda nenhum vídeo em seu servidor",
+        "todo conteúdo é provido de terceiros",
+        "conteúdo é provido de terceiros",
+        "assista",
+        "baixar",
     ]
-    return InlineKeyboardMarkup(rows)
+
+    return any(fragment in text for fragment in bad_fragments)
 
 
-_GENRE_LABELS = {
-    "acao": "⚔️ Ação",
-    "romance": "💖 Romance",
-    "comedia": "😂 Comédia",
-    "terror": "😱 Terror",
-    "misterio": "🧠 Mistério",
-    "fantasia": "🪄 Fantasia",
-    "esportes": "🏐 Esportes",
-    "drama": "😭 Drama",
-}
+def _extract_description_from_page(soup: BeautifulSoup) -> str:
+    text = soup.get_text("\n", strip=True)
+
+    match = re.search(
+        r"Sinopse:\s*(.+?)(?:\n[A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{0,60}:|\Z)",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        description = _clean(match.group(1))
+        if description and not _is_bad_description(description):
+            return description
+
+    paragraphs = []
+    for paragraph in soup.find_all("p"):
+        candidate = _clean(paragraph.get_text(" ", strip=True))
+        if len(candidate) >= 80 and not _is_bad_description(candidate):
+            paragraphs.append(candidate)
+
+    if paragraphs:
+        paragraphs.sort(key=len, reverse=True)
+        return paragraphs[0]
+
+    return ""
 
 
-def _recommend_text(anime: dict, genre_key: str) -> str:
-    title = html.escape((anime.get("title") or "Sem título").strip())
-    score = anime.get("score")
-    episodes = anime.get("episodes")
-    genres = anime.get("genres") or []
-    description = _strip_html(anime.get("description") or "Sem descrição disponível.")
-    description = _truncate_text(description, 420)
-    description = html.escape(description)
-    label = html.escape(_GENRE_LABELS.get(genre_key, "🎲 Recomendação"))
+def _extract_blogger_iframe(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
 
-    parts = [f"{label}\n", f"🎬 <b>{title}</b>"]
-    meta = []
-    if score:
-        meta.append(f"⭐ <b>{score}</b>")
-    if episodes:
-        meta.append(f"📺 <b>{episodes} episódios</b>")
-    if meta:
-        parts.append(" • ".join(meta))
-    if genres:
-        safe_genres = " • ".join(html.escape(str(g)) for g in genres[:5])
-        parts.append(f"🎭 <b>Gêneros:</b> {safe_genres}")
-    parts.extend(["", "📖 <b>Sinopse</b>", description])
+    for iframe in soup.find_all("iframe"):
+        src = (iframe.get("src") or "").strip()
+        if "blogger.com/video.g" in src:
+            return src
 
-    return "\n".join(parts)
+    match = re.search(r'https://www\.blogger\.com/video\.g\?token=[^"\']+', html)
+    if match:
+        return match.group(0)
+
+    return ""
 
 
-def _recommend_result_keyboard(anime_id: str, genre_key: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📺 Ver episódios", callback_data=f"eps|{anime_id}|0")],
-        [
-            InlineKeyboardButton("🎭 Trocar gênero", callback_data="rec|menu"),
-            InlineKeyboardButton("🎲 Tentar de novo", callback_data=f"rec|try|{genre_key}"),
-        ],
-    ])
+def _extract_googlevideo_url(html: str) -> str:
+    match = re.search(r'https://[^"\']*googlevideo\.com/videoplayback[^"\']+', html)
+    return match.group(0) if match else ""
 
 
-# ---------------------------------------------------------------------------
-# Qualidade
-# ---------------------------------------------------------------------------
+def _decode_possible_escaped_url(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
 
-def _quality_key(anime_id: str, episode: str) -> str:
-    return f"q:{anime_id}:{episode}"
-
-
-def _last_quality_switch_key(anime_id: str, episode: str) -> str:
-    return f"qs:{anime_id}:{episode}"
-
-
-def _get_selected_quality(context: ContextTypes.DEFAULT_TYPE, anime_id: str, episode: str) -> str:
-    return _normalize_quality(context.user_data.get(_quality_key(anime_id, episode), "HD"))
+    value = html_lib.unescape(value)
+    value = value.replace("\\/", "/")
+    value = value.replace("\\u0026", "&")
+    value = value.replace("\\x26", "&")
+    value = value.replace("&amp;", "&")
+    value = value.strip(" '\"")
+    return value
 
 
-def _set_selected_quality(context: ContextTypes.DEFAULT_TYPE, anime_id: str, episode: str, quality: str):
-    context.user_data[_quality_key(anime_id, episode)] = _normalize_quality(quality)
+def _make_absolute_url(url: str, base_url: str) -> str:
+    url = _decode_possible_escaped_url(url)
+    if not url:
+        return ""
+    return urljoin(base_url, url)
 
 
-def _available_quality_set(player: dict) -> set:
-    qualities: set[str] = set()
-    for q in (player.get("available_qualities") or []):
-        n = _normalize_quality(str(q))
-        if n:
-            qualities.add(n)
-    if not qualities:
-        videos = player.get("videos") or {}
-        if isinstance(videos, dict):
-            for q in videos:
-                n = _normalize_quality(str(q))
-                if n:
-                    qualities.add(n)
-    current = _normalize_quality(player.get("quality", ""))
-    if current:
-        qualities.add(current)
-    return qualities
-
-
-def _player_keyboard(
-    anime_id: str,
-    episode: str,
-    detected_video: str,
-    prev_episode,
-    next_episode,
-    selected_quality: str,
-    user_id: int | str,
-    available_qualities: set | None = None,
-) -> InlineKeyboardMarkup:
-    selected_quality = _normalize_quality(selected_quality)
-    available_qualities = available_qualities or set()
-
-    hd_label = "HD" + (" 🚫" if available_qualities and "HD" not in available_qualities else "")
-    sd_label = "SD" + (" 🚫" if available_qualities and "SD" not in available_qualities else "")
-
-    if selected_quality == "HD":
-        hd_label += " 🔘"
-    else:
-        sd_label += " 🔘"
-
-    watched = is_episode_watched(user_id, anime_id, episode)
-    watch_toggle_button = InlineKeyboardButton(
-        "❌ Desmarcar como visto" if watched else "✅ Marcar como visto",
-        callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
+def _is_direct_video_url(url: str) -> bool:
+    value = (url or "").lower()
+    return any(
+        token in value
+        for token in (
+            ".m3u8",
+            ".mp4",
+            "googlevideo.com/videoplayback",
+            "/videoplayback?",
+        )
     )
 
-    rows = [
-        [InlineKeyboardButton("▶️ Assistir", url=detected_video or "https://t.me")],
-        [watch_toggle_button],
-        [
-            InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
-            InlineKeyboardButton(sd_label, callback_data=f"ql|{anime_id}|{episode}|SD"),
-        ],
+
+def _looks_like_embed_url(url: str) -> bool:
+    value = (url or "").lower()
+    return any(
+        token in value
+        for token in (
+            "blogger.com/video.g",
+            "/embed/",
+            "player",
+            "iframe",
+        )
+    )
+
+
+def _extract_direct_video_urls(html: str, base_url: str = "") -> list[str]:
+    if not html:
+        return []
+
+    candidates = []
+    seen = set()
+
+    def _push(url: str):
+        url = _decode_possible_escaped_url(url)
+        if not url:
+            return
+
+        if base_url:
+            url = _make_absolute_url(url, base_url)
+
+        if not url.startswith(("http://", "https://")):
+            return
+
+        if not _is_direct_video_url(url):
+            return
+
+        if url in seen:
+            return
+
+        seen.add(url)
+        candidates.append(url)
+
+    patterns = [
+        r'https?://[^\s"\'<>\\]+\.m3u8(?:\?[^\s"\'<>\\]*)?',
+        r'https?://[^\s"\'<>\\]+\.mp4(?:\?[^\s"\'<>\\]*)?',
+        r'https?://[^\s"\'<>\\]*googlevideo\.com/videoplayback[^\s"\'<>\\]*',
+        r'https?:\\/\\/[^\s"\'<>]+\.m3u8(?:\?[^\s"\'<>]*)?',
+        r'https?:\\/\\/[^\s"\'<>]+\.mp4(?:\?[^\s"\'<>]*)?',
+        r'https?:\\/\\/[^\s"\'<>]*googlevideo\.com\\/videoplayback[^\s"\'<>]*',
     ]
 
-    nav = []
-    if prev_episode:
-        nav.append(InlineKeyboardButton("⏮ Anterior", callback_data=f"ep|{anime_id}|{prev_episode}"))
-    if next_episode:
-        nav.append(InlineKeyboardButton("Próximo ⏭", callback_data=f"ep|{anime_id}|{next_episode}"))
-    if nav:
-        rows.append(nav)
+    for pattern in patterns:
+        for match in re.findall(pattern, html, flags=re.IGNORECASE):
+            _push(match)
 
-    rows.append([InlineKeyboardButton("📋 Lista de episódios", callback_data=f"eps|{anime_id}|0")])
-    return InlineKeyboardMarkup(rows)
+    soup = BeautifulSoup(html, "html.parser")
+
+    for tag in soup.find_all(["source", "video"]):
+        for attr in ("src", "data-src"):
+            value = (tag.get(attr) or "").strip()
+            if value:
+                _push(value)
+
+    for tag in soup.find_all(attrs={"data-video": True}):
+        value = (tag.get("data-video") or "").strip()
+        if value:
+            _push(value)
+
+    attr_patterns = [
+        r'''["'](?:file|src|video|stream|url|hls|playlist)["']\s*:\s*["']([^"']+)["']''',
+        r"""(?:file|src|video|stream|url|hls|playlist)\s*=\s*["']([^"']+)["']""",
+    ]
+
+    for pattern in attr_patterns:
+        for match in re.findall(pattern, html, flags=re.IGNORECASE):
+            _push(match)
+
+    return candidates
 
 
-# ---------------------------------------------------------------------------
-# Cache de anime por usuário
-# ---------------------------------------------------------------------------
+def _extract_iframe_sources(html: str, base_url: str = "") -> list[str]:
+    if not html:
+        return []
 
-def _anime_cache_key(anime_id: str) -> str:
-    return f"ac:{anime_id}"
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    seen = set()
+
+    for iframe in soup.find_all("iframe"):
+        src = (iframe.get("src") or "").strip()
+        src = _make_absolute_url(src, base_url) if base_url else _decode_possible_escaped_url(src)
+        if not src:
+            continue
+        if src in seen:
+            continue
+        seen.add(src)
+        results.append(src)
+
+    return results
 
 
-async def _get_cached_anime(context: ContextTypes.DEFAULT_TYPE, anime_id: str) -> dict:
-    key = _anime_cache_key(anime_id)
-    anime = context.user_data.get(key)
-    if anime:
-        return anime
+def _map_quality_urls(urls: list[str]) -> dict[str, str]:
+    quality_map = {}
+
+    for url in urls:
+        quality = _normalize_quality_label(_extract_quality_name(url)) or "HD"
+        quality_map.setdefault(quality, url)
+
+    if "HD" not in quality_map:
+        if "FULLHD" in quality_map:
+            quality_map["HD"] = quality_map["FULLHD"]
+        elif "SD" in quality_map:
+            quality_map["HD"] = quality_map["SD"]
+
+    return quality_map
+
+
+async def _fetch_remote_html(url: str, referer: str = "") -> str:
+    headers = dict(_HTTP_HEADERS)
+    headers["Referer"] = referer or BASE_URL
+    return await _request_text(url, headers=headers)
+
+
+async def _resolve_embed_to_direct_urls(url: str, referer: str = "", depth: int = 0, visited: set[str] | None = None) -> list[str]:
+    if not url or depth > 2:
+        return []
+
+    if visited is None:
+        visited = set()
+
+    normalized_url = _decode_possible_escaped_url(url)
+    if normalized_url in visited:
+        return []
+
+    visited.add(normalized_url)
+
+    if _is_direct_video_url(normalized_url):
+        return [normalized_url]
+
+    try:
+        html = await _fetch_remote_html(normalized_url, referer=referer or BASE_URL)
+    except Exception as error:
+        print(f"[EMBED] erro_ao_buscar_embed={repr(error)} url={normalized_url}")
+        return []
+
+    direct_urls = _extract_direct_video_urls(html, base_url=normalized_url)
+    if direct_urls:
+        return direct_urls
+
+    iframe_urls = _extract_iframe_sources(html, base_url=normalized_url)
+    for iframe_url in iframe_urls:
+        resolved = await _resolve_embed_to_direct_urls(
+            iframe_url,
+            referer=normalized_url,
+            depth=depth + 1,
+            visited=visited,
+        )
+        if resolved:
+            return resolved
+
+    return []
+
+
+async def _get_episode_page_html(base_slug: str, episode: str) -> str:
+    safe_slug = _normalize_episode_slug(base_slug)
+    url = f"{BASE_URL}/animes/{safe_slug}/{episode}"
+    return await _get(url)
+
+
+def _merge_anime_data(local_data: dict, anilist_data: dict | None) -> dict:
+    if not anilist_data:
+        return local_data
+
+    merged = dict(local_data)
+
+    local_description = (local_data.get("description") or "").strip()
+    anilist_description = (anilist_data.get("description") or "").strip()
+
+    if not local_description and anilist_description:
+        merged["description"] = anilist_data["description"]
+
+    if anilist_data.get("cover_url"):
+        merged["cover_url"] = anilist_data["cover_url"]
+
+    if anilist_data.get("banner_url"):
+        merged["banner_url"] = anilist_data["banner_url"]
+
+    for key in (
+        "score",
+        "status",
+        "format",
+        "episodes",
+        "season",
+        "season_year",
+        "genres",
+        "studio",
+        "anilist_id",
+        "anilist_url",
+        "title_romaji",
+        "title_english",
+        "title_native",
+        "media_image_url",
+        "trailer_id",
+        "trailer_site",
+    ):
+        if anilist_data.get(key) not in (None, "", []):
+            merged[key] = anilist_data[key]
+
+    return merged
+
+
+async def _search_anilist_by_title(title: str) -> dict | None:
+    if not ENABLE_ANILIST:
+        return None
+
+    cache_key = _normalize_text(title)
+    if not cache_key:
+        return None
 
     async def _fetch():
-        return await asyncio.wait_for(get_anime_details(anime_id), timeout=20)
+        query = """
+        query ($search: String) {
+          Media(search: $search, type: ANIME) {
+            id
+            siteUrl
+            title {
+              romaji
+              english
+              native
+              userPreferred
+            }
+            description(asHtml: false)
+            averageScore
+            status
+            format
+            episodes
+            season
+            seasonYear
+            genres
+            bannerImage
+            trailer {
+              site
+              id
+            }
+            coverImage {
+              extraLarge
+              large
+              medium
+            }
+            studios(isMain: true) {
+              nodes {
+                name
+              }
+            }
+          }
+        }
+        """
 
-    anime = await _dedup_fetch(_GLOBAL_ANIME_CACHE, _INFLIGHT_ANIME, anime_id, ANIME_CACHE_TTL, _fetch)
-    context.user_data[key] = anime
-    return anime
+        payload = {
+            "query": query,
+            "variables": {"search": title},
+        }
+
+        try:
+            data = await _post_json(ANILIST_API_URL, payload, headers=_ANILIST_HEADERS)
+            media = ((data or {}).get("data") or {}).get("Media")
+            if not media:
+                return None
+
+            studios = (((media.get("studios") or {}).get("nodes")) or [])
+            studio_name = studios[0].get("name") if studios else ""
+
+            description = _clean(_strip_html_tags(media.get("description") or ""))
+
+            return {
+                "anilist_id": media.get("id"),
+                "anilist_url": media.get("siteUrl") or "",
+                "title_romaji": ((media.get("title") or {}).get("romaji")) or "",
+                "title_english": ((media.get("title") or {}).get("english")) or "",
+                "title_native": ((media.get("title") or {}).get("native")) or "",
+                "title": _best_title_from_anilist(media),
+                "description": description,
+                "score": media.get("averageScore"),
+                "status": _anilist_status_label(media.get("status") or ""),
+                "format": _anilist_format_label(media.get("format") or ""),
+                "episodes": media.get("episodes"),
+                "season": media.get("season") or "",
+                "season_year": media.get("seasonYear"),
+                "genres": media.get("genres") or [],
+                "studio": studio_name,
+                "banner_url": media.get("bannerImage") or "",
+                "cover_url": (
+                    ((media.get("coverImage") or {}).get("extraLarge"))
+                    or ((media.get("coverImage") or {}).get("large"))
+                    or ((media.get("coverImage") or {}).get("medium"))
+                    or ""
+                ),
+                "media_image_url": f"https://img.anili.st/media/{media.get('id')}" if media.get("id") else "",
+                "trailer_id": ((media.get("trailer") or {}).get("id")) or "",
+                "trailer_site": ((media.get("trailer") or {}).get("site")) or "",
+            }
+        except Exception as error:
+            print(f"[ANILIST] erro_na_busca={repr(error)}")
+            return None
+
+    return await _dedup_fetch(
+        _ANILIST_CACHE,
+        _INFLIGHT_ANILIST,
+        cache_key,
+        _ANILIST_CACHE_TTL,
+        _fetch,
+    )
 
 
-async def _get_cached_episodes(anime_id: str, offset: int, limit: int):
-    """
-    Cache por anime_id apenas — o fatiamento é feito in-memory.
-    Evita fragmentação de cache por (anime_id, offset, limit).
-    """
+async def search_anime(query: str):
+    key = (query or "").strip().lower()
+
     async def _fetch():
-        return await asyncio.wait_for(get_episodes(anime_id, 0, 9999), timeout=20)
+        search_term = _search_path_term(query)
+        url = f"{BASE_URL}/pesquisar/{quote(search_term)}"
+
+        try:
+            html_doc = await _get(url)
+        except Exception as error:
+            print(f"[BUSCA] erro_no_get={repr(error)}")
+            raise
+
+        soup = BeautifulSoup(html_doc, "html.parser")
+        links = soup.select("a[href*='/animes/']")
+        found = {}
+
+        for anchor in links:
+            href = (anchor.get("href") or "").strip()
+            if "/animes/" not in href:
+                continue
+
+            slug = href.split("/animes/")[-1].strip("/")
+            if not slug or "/" in slug:
+                continue
+
+            raw_title = _clean(anchor.get_text())
+            if not raw_title:
+                img = anchor.find("img")
+                if img:
+                    raw_title = _clean(img.get("alt"))
+
+            if not raw_title:
+                raw_title = slug.replace("-", " ").title()
+
+            is_dubbed = _is_dubbed_text(raw_title) or _is_dubbed_text(slug)
+            title = _clean_display_title(raw_title)
+
+            score = _score_candidate(query, title, slug, alt_titles=[])
+            if score <= -9999:
+                continue
+
+            item = {
+                "id": slug,
+                "title": title,
+                "raw_title": raw_title,
+                "alt_titles": [],
+                "is_dubbed": is_dubbed,
+                "_score": score,
+            }
+            previous = found.get(slug)
+            if not previous or item["_score"] > previous["_score"]:
+                found[slug] = item
+
+        if len(found) < 5:
+            extra_candidates = list(found.values())[:10]
+
+            for item in extra_candidates:
+                try:
+                    details = await get_anime_details(item["id"])
+                    alt_titles = details.get("alt_titles", [])
+
+                    new_score = _score_candidate(
+                        query,
+                        details.get("title", item["title"]),
+                        item["id"],
+                        alt_titles=alt_titles,
+                    )
+
+                    if new_score > item["_score"]:
+                        item["_score"] = new_score
+                        item["title"] = details.get("title", item["title"])
+                        item["alt_titles"] = alt_titles
+                        item["is_dubbed"] = item.get("is_dubbed", False) or _is_dubbed_text(details.get("title", ""))
+
+                    if alt_titles and not item.get("alt_titles"):
+                        item["alt_titles"] = alt_titles
+
+                except Exception:
+                    pass
+
+        ordered = sorted(found.values(), key=lambda x: (-x["_score"], x["title"].lower()))
+
+        grouped = {}
+
+        for item in ordered[:80]:
+            base_key = _base_title_for_grouping(
+                title=item.get("title", ""),
+                slug=item.get("id", ""),
+                alt_titles=item.get("alt_titles", []),
+            )
+
+            if not base_key:
+                base_key = _normalize_text(item.get("title", "")) or item.get("id", "")
+
+            group = grouped.get(base_key)
+            if not group:
+                group = {
+                    "_group_key": base_key,
+                    "_best_score": item.get("_score", 0),
+                    "variants": [],
+                    "has_dubbed": False,
+                    "has_subbed": False,
+                }
+                grouped[base_key] = group
+            else:
+                if item.get("_score", 0) > group["_best_score"]:
+                    group["_best_score"] = item.get("_score", 0)
+
+            variant_payload = {
+                "id": item["id"],
+                "title": _clean_display_title(item.get("title") or "Sem título"),
+                "raw_title": item.get("raw_title", item.get("title", "")),
+                "alt_titles": item.get("alt_titles", []),
+                "is_dubbed": bool(item.get("is_dubbed", False)),
+            }
+
+            existing_ids = {v["id"] for v in group["variants"]}
+            if variant_payload["id"] in existing_ids:
+                continue
+
+            normalized_variant_title = _normalize_display_for_final_dedupe(variant_payload["title"])
+            already_same_title = any(
+                _normalize_display_for_final_dedupe(v.get("title", "")) == normalized_variant_title
+                and bool(v.get("is_dubbed")) == bool(variant_payload["is_dubbed"])
+                for v in group["variants"]
+            )
+            if already_same_title:
+                continue
+
+            group["variants"].append(variant_payload)
+
+            if variant_payload["is_dubbed"]:
+                group["has_dubbed"] = True
+            else:
+                group["has_subbed"] = True
+
+        ordered_groups = sorted(
+            grouped.values(),
+            key=lambda g: (-g["_best_score"], _pick_group_display_title(g["variants"]).lower()),
+        )
+
+        used_display_titles = {}
+        merged_final = []
+
+        for group in ordered_groups:
+            variants = group["variants"]
+            if not variants:
+                continue
+
+            variants.sort(
+                key=lambda v: (
+                    1 if v.get("is_dubbed") else 0,
+                    len(_clean(v.get("title") or "")),
+                    _clean(v.get("title") or "").lower(),
+                )
+            )
+
+            default_variant = next((v for v in variants if not v.get("is_dubbed")), None)
+            if not default_variant:
+                default_variant = variants[0]
+
+            display_title = _pick_group_display_title(variants)
+            normalized_display_title = _normalize_display_for_final_dedupe(display_title)
+
+            item_payload = {
+                "id": default_variant["id"],
+                "default_anime_id": default_variant["id"],
+                "title": display_title,
+                "raw_title": default_variant.get("raw_title", display_title),
+                "alt_titles": default_variant.get("alt_titles", []),
+                "is_dubbed": default_variant.get("is_dubbed", False),
+                "variants": variants[:],
+                "has_dubbed": group["has_dubbed"],
+                "has_subbed": group["has_subbed"],
+                "_best_score": group["_best_score"],
+            }
+
+            existing_index = used_display_titles.get(normalized_display_title)
+
+            if existing_index is None:
+                used_display_titles[normalized_display_title] = len(merged_final)
+                merged_final.append(item_payload)
+                continue
+
+            existing_item = merged_final[existing_index]
+
+            existing_variants = existing_item.get("variants") or []
+            existing_ids = {v["id"] for v in existing_variants}
+
+            for variant in item_payload["variants"]:
+                if variant["id"] not in existing_ids:
+                    existing_variants.append(variant)
+                    existing_ids.add(variant["id"])
+
+            existing_item["variants"] = existing_variants
+            existing_item["has_dubbed"] = existing_item["has_dubbed"] or item_payload["has_dubbed"]
+            existing_item["has_subbed"] = existing_item["has_subbed"] or item_payload["has_subbed"]
+            existing_item["_best_score"] = max(existing_item.get("_best_score", 0), item_payload.get("_best_score", 0))
+
+        final_items = []
+
+        merged_final.sort(key=lambda item: (-item.get("_best_score", 0), item.get("title", "").lower()))
+
+        for item in merged_final:
+            variants = item["variants"]
+
+            deduped_variants = []
+            seen_variant_titles = set()
+            seen_variant_ids = set()
+
+            for variant in variants:
+                variant_id = variant.get("id")
+                if variant_id in seen_variant_ids:
+                    continue
+
+                variant_title_key = (
+                    _normalize_display_for_final_dedupe(variant.get("title", "")),
+                    bool(variant.get("is_dubbed")),
+                )
+                if variant_title_key in seen_variant_titles:
+                    continue
+
+                seen_variant_ids.add(variant_id)
+                seen_variant_titles.add(variant_title_key)
+                deduped_variants.append(variant)
+
+            deduped_variants.sort(
+                key=lambda v: (
+                    1 if v.get("is_dubbed") else 0,
+                    len(_clean(v.get("title") or "")),
+                    _clean(v.get("title") or "").lower(),
+                )
+            )
+
+            default_variant = next((v for v in deduped_variants if not v.get("is_dubbed")), None)
+            if not default_variant:
+                default_variant = deduped_variants[0]
+
+            item["variants"] = deduped_variants
+            item["id"] = default_variant["id"]
+            item["default_anime_id"] = default_variant["id"]
+            item["title"] = _pick_group_display_title(deduped_variants)
+            item["raw_title"] = default_variant.get("raw_title", item["title"])
+            item["alt_titles"] = default_variant.get("alt_titles", [])
+            item["is_dubbed"] = default_variant.get("is_dubbed", False)
+            item.pop("_best_score", None)
+
+            final_items.append(item)
+
+            if len(final_items) >= 20:
+                break
+
+        return final_items
+
+    return await _dedup_fetch(
+        _SEARCH_CACHE,
+        _INFLIGHT_SEARCH,
+        key,
+        _SEARCH_CACHE_TTL,
+        _fetch,
+    )
+
+
+async def get_anime_details(anime_id: str):
+    anime_id = _normalize_slug_for_page(anime_id)
+
+    async def _fetch():
+        url = f"{BASE_URL}/animes/{anime_id}"
+        html_doc = await _get(url)
+        soup = BeautifulSoup(html_doc, "html.parser")
+
+        title_el = soup.find("h1")
+        title = title_el.get_text(strip=True) if title_el else anime_id.replace("-", " ").title()
+
+        alt_titles = _extract_alternative_titles(soup, title)
+        description = _extract_description_from_page(soup)
+
+        cover_url = ""
+        og_img = soup.find("meta", attrs={"property": "og:image"})
+        if og_img and og_img.get("content"):
+            cover_url = og_img["content"].strip()
+
+        if not cover_url:
+            img = soup.find("img")
+            if img and img.get("src"):
+                cover_url = img["src"].strip()
+
+        local_genres = _extract_local_genres(soup)
+
+        local_data = {
+            "id": anime_id,
+            "title": title,
+            "alt_titles": alt_titles,
+            "description": description,
+            "url": url,
+            "cover_url": cover_url,
+            "banner_url": "",
+            "media_image_url": "",
+            "score": None,
+            "status": "",
+            "format": "",
+            "episodes": None,
+            "season": "",
+            "season_year": None,
+            "genres": local_genres,
+            "studio": "",
+            "anilist_id": None,
+            "anilist_url": "",
+            "title_romaji": "",
+            "title_english": "",
+            "title_native": "",
+            "trailer_id": "",
+            "trailer_site": "",
+        }
+
+        anilist_data = await _search_anilist_by_title(title)
+        merged = _merge_anime_data(local_data, anilist_data)
+
+        final_alt_titles = []
+        seen_alt = set()
+
+        def _push_alt(value: str):
+            value = _clean(value)
+            if not value:
+                return
+            low = value.lower()
+            if low == _clean(merged.get("title", "")).lower():
+                return
+            if low in seen_alt:
+                return
+            seen_alt.add(low)
+            final_alt_titles.append(value)
+
+        for item in local_data.get("alt_titles", []):
+            _push_alt(item)
+
+        for key_name in ("title_romaji", "title_english", "title_native"):
+            _push_alt(merged.get(key_name, ""))
+
+        merged["alt_titles"] = final_alt_titles
+        return merged
+
+    return await _dedup_fetch(
+        _DETAILS_CACHE,
+        _INFLIGHT_DETAILS,
+        anime_id,
+        _DETAILS_CACHE_TTL,
+        _fetch,
+    )
+
+
+async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
+    anime_id = _normalize_slug_for_page(anime_id)
+
+    async def _fetch():
+        url = f"{BASE_URL}/animes/{anime_id}"
+        html_doc = await _get(url)
+        soup = BeautifulSoup(html_doc, "html.parser")
+
+        episodes = []
+        pattern = re.compile(r"/animes/([^/]+)/(\d+)(?:/)?$")
+
+        for anchor in soup.select("a[href*='/animes/']"):
+            href = (anchor.get("href") or "").strip()
+            match = pattern.search(href)
+            if not match:
+                continue
+
+            base_slug = match.group(1)
+            ep = match.group(2)
+
+            episodes.append({
+                "episode": ep,
+                "base_slug": base_slug,
+            })
+
+        unique = {}
+        for item in episodes:
+            unique[item["episode"]] = item
+
+        items = sorted(unique.values(), key=lambda x: int(x["episode"]))
+
+        by_episode = {}
+        for idx, item in enumerate(items):
+            by_episode[str(item["episode"])] = idx
+
+        return {
+            "items": items,
+            "total": len(items),
+            "by_episode": by_episode,
+        }
 
     payload = await _dedup_fetch(
-        _GLOBAL_EPISODES_CACHE, _INFLIGHT_EPISODES, anime_id, EPISODES_CACHE_TTL, _fetch
+        _EPISODES_CACHE,
+        _INFLIGHT_EPISODES,
+        anime_id,
+        _EPISODES_CACHE_TTL,
+        _fetch,
     )
 
-    # Fatia in-memory sem novo request
-    all_items = payload.get("all_items") or payload.get("items", [])
-    total = payload.get("total", len(all_items))
-    page = all_items[offset: offset + limit]
+    items = payload["items"]
+    total = payload["total"]
+    page = items[offset: offset + limit]
 
     return {
         "items": page,
         "total": total,
-        "by_episode": payload.get("by_episode", {}),
-        "all_items": all_items,
+        "by_episode": payload["by_episode"],
+        "all_items": items,
     }
 
 
-async def _get_cached_player(anime_id: str, episode: str, quality: str):
-    key = f"{anime_id}|{episode}|{quality}"
+async def _url_exists_with_client(client, url: str) -> bool:
+    async with VIDEO_CHECK_SEMAPHORE:
+        try:
+            response = await client.head(url, follow_redirects=True)
+            if response.status_code == 200:
+                content_type = (response.headers.get("content-type") or "").lower()
+                if (
+                    "video" in content_type
+                    or "mp4" in content_type
+                    or "mpegurl" in content_type
+                    or ".m3u8" in url.lower()
+                    or content_type == ""
+                ):
+                    return True
+        except Exception:
+            pass
 
-    async def _fetch():
-        return await asyncio.wait_for(get_episode_player(anime_id, episode, quality), timeout=25)
+        try:
+            response = await client.get(url, headers={"Range": "bytes=0-0"}, follow_redirects=True)
+            if response.status_code in (200, 206):
+                content_type = (response.headers.get("content-type") or "").lower()
+                if (
+                    "video" in content_type
+                    or "mp4" in content_type
+                    or "mpegurl" in content_type
+                    or "octet-stream" in content_type
+                    or ".m3u8" in url.lower()
+                ):
+                    return True
+        except Exception:
+            pass
 
-    return await _dedup_fetch(_GLOBAL_PLAYER_CACHE, _INFLIGHT_PLAYER, key, PLAYER_CACHE_TTL, _fetch)
-
-
-async def _get_cached_recommendation(genre_key: str):
-    async def _fetch():
-        return await asyncio.wait_for(get_random_anime_by_genre(genre_key), timeout=20)
-
-    return await _dedup_fetch(
-        _GLOBAL_RECOMMEND_CACHE, _INFLIGHT_RECOMMEND, genre_key, RECOMMEND_CACHE_TTL, _fetch
-    )
-
-
-# ---------------------------------------------------------------------------
-# Edição de mensagem (Telegram)
-# ---------------------------------------------------------------------------
-
-async def _safe_edit_text(query, text: str, reply_markup=None) -> bool:
-    try:
-        await query.edit_message_text(
-            text=text, parse_mode="HTML", reply_markup=reply_markup,
-            disable_web_page_preview=True,
-        )
-        return True
-    except Exception as e:
-        if "message is not modified" in str(e).lower():
-            try:
-                await query.edit_message_reply_markup(reply_markup=reply_markup)
-            except Exception:
-                pass
-            return True
-        return False
-
-
-async def _safe_edit_caption(query, caption: str, reply_markup=None) -> bool:
-    try:
-        await query.edit_message_caption(
-            caption=caption, parse_mode="HTML", reply_markup=reply_markup,
-        )
-        return True
-    except Exception as e:
-        if "message is not modified" in str(e).lower():
-            try:
-                await query.edit_message_reply_markup(reply_markup=reply_markup)
-            except Exception:
-                pass
-            return True
-        return False
-
-
-async def _safe_edit_photo(
-    query,
-    photo_url: str,
-    caption: str,
-    reply_markup=None,
-    caption_only: bool = False,
-) -> bool:
-    if not photo_url:
-        return await _safe_edit_text(query, caption, reply_markup=reply_markup)
-
-    # Quando a foto já está na mensagem, editar só a legenda é mais rápido
-    # e evita o erro 400 de "media not modified" do Telegram
-    if caption_only:
-        return await _safe_edit_caption(query, caption, reply_markup=reply_markup)
-
-    try:
-        await query.edit_message_media(
-            media=InputMediaPhoto(media=photo_url, caption=caption, parse_mode="HTML"),
-            reply_markup=reply_markup,
-        )
-        return True
-    except Exception as e:
-        error = str(e).lower()
-        if "message is not modified" in error:
-            try:
-                await query.edit_message_reply_markup(reply_markup=reply_markup)
-            except Exception:
-                pass
-            return True
-        # Fallback: tenta editar só a legenda
-        return await _safe_edit_caption(query, caption, reply_markup=reply_markup)
-
-
-# ---------------------------------------------------------------------------
-# Renderizadores de tela
-# ---------------------------------------------------------------------------
-
-async def _render_grouped_anime(
-    query,
-    context: ContextTypes.DEFAULT_TYPE,
-    item: dict,
-    back_callback: str | None = None,
-    caption_only: bool = False,
-) -> bool:
-    _remember_group_item(context, item)
-    anime_id = item.get("default_anime_id") or item.get("id")
-    anime = await _get_cached_anime(context, anime_id)
-    text = _anime_text(anime)
-    keyboard = _variant_keyboard(item, back_callback=back_callback)
-    image_url = _anime_main_image(anime)
-
-    if image_url:
-        return await _safe_edit_photo(query, image_url, text, keyboard, caption_only=caption_only)
-    return await _safe_edit_text(query, text, keyboard)
-
-
-async def _render_episode_player(
-    query,
-    context,
-    anime_id: str,
-    episode: str,
-    caption_only: bool = True,
-) -> dict:
-    # Paraleliza busca de anime e player para reduzir latência
-    anime_task = asyncio.create_task(_get_cached_anime(context, anime_id))
-    selected_quality = _get_selected_quality(context, anime_id, episode)
-    player_task = asyncio.create_task(_get_cached_player(anime_id, episode, selected_quality))
-
-    anime, player = await asyncio.gather(anime_task, player_task)
-
-    detected_video = (player.get("video") or "").strip()
-    server = player.get("server", "")
-    total_episodes = player.get("total_episodes", 0)
-    resolved_quality = _normalize_quality(player.get("quality", selected_quality))
-    prev_episode = player.get("prev_episode")
-    next_episode = player.get("next_episode")
-    available_qualities = _available_quality_set(player)
-
-    _set_selected_quality(context, anime_id, episode, resolved_quality)
-
-    text = _player_text(anime.get("title", "Sem título"), episode, server, total_episodes, resolved_quality)
-    keyboard = _player_keyboard(
-        anime_id=anime_id,
-        episode=episode,
-        detected_video=detected_video,
-        prev_episode=prev_episode,
-        next_episode=next_episode,
-        selected_quality=resolved_quality,
-        user_id=query.from_user.id,
-        available_qualities=available_qualities,
-    )
-
-    image_url = _anime_secondary_image(anime)
-    if image_url:
-        ok = await _safe_edit_photo(query, image_url, text, keyboard, caption_only=caption_only)
-    else:
-        ok = await _safe_edit_text(query, text, keyboard)
-
-    if not ok:
-        await _safe_answer_query(query, "⚠️ Não consegui atualizar essa mensagem. Abra novamente.", show_alert=False)
-
-    return {
-        "resolved_quality": resolved_quality,
-        "available_qualities": available_qualities,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Controle de concorrência por callback
-# ---------------------------------------------------------------------------
-
-def _user_lock(user_id: int) -> asyncio.Lock:
-    lock = _USER_CALLBACK_LOCKS.get(user_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _USER_CALLBACK_LOCKS[user_id] = lock
-    return lock
-
-
-def _message_lock(chat_id: int, message_id: int) -> asyncio.Lock:
-    key = f"{chat_id}:{message_id}"
-    lock = _MESSAGE_EDIT_LOCKS.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _MESSAGE_EDIT_LOCKS[key] = lock
-    return lock
-
-
-def _message_action_key(chat_id: int, message_id: int) -> str:
-    return f"{chat_id}:{message_id}"
-
-
-def _get_inflight_action(chat_id: int, message_id: int):
-    return _MESSAGE_INFLIGHT_ACTIONS.get(_message_action_key(chat_id, message_id))
-
-
-def _set_inflight_action(chat_id: int, message_id: int, action: str):
-    _MESSAGE_INFLIGHT_ACTIONS[_message_action_key(chat_id, message_id)] = action
-
-
-def _clear_inflight_action(chat_id: int, message_id: int):
-    _MESSAGE_INFLIGHT_ACTIONS.pop(_message_action_key(chat_id, message_id), None)
-
-
-def _action_signature(data: str) -> str:
-    if not data:
-        return ""
-    prefixes = ("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|")
-    for prefix in prefixes:
-        if data.startswith(prefix):
-            return data
-    return data
-
-
-# ---------------------------------------------------------------------------
-# Cooldowns
-# ---------------------------------------------------------------------------
-
-_CALLBACK_LAST_TS: dict[int, float] = {}
-_CALLBACK_LAST_DATA: dict[int, str] = {}
-
-
-def _check_callback_cooldown(user_id: int, data: str) -> bool:
-    """
-    Retorna True se está em cooldown (deve rejeitar).
-    Usa dicts globais (mais rápido que context.user_data para rate limiting).
-    """
-    now = _now()
-    last_ts = _CALLBACK_LAST_TS.get(user_id, 0.0)
-    last_data = _CALLBACK_LAST_DATA.get(user_id, "")
-
-    if now - last_ts < CALLBACK_COOLDOWN and last_data == data:
-        return True
-
-    _CALLBACK_LAST_TS[user_id] = now
-    _CALLBACK_LAST_DATA[user_id] = data
     return False
 
 
-_QUALITY_SWITCH_LAST: dict[str, float] = {}
+async def _check_candidate(url: str):
+    client = await get_http_client()
+    ok = await _url_exists_with_client(client, url)
+    return url if ok else None
 
 
-def _can_switch_quality_now(anime_id: str, episode: str) -> bool:
-    key = f"{anime_id}:{episode}"
-    now = _now()
-    last = _QUALITY_SWITCH_LAST.get(key, 0.0)
-    if now - last < QUALITY_COOLDOWN:
-        return False
-    _QUALITY_SWITCH_LAST[key] = now
-    return True
+def _build_candidate_urls(base_slug: str, episode: str, servers: list[str]):
+    qualities = {
+        "HD": [],
+        "SD": [],
+        "FULLHD": [],
+    }
+
+    for server in servers:
+        base = f"https://lightspeedst.net/{server}"
+
+        qualities["HD"].append(f"{base}/mp4_temp/{base_slug}/{episode}/720p.mp4")
+        qualities["HD"].append(f"{base}/mp4/{base_slug}/hd/{episode}.mp4")
+
+        qualities["SD"].append(f"{base}/mp4_temp/{base_slug}/{episode}/480p.mp4")
+        qualities["SD"].append(f"{base}/mp4/{base_slug}/sd/{episode}.mp4")
+
+        qualities["FULLHD"].append(f"{base}/mp4_temp/{base_slug}/{episode}/1080p.mp4")
+
+    return qualities
 
 
-# ---------------------------------------------------------------------------
-# Handler principal de callbacks
-# ---------------------------------------------------------------------------
+async def _find_first_valid_url_in_batches(urls: list[str], batch_size: int = 3) -> str:
+    if not urls:
+        return ""
 
-async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = update.effective_user
+    for i in range(0, len(urls), batch_size):
+        batch = urls[i:i + batch_size]
+        tasks = [asyncio.create_task(_check_candidate(url)) for url in batch]
 
-    if not query or not user:
-        return
+        try:
+            for task in asyncio.as_completed(tasks):
+                result = await task
+                if result:
+                    for pending in tasks:
+                        if pending is not task and not pending.done():
+                            pending.cancel()
+                    return result
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
 
-    # Fire-and-forget: não bloqueia o callback
-    await _mark_user_seen_bg(user)
-
-    data = query.data or ""
-    print("CALLBACK DATA:", data)
-
-    if data == "noop_loading":
-        await _safe_answer_query(query, "⏳ Aguarde...", show_alert=False)
-        return
-
-    # Cooldown: verificação rápida sem lock
-    if _check_callback_cooldown(user.id, data):
-        await _safe_answer_query(query, "⚠️ Não aperte várias vezes seguidas.", show_alert=False)
-        return
-
-    message = query.message
-    msg_lock = _message_lock(message.chat.id, message.message_id) if message else asyncio.Lock()
-
-    # Verificação rápida de inflight ANTES de adquirir locks (evita round-trip desnecessário)
-    if message:
-        current_action = _action_signature(data)
-        if _get_inflight_action(message.chat.id, message.message_id) == current_action:
-            await _safe_answer_query(query, "⏳ Essa ação já está sendo processada...", show_alert=False)
-            return
-
-    # Responde imediatamente ao Telegram para evitar timeout da query
-    await _safe_answer_query(query, "⏳ Carregando...", show_alert=False)
-
-    # user_lock agora cobre apenas o bloco de escrita/registro de inflight,
-    # não a execução completa do handler — reduz serialização por usuário
-    user_lock = _user_lock(user.id)
-
-    try:
-        async with msg_lock:
-            if message:
-                current_action = _action_signature(data)
-                if _get_inflight_action(message.chat.id, message.message_id) == current_action:
-                    return
-                _set_inflight_action(message.chat.id, message.message_id, current_action)
-
-            # Despacha para o handler específico
-            await _dispatch(query, context, user, data, message)
-
-    except asyncio.TimeoutError:
-        print("ERRO NO CALLBACK: Timeout")
-        await _safe_answer_query(query, "⏳ Demorou demais para carregar. Tente de novo.", show_alert=True)
-    except Exception as e:
-        print("ERRO NO CALLBACK:", repr(e))
-        traceback.print_exc()
-        await _safe_answer_query(query, "❌ Ocorreu um erro. Tente novamente.", show_alert=True)
-    finally:
-        if message:
-            _clear_inflight_action(message.chat.id, message.message_id)
+    return ""
 
 
-async def _dispatch(query, context, user, data: str, message):
-    """
-    Despacha o callback para o handler correto.
-    Separado do `callbacks` para reduzir indentação e facilitar manutenção.
-    """
+async def _try_lightspeed_urls(base_slug: str, episode: str):
+    quality_map = {}
 
-    # --- qualidade ---
-    if data.startswith("ql|"):
-        await _handle_quality(query, context, user, data)
-        return
+    primary_candidates = _build_candidate_urls(base_slug, episode, PRIMARY_LIGHTSPEED_SERVERS)
 
-    # --- marcar visto ---
-    if data.startswith("vw|"):
-        await _handle_mark_watched(query, context, user, data)
-        return
+    for quality in ("HD", "SD", "FULLHD"):
+        found = await _find_first_valid_url_in_batches(primary_candidates.get(quality, []), batch_size=3)
+        if found:
+            quality_map[quality] = found
 
-    # --- desmarcar visto ---
-    if data.startswith("unvw|"):
-        await _handle_unmark_watched(query, context, user, data)
-        return
+    if not quality_map:
+        secondary_candidates = _build_candidate_urls(base_slug, episode, SECONDARY_LIGHTSPEED_SERVERS)
+        for quality in ("HD", "SD", "FULLHD"):
+            found = await _find_first_valid_url_in_batches(secondary_candidates.get(quality, []), batch_size=3)
+            if found:
+                quality_map[quality] = found
 
-    # --- watch link (legado) ---
-    if data.startswith("watch|"):
-        await _handle_watch_link(query, context, user, data)
-        return
-
-    # --- menu de recomendação ---
-    if data == "rec|menu":
-        await _handle_rec_menu(query)
-        return
-
-    # --- gênero ou nova tentativa de recomendação ---
-    if data.startswith("rec|genre|") or data.startswith("rec|try|"):
-        await _handle_rec_genre(query, data)
-        return
-
-    # --- paginação de busca ---
-    if data.startswith("sp|"):
-        await _handle_search_page(query, context, data)
-        return
-
-    # --- selecionar resultado de busca ---
-    if data.startswith("sa|"):
-        await _handle_search_select(query, context, user, data)
-        return
-
-    # --- voltar para anime ---
-    if data.startswith("anime|"):
-        await _handle_anime(query, context, user, data)
-        return
-
-    # --- variante (leg/dub) ---
-    if data.startswith("var|"):
-        await _handle_variant(query, context, user, data)
-        return
-
-    # --- lista de episódios ---
-    if data.startswith("eps|"):
-        await _handle_episodes(query, context, data)
-        return
-
-    # --- episódio específico ---
-    if data.startswith("ep|"):
-        await _handle_episode(query, context, user, data)
-        return
+    return quality_map
 
 
-# ---------------------------------------------------------------------------
-# Handlers individuais
-# ---------------------------------------------------------------------------
-
-async def _handle_quality(query, context, user, data: str):
-    parts = data.split("|", 3)
-    if len(parts) != 4:
-        return
-    _, anime_id, episode, requested_quality = parts
-    requested_quality = _normalize_quality(requested_quality)
-    current_quality = _get_selected_quality(context, anime_id, episode)
-
-    if not _can_switch_quality_now(anime_id, episode):
-        await _safe_answer_query(query, "⏳ Aguarde um instante para trocar a qualidade.", show_alert=False)
-        return
-
-    if current_quality == requested_quality:
-        return
-
-    _set_selected_quality(context, anime_id, episode, requested_quality)
-    result = await _render_episode_player(query, context, anime_id, episode, caption_only=True)
-
-    if result["resolved_quality"] != requested_quality:
-        await _safe_answer_query(
-            query,
-            f"⚠️ Esse episódio não tem {requested_quality} disponível.",
-            show_alert=True,
-        )
-
-
-async def _handle_mark_watched(query, context, user, data: str):
-    _, anime_id, episode = data.split("|", 2)
-    anime = await _get_cached_anime(context, anime_id)
-    mark_episode_watched(
-        user_id=user.id,
-        anime_id=anime_id,
-        episode=episode,
-        anime_title=anime.get("title", "Sem título"),
-        username=user.username or user.first_name or "",
-    )
-    await _safe_answer_query(query, "✅ Marcado como visto.", show_alert=False)
-    await _render_episode_player(query, context, anime_id, episode, caption_only=True)
-
-
-async def _handle_unmark_watched(query, context, user, data: str):
-    _, anime_id, episode = data.split("|", 2)
-    anime = await _get_cached_anime(context, anime_id)
-    unmark_episode_watched(
-        user_id=user.id,
-        anime_id=anime_id,
-        episode=episode,
-        anime_title=anime.get("title", "Sem título"),
-        username=user.username or user.first_name or "",
-    )
-    await _safe_answer_query(query, "↩️ Episódio desmarcado.", show_alert=False)
-    await _render_episode_player(query, context, anime_id, episode, caption_only=True)
-
-
-async def _handle_watch_link(query, context, user, data: str):
-    _, anime_id, episode = data.split("|", 2)
-    anime = await _get_cached_anime(context, anime_id)
-    selected_quality = _get_selected_quality(context, anime_id, episode)
-    player = await _get_cached_player(anime_id, episode, selected_quality)
-    video_url = (player.get("video") or "").strip()
-
-    _safe_log_event(
-        event_type="watch_click",
-        user_id=user.id,
-        username=user.username or user.first_name or "",
-        anime_id=anime_id,
-        anime_title=anime.get("title", "Sem título"),
-        episode=str(episode),
-        extra=selected_quality,
-    )
-
-    if not video_url:
-        await _safe_answer_query(query, "❌ Não encontrei o vídeo desse episódio.", show_alert=True)
-        return
+async def _try_blogger_or_googlevideo(base_slug: str, episode: str) -> dict[str, str]:
+    quality_map: dict[str, str] = {}
 
     try:
-        await query.message.reply_text(
-            f"▶️ <b>{html.escape(anime.get('title', 'Sem título'))}</b>\n"
-            f"🎞 <b>Episódio:</b> {html.escape(str(episode))}\n"
-            f"🎚 <b>Qualidade:</b> {html.escape(selected_quality)}\n\n"
-            f"<a href=\"{html.escape(video_url, quote=True)}\">Clique aqui para assistir</a>",
-            parse_mode="HTML",
-            disable_web_page_preview=False,
-        )
-    except Exception:
-        await _safe_answer_query(query, "⚠️ Não consegui enviar o link agora.", show_alert=True)
+        episode_html = await _get_episode_page_html(base_slug, episode)
+        episode_url = f"{BASE_URL}/animes/{_normalize_episode_slug(base_slug)}/{episode}"
+
+        direct_from_page = _extract_direct_video_urls(episode_html, base_url=episode_url)
+        if direct_from_page:
+            quality_map.update(_map_quality_urls(direct_from_page))
+            if quality_map:
+                return quality_map
+
+        direct_googlevideo = _extract_googlevideo_url(episode_html)
+        if direct_googlevideo:
+            quality = _normalize_quality_label(_extract_quality_name(direct_googlevideo)) or "HD"
+            quality_map[quality] = direct_googlevideo
+            return quality_map
+
+        blogger_iframe = _extract_blogger_iframe(episode_html)
+        if blogger_iframe:
+            resolved_urls = await _resolve_embed_to_direct_urls(
+                blogger_iframe,
+                referer=episode_url,
+            )
+            if resolved_urls:
+                quality_map.update(_map_quality_urls(resolved_urls))
+                if quality_map:
+                    return quality_map
+
+        iframe_sources = _extract_iframe_sources(episode_html, base_url=episode_url)
+        for iframe_src in iframe_sources:
+            if not _looks_like_embed_url(iframe_src) and not _is_direct_video_url(iframe_src):
+                continue
+
+            resolved_urls = await _resolve_embed_to_direct_urls(
+                iframe_src,
+                referer=episode_url,
+            )
+            if resolved_urls:
+                quality_map.update(_map_quality_urls(resolved_urls))
+                if quality_map:
+                    return quality_map
+
+    except Exception as error:
+        print(f"[BLOGGER] erro_na_extracao={repr(error)}")
+
+    return quality_map
 
 
-async def _handle_rec_menu(query):
-    text = _recommend_menu_text()
-    keyboard = _recommend_menu_keyboard()
-    has_photo = bool(getattr(query.message, "photo", None))
-    if has_photo:
-        ok = await _safe_edit_caption(query, text, keyboard)
-    else:
-        ok = await _safe_edit_text(query, text, keyboard)
-    if not ok:
-        await _safe_answer_query(query, "⚠️ Não consegui abrir o menu agora.", show_alert=False)
+async def _resolve_video_map(base_slug: str, episode: str, anime_id: str | None = None):
+    cache_key = f"{base_slug}|{episode}"
 
+    async def _fetch():
+        safe_base_slug = _normalize_episode_slug(base_slug)
+        safe_anime_id = _normalize_episode_slug(anime_id or "")
+        target_slug = safe_base_slug or safe_anime_id
 
-async def _handle_rec_genre(query, data: str):
-    parts = data.split("|")
-    if len(parts) < 3:
-        return
-    genre_key = parts[2]
-    anime = await _get_cached_recommendation(genre_key)
-    anime_id = anime.get("id", "")
-    text = _recommend_text(anime, genre_key)
-    keyboard = _recommend_result_keyboard(anime_id, genre_key)
-    image_url = _anime_main_image(anime)
+        quality_map = await _try_lightspeed_urls(target_slug, episode)
 
-    if image_url:
-        ok = await _safe_edit_photo(query, image_url, text, keyboard, caption_only=False)
-    else:
-        ok = await _safe_edit_text(query, text, keyboard)
+        if not quality_map:
+            alt_quality_map = await _try_blogger_or_googlevideo(target_slug, episode)
+            if alt_quality_map:
+                for quality in ("FULLHD", "HD", "SD"):
+                    if quality in alt_quality_map:
+                        quality_map[quality] = alt_quality_map[quality]
 
-    if not ok:
-        await _safe_answer_query(query, "⚠️ Não consegui recomendar outro anime agora.", show_alert=False)
+        if not quality_map:
+            fallback = f"https://lightspeedst.net/s6/mp4/{target_slug}/sd/{episode}.mp4"
+            quality_map["SD"] = fallback
 
+        return quality_map
 
-async def _handle_search_page(query, context, data: str):
-    _, token, page_str = data.split("|", 2)
-    page = int(page_str)
-    session = context.user_data.get(f"search_session:{token}")
-    if not session:
-        await _safe_answer_query(query, "A busca expirou. Faça outra.", show_alert=True)
-        return
-
-    session["page"] = page
-    raw_query = session["query"]
-    results = session["results"]
-    total = len(results)
-
-    text = _search_text(raw_query, page, total)
-    keyboard = _search_keyboard(results, page, total, token)
-
-    ok = await _safe_edit_photo(query, SEARCH_BANNER_URL, text, keyboard, caption_only=False)
-    if not ok:
-        await _safe_answer_query(query, "⚠️ Não consegui atualizar a página.", show_alert=False)
-
-
-async def _handle_search_select(query, context, user, data: str):
-    _, token, idx_str = data.split("|", 2)
-    idx = int(idx_str)
-    session = context.user_data.get(f"search_session:{token}")
-    if not session:
-        await _safe_answer_query(query, "A busca expirou. Faça outra.", show_alert=True)
-        return
-
-    results = session["results"]
-    if idx < 0 or idx >= len(results):
-        await _safe_answer_query(query, "Resultado inválido.", show_alert=True)
-        return
-
-    item = results[idx]
-    _remember_group_item(context, item)
-    current_page = session.get("page", 1)
-    anime_id = item.get("default_anime_id") or item.get("id")
-    anime = await _get_cached_anime(context, anime_id)
-
-    _safe_log_event(
-        event_type="anime_open",
-        user_id=user.id,
-        username=user.username or user.first_name or "",
-        anime_id=anime_id,
-        anime_title=anime.get("title", "Sem título"),
+    return await _dedup_fetch(
+        _VIDEO_CACHE,
+        _INFLIGHT_VIDEO,
+        cache_key,
+        _VIDEO_CACHE_TTL,
+        _fetch,
     )
 
-    ok = await _render_grouped_anime(
-        query, context, item,
-        back_callback=f"sp|{token}|{current_page}",
-        caption_only=False,
-    )
-    if not ok:
-        await _safe_answer_query(query, "⚠️ Não consegui abrir esse anime.", show_alert=False)
 
+async def get_episode_player(anime_id: str, episode: str, preferred_quality: str = "HD"):
+    anime_id = _normalize_slug_for_page(anime_id)
+    preferred_quality = _normalize_quality_label(preferred_quality) or "HD"
+    player_cache_key = f"{anime_id}|{episode}|{preferred_quality}"
 
-async def _handle_anime(query, context, user, data: str):
-    anime_id = data.split("|", 1)[1]
-    grouped_item = _get_group_item(context, anime_id)
+    async def _fetch():
+        payload = await get_episodes(anime_id, 0, 3000)
+        items = payload.get("all_items", [])
+        by_episode = payload.get("by_episode", {})
 
-    if grouped_item:
-        default_id = grouped_item.get("default_anime_id") or grouped_item.get("id")
-        anime = await _get_cached_anime(context, default_id)
-        _safe_log_event(
-            event_type="anime_open",
-            user_id=user.id,
-            username=user.username or user.first_name or "",
-            anime_id=default_id,
-            anime_title=anime.get("title", "Sem título"),
-        )
-        ok = await _render_grouped_anime(query, context, grouped_item, caption_only=False)
-        if not ok:
-            await _safe_answer_query(query, "⚠️ Não consegui voltar para essa obra.", show_alert=False)
-        return
+        index = by_episode.get(str(episode))
+        base_slug = None
 
-    anime = await _get_cached_anime(context, anime_id)
-    _safe_log_event(
-        event_type="anime_open",
-        user_id=user.id,
-        username=user.username or user.first_name or "",
-        anime_id=anime_id,
-        anime_title=anime.get("title", "Sem título"),
-    )
+        if index is not None:
+            base_slug = items[index].get("base_slug")
 
-    text = _anime_text(anime)
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📺 Ver episódios", callback_data=f"eps|{anime_id}|0")]
-    ])
-    image_url = _anime_main_image(anime)
-    if image_url:
-        ok = await _safe_edit_photo(query, image_url, text, keyboard, caption_only=False)
-    else:
-        ok = await _safe_edit_text(query, text, keyboard)
-    if not ok:
-        await _safe_answer_query(query, "⚠️ Não consegui voltar para esse anime.", show_alert=False)
+        if not base_slug:
+            base_slug = anime_id.replace("-todos-os-episodios", "")
 
+        quality_map = await _resolve_video_map(base_slug, episode, anime_id=anime_id)
+        available_qualities = [q for q in ("FULLHD", "HD", "SD") if q in quality_map]
 
-async def _handle_variant(query, context, user, data: str):
-    anime_id = data.split("|", 1)[1]
-    grouped_item = _get_group_item(context, anime_id)
-    if grouped_item:
-        _remember_group_item(context, grouped_item)
+        if preferred_quality in quality_map:
+            selected_quality = preferred_quality
+        elif preferred_quality == "FULLHD":
+            if "HD" in quality_map:
+                selected_quality = "HD"
+            elif "SD" in quality_map:
+                selected_quality = "SD"
+            else:
+                selected_quality = "FULLHD"
+        elif preferred_quality == "HD":
+            if "FULLHD" in quality_map:
+                selected_quality = "FULLHD"
+            elif "SD" in quality_map:
+                selected_quality = "SD"
+            else:
+                selected_quality = "HD"
+        else:
+            if "HD" in quality_map:
+                selected_quality = "HD"
+            elif "FULLHD" in quality_map:
+                selected_quality = "FULLHD"
+            else:
+                selected_quality = "SD"
 
-    # Paraleliza busca de anime e episódios
-    anime_task = asyncio.create_task(_get_cached_anime(context, anime_id))
-    episodes_task = asyncio.create_task(_get_cached_episodes(anime_id, 0, EPISODES_PER_PAGE))
-    anime, payload = await asyncio.gather(anime_task, episodes_task)
+        video = (quality_map.get(selected_quality) or "").strip()
 
-    _safe_log_event(
-        event_type="variant_open",
-        user_id=user.id,
-        username=user.username or user.first_name or "",
-        anime_id=anime_id,
-        anime_title=anime.get("title", "Sem título"),
-    )
+        if not video:
+            for fallback_quality in ("FULLHD", "HD", "SD"):
+                fallback_video = (quality_map.get(fallback_quality) or "").strip()
+                if fallback_video:
+                    selected_quality = fallback_quality
+                    video = fallback_video
+                    break
 
-    items = payload.get("items", [])
-    total = payload.get("total", 0)
-    text = _episode_list_text(anime.get("title", "Sem título"), 0, total)
-    keyboard = _episodes_keyboard(anime_id=anime_id, offset=0, items=items, total=total)
-    image_url = _anime_secondary_image(anime)
+        server = _extract_server_name(video)
+        quality = _extract_quality_name(video) if video else selected_quality
 
-    if image_url:
-        ok = await _safe_edit_photo(query, image_url, text, keyboard, caption_only=False)
-    else:
-        ok = await _safe_edit_text(query, text, keyboard)
-    if not ok:
-        await _safe_answer_query(query, "⚠️ Não consegui abrir essa versão.", show_alert=False)
+        prev_episode = None
+        next_episode = None
 
+        if index is not None:
+            if index > 0:
+                prev_episode = str(items[index - 1]["episode"])
+            if index + 1 < len(items):
+                next_episode = str(items[index + 1]["episode"])
 
-async def _handle_episodes(query, context, data: str):
-    _, anime_id, offset_str = data.split("|", 2)
-    offset = int(offset_str)
+        return {
+            "video": video,
+            "videos": quality_map,
+            "base_slug": base_slug,
+            "server": server,
+            "quality": quality,
+            "available_qualities": available_qualities,
+            "prev_episode": prev_episode,
+            "next_episode": next_episode,
+            "total_episodes": len(items),
+        }
 
-    # Paraleliza busca de anime e episódios
-    anime_task = asyncio.create_task(_get_cached_anime(context, anime_id))
-    episodes_task = asyncio.create_task(_get_cached_episodes(anime_id, offset, EPISODES_PER_PAGE))
-    anime, payload = await asyncio.gather(anime_task, episodes_task)
-
-    items = payload.get("items", [])
-    total = payload.get("total", 0)
-    text = _episode_list_text(anime.get("title", "Sem título"), offset, total)
-    keyboard = _episodes_keyboard(anime_id=anime_id, offset=offset, items=items, total=total)
-    image_url = _anime_secondary_image(anime)
-
-    if image_url:
-        ok = await _safe_edit_photo(query, image_url, text, keyboard, caption_only=False)
-    else:
-        ok = await _safe_edit_text(query, text, keyboard)
-    if not ok:
-        await _safe_answer_query(query, "⚠️ Não consegui abrir os episódios.", show_alert=False)
-
-
-async def _handle_episode(query, context, user, data: str):
-    _, anime_id, episode = data.split("|", 2)
-
-    if not context.user_data.get(_quality_key(anime_id, episode)):
-        _set_selected_quality(context, anime_id, episode, "HD")
-
-    anime = await _get_cached_anime(context, anime_id)
-    _safe_log_event(
-        event_type="episode_open",
-        user_id=user.id,
-        username=user.username or user.first_name or "",
-        anime_id=anime_id,
-        anime_title=anime.get("title", "Sem título"),
-        episode=str(episode),
+    return await _dedup_fetch(
+        _PLAYER_CACHE,
+        _INFLIGHT_PLAYER,
+        player_cache_key,
+        _PLAYER_CACHE_TTL,
+        _fetch,
     )
 
-    await _render_episode_player(query, context, anime_id, episode, caption_only=False)
+
+def _extract_anime_links_from_listing(html_doc: str) -> list[dict]:
+    soup = BeautifulSoup(html_doc, "html.parser")
+    found = {}
+
+    for anchor in soup.select("a[href*='/animes/']"):
+        href = (anchor.get("href") or "").strip()
+        if "/animes/" not in href:
+            continue
+
+        slug = href.split("/animes/")[-1].strip("/")
+        if not slug or "/" in slug:
+            continue
+
+        title = _clean(anchor.get_text())
+        if not title:
+            img = anchor.find("img")
+            if img:
+                title = _clean(img.get("alt"))
+
+        if not title:
+            title = slug.replace("-", " ").title()
+
+        found[slug] = {
+            "id": slug,
+            "title": title,
+        }
+
+    return list(found.values())
+
+
+async def _get_genre_listing_candidates(genre_key: str) -> list[dict]:
+    aliases = GENRE_ALIASES.get((genre_key or "").strip().lower(), [])
+    if not aliases:
+        return []
+
+    items = {}
+
+    for alias in aliases:
+        alias = alias.strip().lower()
+
+        possible_urls = [
+            f"{BASE_URL}/genero/{quote(alias)}",
+            f"{BASE_URL}/animes/genero/{quote(alias)}",
+            f"{BASE_URL}/categoria/{quote(alias)}",
+            f"{BASE_URL}/{quote(alias)}",
+        ]
+
+        for url in possible_urls:
+            try:
+                html_doc = await _get(url)
+                found = _extract_anime_links_from_listing(html_doc)
+                for item in found:
+                    items[item["id"]] = item
+
+                if len(items) >= 20:
+                    return list(items.values())
+            except Exception:
+                continue
+
+    return list(items.values())
+
+
+async def get_random_anime_by_genre(genre_key: str, exclude_anime_id: str | None = None) -> dict:
+    found = await _get_genre_listing_candidates(genre_key)
+
+    if not found:
+        raise RuntimeError(f"Nenhum anime encontrado para o gênero {genre_key}.")
+
+    if exclude_anime_id:
+        filtered = [item for item in found if item["id"] != exclude_anime_id]
+        if filtered:
+            found = filtered
+
+    chosen = random.choice(found)
+    return await get_anime_details(chosen["id"])
+
+
+def warmup_popular_anime_ids() -> list[str]:
+    return [
+        "one-piece",
+        "naruto",
+        "solo-leveling",
+        "jujutsu-kaisen",
+        "boku-no-hero-academia",
+        "kimetsu-no-yaiba",
+        "black-clover",
+        "bleach",
+    ]
+
+
+async def preload_popular_cache():
+    for anime_id in warmup_popular_anime_ids():
+        try:
+            await get_anime_details(anime_id)
+            await get_episodes(anime_id, 0, 3000)
+        except Exception as error:
+            print(f"[WARMUP] erro_em_{anime_id}={repr(error)}")
