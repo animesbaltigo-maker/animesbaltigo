@@ -148,7 +148,6 @@ async def _get(url: str) -> str:
         lambda: _request_text(url, headers=_HTTP_HEADERS),
     )
 
-
 async def _post_json(url: str, payload: dict, headers: dict | None = None) -> dict:
     client = await get_http_client()
 
