@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -14,7 +13,6 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from core.http_client import get_http_client
 from services.animefire_client import (
@@ -39,20 +37,21 @@ HEADERS = {
 
 HOME_SECTION_LIMIT = 12
 GRID_PAGE_LIMIT = 24
-MAX_EPISODES_FETCH = 1200
 
 SECTION_TTL = 60 * 15
 RECENT_TTL = 60
 SEARCH_TTL = 60 * 10
 ANIME_TTL = 60 * 60 * 2
-EPISODE_TTL = 60 * 4
-HERO_TTL = 60 * 10
-PROGRESS_TTL = 60 * 60 * 24 * 30
 
+# Episode TTL is intentionally short because video links expire.
+# With ?refresh=1 the cache is bypassed entirely.
+EPISODE_TTL = 60 * 4
+
+# ── Proxy tunables ────────────────────────────────────────────────────────────
 PROXY_TIMEOUT = httpx.Timeout(connect=8.0, read=60.0, write=60.0, pool=10.0)
 PROXY_MAX_RETRIES = 3
-PROXY_CHUNK_SIZE = 1024 * 1024
-PROXY_KEEPALIVE_EXPIRY = 30
+PROXY_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks for fast streaming
+PROXY_KEEPALIVE_EXPIRY = 30     # seconds to keep idle connections alive
 PROXY_MAX_CONNECTIONS = 100
 PROXY_MAX_KEEPALIVE = 20
 
@@ -78,8 +77,8 @@ MINIAPP_DIR = BASE_DIR / "miniapp"
 
 app = FastAPI(
     title="QG BALTIGO API",
-    description="API do miniapp com catálogo, episódios, progresso e proxy de vídeo",
-    version="5.0.0",
+    description="API do miniapp do bot com catálogo, episódios e proxy de vídeo",
+    version="4.0.0",
 )
 
 app.add_middleware(
@@ -92,19 +91,12 @@ app.add_middleware(
 
 _CACHE: dict[str, dict[str, Any]] = {}
 _LOCKS: dict[str, asyncio.Lock] = {}
-_PROGRESS: dict[str, dict[str, Any]] = {}
+
+# ── Global persistent proxy client ───────────────────────────────────────────
+# One client for the entire process lifetime; uses connection pooling and
+# keep-alive so every proxy request re-uses an already-open TCP connection
+# instead of paying the full TLS handshake cost every time.
 _PROXY_CLIENT: httpx.AsyncClient | None = None
-
-
-class ProgressPayload(BaseModel):
-    user_id: str
-    anime_id: str
-    episode: str
-    watched_seconds: int = 0
-    duration_seconds: int = 0
-    title: str = ""
-    cover_url: str = ""
-    completed: bool = False
 
 
 def _get_proxy_limits() -> httpx.Limits:
@@ -122,17 +114,21 @@ async def get_proxy_client() -> httpx.AsyncClient:
             timeout=PROXY_TIMEOUT,
             follow_redirects=True,
             limits=_get_proxy_limits(),
-            http2=False,
+            http2=False,  # many CDNs behave better with HTTP/1.1
         )
     return _PROXY_CLIENT
 
+
+# =============================================================================
+# HELPERS
+# =============================================================================
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
 
 
 def _clean_description(text: str) -> str:
-    value = text or ""
+    text = text or ""
     junk_patterns = [
         r"Oie.*?Clique Aqui",
         r"Reportar Erro:.*",
@@ -145,18 +141,16 @@ def _clean_description(text: str) -> str:
         r"veja também.*",
     ]
     for pattern in junk_patterns:
-        value = re.sub(pattern, "", value, flags=re.IGNORECASE | re.DOTALL)
-    return _clean(value)
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
+    return _clean(text)
 
 
 def _clean_genres(genres: list[str] | None) -> list[str]:
     if not genres:
         return []
-
     seen: set[str] = set()
     cleaned: list[str] = []
     skip_prefixes = ("animes de ", "oie", "clique")
-
     for genre in genres:
         g = _clean(str(genre))
         if not g:
@@ -173,7 +167,6 @@ def _clean_genres(genres: list[str] | None) -> list[str]:
 def _clean_alt_titles(values: list[str] | None) -> list[str]:
     if not values:
         return []
-
     cleaned: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -270,10 +263,9 @@ def _extract_last_page(page_html: str, slug: str) -> int:
     return max_page
 
 
-def _extract_listing_cards(page_html: str) -> list[dict[str, Any]]:
+def _extract_listing_cards(page_html: str) -> list[dict]:
     soup = BeautifulSoup(page_html, "html.parser")
-    found: dict[str, dict[str, Any]] = {}
-
+    found: dict[str, dict] = {}
     for anchor in soup.select("a[href*='/animes/']"):
         href = (anchor.get("href") or "").strip()
         anime_id = _extract_slug_from_href(href)
@@ -314,7 +306,7 @@ def _extract_listing_cards(page_html: str) -> list[dict[str, Any]]:
     return list(found.values())
 
 
-def _shape_details(data: dict[str, Any], fallback_id: str = "") -> dict[str, Any]:
+def _shape_details(data: dict, fallback_id: str = "") -> dict:
     anime_id = data.get("id") or fallback_id
     title = data.get("title") or anime_id.replace("-", " ").title()
     dubbed = bool(data.get("is_dubbed")) or _is_dubbed(anime_id, title)
@@ -324,8 +316,18 @@ def _shape_details(data: dict[str, Any], fallback_id: str = "") -> dict[str, Any
         "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
         "prefix": "DUB" if dubbed else "LEG",
         "is_dubbed": dubbed,
-        "cover_url": data.get("cover_url") or data.get("media_image_url") or data.get("banner_url") or "",
-        "banner_url": data.get("banner_url") or data.get("cover_url") or data.get("media_image_url") or "",
+        "cover_url": (
+            data.get("cover_url")
+            or data.get("media_image_url")
+            or data.get("banner_url")
+            or ""
+        ),
+        "banner_url": (
+            data.get("banner_url")
+            or data.get("cover_url")
+            or data.get("media_image_url")
+            or ""
+        ),
         "description": _clean_description(data.get("description") or ""),
         "genres": _clean_genres(data.get("genres") or []),
         "score": data.get("score"),
@@ -337,7 +339,7 @@ def _shape_details(data: dict[str, Any], fallback_id: str = "") -> dict[str, Any
     }
 
 
-def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict[str, Any]) -> dict[str, Any]:
+def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict) -> dict:
     video = item.get("video") or ""
     videos = item.get("videos") or {}
     available_qualities = item.get("available_qualities") or []
@@ -347,7 +349,12 @@ def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict
 
     if not video and isinstance(videos, dict):
         normalized_quality = (quality or "HD").upper()
-        video = videos.get(normalized_quality) or videos.get("HD") or videos.get("SD") or ""
+        video = (
+            videos.get(normalized_quality)
+            or videos.get("HD")
+            or videos.get("SD")
+            or ""
+        )
 
     return {
         "anime_id": anime_id,
@@ -366,87 +373,15 @@ def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict
     }
 
 
-def _parse_episode_number(value: str | int | float | None) -> Decimal | None:
-    raw = str(value or "").strip().replace(",", ".")
-    match = re.search(r"\d+(?:\.\d+)?", raw)
-    if not match:
-        return None
-    try:
-        return Decimal(match.group(0))
-    except InvalidOperation:
-        return None
+# =============================================================================
+# PAGINATION / CATALOG
+# =============================================================================
 
-
-def _episode_score(item: dict[str, Any]) -> int:
-    score = 0
-    if item.get("title"):
-        score += 2
-    if item.get("description"):
-        score += 1
-    if item.get("thumb") or item.get("image"):
-        score += 1
-    if item.get("video"):
-        score += 5
-    return score
-
-
-def _normalize_episode_item(item: dict[str, Any]) -> dict[str, Any] | None:
-    raw_number = item.get("number") or item.get("episode") or item.get("ep")
-    parsed = _parse_episode_number(raw_number)
-    if parsed is None:
-        return None
-
-    return {
-        **item,
-        "number": str(parsed.normalize()),
-        "numeric": float(parsed),
-        "title": _clean(item.get("title") or ""),
-        "description": _clean_description(item.get("description") or ""),
-    }
-
-
-def _normalize_episodes(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    best_by_number: dict[str, dict[str, Any]] = {}
-
-    for item in items or []:
-        normalized = _normalize_episode_item(item)
-        if not normalized:
-            continue
-
-        key = normalized["number"]
-        previous = best_by_number.get(key)
-        if not previous or _episode_score(normalized) > _episode_score(previous):
-            best_by_number[key] = normalized
-
-    episodes = sorted(best_by_number.values(), key=lambda item: item["numeric"])
-
-    for idx, item in enumerate(episodes):
-        item["prev_episode"] = episodes[idx - 1]["number"] if idx > 0 else None
-        item["next_episode"] = episodes[idx + 1]["number"] if idx < len(episodes) - 1 else None
-        item["total_episodes"] = len(episodes)
-
-    return episodes
-
-
-def _is_valid_catalog_item(item: dict[str, Any]) -> bool:
-    if not item.get("id"):
-        return False
-    if not _clean(item.get("title") or ""):
-        return False
-    if not (item.get("cover_url") or item.get("banner_url")):
-        return False
-    return True
-
-
-def _filter_valid_items(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    return [item for item in (items or []) if _is_valid_catalog_item(item)]
-
-
-async def _get_recent_page(page: int) -> dict[str, Any]:
+async def _get_recent_page(page: int) -> dict:
     async def factory():
-        recent = await get_recent_episodes(limit=250)
+        recent = await get_recent_episodes(limit=200)
         seen: set[str] = set()
-        items: list[dict[str, Any]] = []
+        items = []
 
         for item in recent:
             anime_id = item.get("anime_id")
@@ -456,38 +391,46 @@ async def _get_recent_page(page: int) -> dict[str, Any]:
 
             title = item.get("title") or anime_id.replace("-", " ").title()
             dubbed = _is_dubbed(anime_id, title)
-            cover = item.get("thumb") or item.get("image") or item.get("cover") or item.get("cover_url") or ""
+            cover = (
+                item.get("thumb")
+                or item.get("image")
+                or item.get("cover")
+                or item.get("cover_url")
+                or ""
+            )
 
             if not cover:
                 try:
                     details = await get_anime_details(anime_id)
-                    cover = details.get("cover_url") or details.get("media_image_url") or details.get("banner_url") or ""
+                    cover = (
+                        details.get("cover_url")
+                        or details.get("media_image_url")
+                        or details.get("banner_url")
+                        or ""
+                    )
                 except Exception:
                     cover = ""
 
-            items.append(
-                {
-                    "id": anime_id,
-                    "title": title,
-                    "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
-                    "prefix": "DUB" if dubbed else "LEG",
-                    "is_dubbed": dubbed,
-                    "cover_url": cover,
-                    "banner_url": cover,
-                    "episode": item.get("episode"),
-                    "description": "",
-                    "genres": [],
-                    "score": None,
-                    "status": "",
-                    "episodes": None,
-                    "year": None,
-                    "studio": "",
-                }
-            )
+            items.append({
+                "id": anime_id,
+                "title": title,
+                "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+                "prefix": "DUB" if dubbed else "LEG",
+                "is_dubbed": dubbed,
+                "cover_url": cover,
+                "banner_url": cover,
+                "episode": item.get("episode"),
+                "description": "",
+                "genres": [],
+                "score": None,
+                "status": "",
+                "episodes": None,
+                "year": None,
+                "studio": "",
+            })
 
-        items = _filter_valid_items(items)
         total = len(items)
-        total_pages = max(1, (total + GRID_PAGE_LIMIT - 1) // GRID_PAGE_LIMIT) if total else 1
+        total_pages = max(1, (total + GRID_PAGE_LIMIT - 1) // GRID_PAGE_LIMIT)
         current_page = min(max(1, page), total_pages)
         start = (current_page - 1) * GRID_PAGE_LIMIT
         end = start + GRID_PAGE_LIMIT
@@ -507,7 +450,7 @@ async def _get_recent_page(page: int) -> dict[str, Any]:
     return await _cached(f"recentes:{page}", RECENT_TTL, factory)
 
 
-async def _get_paginated_section_page(section: str, page: int) -> dict[str, Any]:
+async def _get_paginated_section_page(section: str, page: int) -> dict:
     conf = _section_conf(section)
     if not conf:
         return {
@@ -537,8 +480,12 @@ async def _get_paginated_section_page(section: str, page: int) -> dict[str, Any]
     current_page = min(max(1, page), total_pages)
 
     async def page_factory():
-        page_html = meta["first_html"] if current_page == 1 else await _get(_section_url(slug, current_page))
-        items = _filter_valid_items(_extract_listing_cards(page_html))
+        if current_page == 1:
+            page_html = meta["first_html"]
+        else:
+            page_html = await _get(_section_url(slug, current_page))
+
+        items = _extract_listing_cards(page_html)
         return {
             "section": section,
             "title": conf["title"],
@@ -554,8 +501,13 @@ async def _get_paginated_section_page(section: str, page: int) -> dict[str, Any]
     return await _cached(f"page:{section}:{current_page}", SECTION_TTL, page_factory)
 
 
+# =============================================================================
+# BACKGROUND
+# =============================================================================
+
 @app.on_event("startup")
 async def _startup_tasks():
+    # Pre-create the proxy client on startup so the first request is instant.
     await get_proxy_client()
 
     async def _recent_refresher():
@@ -563,7 +515,6 @@ async def _startup_tasks():
             try:
                 _invalidate_prefix("recentes:")
                 _invalidate_prefix("page:recentes")
-                _invalidate_key("hero:home")
             except Exception:
                 pass
             await asyncio.sleep(60)
@@ -579,12 +530,16 @@ async def _shutdown_tasks():
         _PROXY_CLIENT = None
 
 
+# =============================================================================
+# ROOT / HEALTH
+# =============================================================================
+
 @app.get("/")
 def root():
     return {
         "ok": True,
         "name": "QG BALTIGO API",
-        "version": "5.0.0",
+        "version": "4.0.0",
         "sections": list(SECTIONS.keys()),
     }
 
@@ -594,10 +549,13 @@ def health():
     return {
         "ok": True,
         "cache_entries": len(_CACHE),
-        "progress_users": len(_PROGRESS),
         "timestamp": int(time.time()),
     }
 
+
+# =============================================================================
+# CATALOG
+# =============================================================================
 
 @app.get("/api/catalog/home")
 async def catalog_home():
@@ -650,28 +608,9 @@ async def catalog_list(
     return {"ok": bool(data["items"]), **data}
 
 
-@app.get("/api/catalog/hero")
-async def catalog_hero():
-    async def factory():
-        top = await _get_paginated_section_page("top", 1)
-        recent = await _get_recent_page(1)
-
-        candidates = [*(top.get("items") or []), *(recent.get("items") or [])]
-        candidates = _filter_valid_items(candidates)
-        hero = candidates[0] if candidates else None
-        if not hero:
-            return {"ok": False, "item": None}
-
-        try:
-            details = await get_anime_details(hero["id"])
-            item = _shape_details(details, hero["id"])
-        except Exception:
-            item = hero
-
-        return {"ok": True, "item": item}
-
-    return await _cached("hero:home", HERO_TTL, factory)
-
+# =============================================================================
+# SEARCH
+# =============================================================================
 
 @app.get("/api/search")
 async def api_search(
@@ -683,32 +622,30 @@ async def api_search(
 
     async def factory():
         raw_items = await search_anime(query)
-        shaped: list[dict[str, Any]] = []
+        shaped = []
         for item in raw_items:
             anime_id = item.get("id") or ""
             title = item.get("title") or anime_id
             dubbed = bool(item.get("is_dubbed")) or _is_dubbed(anime_id, title)
-            shaped.append(
-                {
-                    "id": anime_id,
-                    "title": title,
-                    "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
-                    "prefix": "DUB" if dubbed else "LEG",
-                    "is_dubbed": dubbed,
-                    "cover_url": item.get("cover_url") or item.get("banner_url") or "",
-                    "banner_url": item.get("banner_url") or item.get("cover_url") or "",
-                    "description": "",
-                    "genres": [],
-                    "score": None,
-                    "status": "",
-                    "episodes": None,
-                    "year": None,
-                    "studio": "",
-                }
-            )
+            shaped.append({
+                "id": anime_id,
+                "title": title,
+                "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+                "prefix": "DUB" if dubbed else "LEG",
+                "is_dubbed": dubbed,
+                "cover_url": item.get("cover_url") or item.get("banner_url") or "",
+                "banner_url": item.get("banner_url") or item.get("cover_url") or "",
+                "description": "",
+                "genres": [],
+                "score": None,
+                "status": "",
+                "episodes": None,
+                "year": None,
+                "studio": "",
+            })
         return shaped
 
-    shaped = _filter_valid_items(await _cached(f"search:{query.lower()}", SEARCH_TTL, factory))
+    shaped = await _cached(f"search:{query.lower()}", SEARCH_TTL, factory)
 
     total = len(shaped)
     total_pages = max(1, (total + limit - 1) // limit) if total else 0
@@ -729,6 +666,10 @@ async def api_search(
     }
 
 
+# =============================================================================
+# ANIME / EPISODES
+# =============================================================================
+
 @app.get("/api/anime/{anime_id}")
 async def api_anime(anime_id: str):
     async def factory():
@@ -736,15 +677,15 @@ async def api_anime(anime_id: str):
         if not data:
             return None
 
-        episodes_payload = await get_episodes(anime_id, 0, MAX_EPISODES_FETCH)
-        episodes_raw = episodes_payload.get("all_items") or episodes_payload.get("items") or []
-        episodes = _normalize_episodes(episodes_raw)
-
-        item = _shape_details(data, anime_id)
-        item["episodes"] = len(episodes)
+        episodes_payload = await get_episodes(anime_id, 0, 400)
+        episodes = (
+            episodes_payload.get("all_items")
+            or episodes_payload.get("items")
+            or []
+        )
 
         return {
-            "item": item,
+            "item": _shape_details(data, anime_id),
             "episodes": episodes,
         }
 
@@ -765,6 +706,7 @@ async def api_episode(
     quality = (quality or "HD").upper()
     cache_key = f"episode:{anime_id}:{episode}:{quality}"
 
+    # Allow the frontend to force a fresh link fetch when the cached one has expired.
     if refresh:
         _invalidate_key(cache_key)
 
@@ -775,12 +717,18 @@ async def api_episode(
 
         payload = _shape_episode_payload(anime_id, episode, quality, item)
 
+        # Automatic HD → SD fallback when the primary quality has no video.
         if not payload.get("video"):
             fallback_quality = "SD" if quality == "HD" else "HD"
             try:
                 fallback_item = await get_episode_player(anime_id, episode, fallback_quality)
                 if fallback_item:
-                    fallback_payload = _shape_episode_payload(anime_id, episode, fallback_quality, fallback_item)
+                    fallback_payload = _shape_episode_payload(
+                        anime_id,
+                        episode,
+                        fallback_quality,
+                        fallback_item,
+                    )
                     if fallback_payload.get("video"):
                         return fallback_payload
             except Exception:
@@ -795,28 +743,14 @@ async def api_episode(
     return {"ok": True, "item": payload}
 
 
-@app.post("/api/progress")
-async def save_progress(payload: ProgressPayload):
-    user = _PROGRESS.setdefault(payload.user_id, {})
-    user[payload.anime_id] = {
-        **payload.model_dump(),
-        "updated_at": int(time.time()),
-        "expires_at": int(time.time()) + PROGRESS_TTL,
-    }
-    return {"ok": True}
-
-
-@app.get("/api/progress/{user_id}")
-async def get_progress(user_id: str):
-    items = list((_PROGRESS.get(user_id) or {}).values())
-    now = int(time.time())
-    items = [item for item in items if item.get("expires_at", now + 1) > now]
-    items.sort(key=lambda item: item.get("updated_at", 0), reverse=True)
-    return {"ok": True, "items": items}
-
+# =============================================================================
+# CACHE
+# =============================================================================
 
 @app.post("/api/cache/clear")
-async def clear_cache(prefix: str = Query("", description="Prefixo das chaves a limpar; vazio = tudo")):
+async def clear_cache(
+    prefix: str = Query("", description="Prefixo das chaves a limpar; vazio = tudo")
+):
     if prefix:
         _invalidate_prefix(prefix)
         cleared = f"prefix:{prefix}"
@@ -827,6 +761,10 @@ async def clear_cache(prefix: str = Query("", description="Prefixo das chaves a 
 
     return {"ok": True, "cleared": cleared}
 
+
+# =============================================================================
+# STATIC / MINIAPP
+# =============================================================================
 
 if MINIAPP_DIR.exists():
     app.mount("/miniapp", StaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
@@ -852,80 +790,123 @@ async def app_watch():
     return FileResponse(watch_path)
 
 
-async def _proxy_request_with_retry(method: str, url: str, headers: dict[str, str]) -> httpx.Response:
+# =============================================================================
+# PROXY STREAM  (global pooled client, proper Range support, smart retry)
+# =============================================================================
+
+async def _proxy_request_with_retry(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+) -> httpx.Response:
+    """
+    Performs a streaming-compatible proxy request with automatic retry.
+
+    Each attempt uses the shared global client so TCP connections are reused.
+    On 4xx/5xx the function retries with exponential back-off up to
+    PROXY_MAX_RETRIES times before raising.
+    """
     client = await get_proxy_client()
     last_error: Exception | None = None
 
     for attempt in range(PROXY_MAX_RETRIES + 1):
         try:
-            request = client.build_request(method=method, url=url, headers=headers)
-            response = await client.send(request, stream=True)
-            if response.status_code >= 500:
+            # Use stream=True so we never buffer the full response in RAM.
+            response = await client.send(
+                client.build_request(method, url, headers=headers),
+                stream=True,
+            )
+
+            if response.status_code in (200, 206):
+                return response
+
+            # Non-retryable client errors.
+            if 400 <= response.status_code < 500:
                 await response.aclose()
-                raise httpx.HTTPStatusError("upstream server error", request=request, response=response)
-            return response
+                raise Exception(f"Upstream client error: {response.status_code}")
+
+            await response.aclose()
+            last_error = Exception(f"Upstream server error: {response.status_code}")
+
+        except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+            last_error = exc
+
         except Exception as exc:
             last_error = exc
-            if attempt >= PROXY_MAX_RETRIES:
+            # Don't retry on non-network errors.
+            if not isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
                 break
-            await asyncio.sleep(0.35 * (attempt + 1))
 
-    raise HTTPException(status_code=502, detail=f"Falha ao abrir stream: {last_error}")
+        if attempt < PROXY_MAX_RETRIES:
+            await asyncio.sleep(0.3 * (attempt + 1))
+
+    raise last_error or Exception("Proxy: falha desconhecida após retries")
 
 
-def _build_proxy_headers(request: Request) -> dict[str, str]:
-    headers: dict[str, str] = {
+@app.api_route("/api/proxy-stream", methods=["GET", "HEAD"])
+async def proxy_stream(
+    request: Request,
+    url: str = Query(..., min_length=1),
+):
+    range_header = request.headers.get("range", "")
+
+    outgoing_headers: dict[str, str] = {
         "User-Agent": HEADERS["User-Agent"],
-        "Referer": BASE_URL,
-        "Origin": BASE_URL,
-        "Accept": request.headers.get("accept", "*/*"),
-        "Accept-Encoding": "identity",
+        "Accept": "*/*",
         "Connection": "keep-alive",
+        "Referer": BASE_URL + "/",
+        "Origin": BASE_URL,
     }
-    if request.headers.get("range"):
-        headers["Range"] = request.headers["range"]
-    return headers
 
+    if range_header:
+        outgoing_headers["Range"] = range_header
 
-@app.api_route("/api/proxy", methods=["GET", "HEAD"])
-async def proxy_stream(request: Request, url: str = Query(...)):
-    method = request.method.upper()
-    upstream_headers = _build_proxy_headers(request)
-    upstream_response = await _proxy_request_with_retry(method, url, upstream_headers)
+    method = "HEAD" if request.method == "HEAD" else "GET"
 
-    passthrough_headers = {
-        key: value
-        for key, value in upstream_response.headers.items()
-        if key.lower() in {
-            "accept-ranges",
-            "cache-control",
-            "content-length",
-            "content-range",
-            "content-type",
-            "date",
-            "etag",
-            "expires",
-            "last-modified",
-        }
+    try:
+        upstream = await _proxy_request_with_retry(method, url, outgoing_headers)
+    except Exception as exc:
+        print(f"PROXY ERROR [{method}] {url!r}: {exc!r}")
+        raise HTTPException(status_code=502, detail="Erro ao carregar vídeo")
+
+    content_type = upstream.headers.get("content-type", "application/octet-stream")
+
+    # Build the response headers we will forward to the browser.
+    passthrough: dict[str, str] = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+        "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
+        "Content-Type": content_type,
+        # Tell browsers/proxies not to cache proxy responses; caching is done at
+        # the application layer (episode endpoint) instead.
+        "Cache-Control": "no-store",
     }
-    passthrough_headers["Access-Control-Allow-Origin"] = "*"
-    passthrough_headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Range, Accept-Ranges, Content-Type"
+
+    for header in ("content-length", "content-range", "content-disposition", "etag", "last-modified"):
+        value = upstream.headers.get(header)
+        if value:
+            passthrough[header.title().replace("-", "-")] = value
 
     if method == "HEAD":
-        await upstream_response.aclose()
-        return Response(status_code=upstream_response.status_code, headers=passthrough_headers)
+        await upstream.aclose()
+        return Response(content=b"", status_code=upstream.status_code, headers=passthrough)
 
-    async def body_iterator():
+    status_code = upstream.status_code
+
+    async def byte_stream():
         try:
-            async for chunk in upstream_response.aiter_bytes(PROXY_CHUNK_SIZE):
-                if chunk:
-                    yield chunk
+            async for chunk in upstream.aiter_bytes(PROXY_CHUNK_SIZE):
+                yield chunk
+        except (httpx.ReadTimeout, httpx.RemoteProtocolError, GeneratorExit):
+            pass
         finally:
-            await upstream_response.aclose()
+            await upstream.aclose()
 
     return StreamingResponse(
-        body_iterator(),
-        status_code=upstream_response.status_code,
-        headers=passthrough_headers,
-        media_type=upstream_response.headers.get("content-type", "application/octet-stream"),
+        byte_stream(),
+        status_code=status_code,
+        headers=passthrough,
+        media_type=content_type,
     )
