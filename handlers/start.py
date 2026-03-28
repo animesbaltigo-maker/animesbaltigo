@@ -122,15 +122,45 @@ def _translate_status(status: str) -> str:
 
 
 def _translate_rating(anime: dict) -> str:
-    raw = (
-        anime.get("rating")
-        or anime.get("age_rating")
-        or anime.get("classification")
-        or anime.get("ageClassification")
-        or ""
-    )
-    raw = str(raw or "").strip().upper()
-    return RATING_MAP.get(raw, raw or "N/A")
+    candidates = [
+        anime.get("rating"),
+        anime.get("age_rating"),
+        anime.get("classification"),
+        anime.get("ageClassification"),
+        anime.get("ageRestriction"),
+        anime.get("rated"),
+    ]
+
+    media = anime.get("media") or {}
+    if isinstance(media, dict):
+        candidates.extend([
+            media.get("rating"),
+            media.get("age_rating"),
+            media.get("classification"),
+            media.get("ageClassification"),
+        ])
+
+    for raw in candidates:
+        if raw is None:
+            continue
+
+        if isinstance(raw, dict):
+            raw = (
+                raw.get("label")
+                or raw.get("name")
+                or raw.get("value")
+                or raw.get("rating")
+                or ""
+            )
+
+        raw = str(raw or "").strip()
+        if not raw:
+            continue
+
+        normalized = raw.upper()
+        return RATING_MAP.get(normalized, raw)
+
+    return "N/A"
 
 
 def _format_hashtag_genres(genres: list[str]) -> str:
@@ -157,6 +187,7 @@ def _pick_display_title(anime: dict, fallback_title: str = "Sem título") -> str
         anime.get("title")
         or anime.get("title_romaji")
         or anime.get("title_english")
+        or anime.get("name")
         or fallback_title
         or "Sem título"
     ).strip()
@@ -168,6 +199,7 @@ def _extract_alt_titles(anime: dict, fallback_item: dict | None = None) -> list[
     values = (
         anime.get("alt_titles")
         or anime.get("alternative_titles")
+        or anime.get("synonyms")
         or fallback_item.get("alt_titles")
         or []
     )
@@ -176,6 +208,8 @@ def _extract_alt_titles(anime: dict, fallback_item: dict | None = None) -> list[
     seen = set()
 
     for value in values:
+        if isinstance(value, dict):
+            value = value.get("title") or value.get("name") or value.get("value") or ""
         value = str(value or "").strip()
         if not value:
             continue
@@ -189,37 +223,81 @@ def _extract_alt_titles(anime: dict, fallback_item: dict | None = None) -> list[
 
 
 def _extract_studio(anime: dict) -> str:
-    candidates = (
-        anime.get("studio")
-        or anime.get("studios")
-        or anime.get("studio_name")
-        or anime.get("producer")
-        or []
-    )
+    candidates = []
 
-    if isinstance(candidates, str):
-        value = candidates.strip()
-        return value or "N/A"
+    direct_candidates = [
+        anime.get("studio"),
+        anime.get("studios"),
+        anime.get("studio_name"),
+        anime.get("producer"),
+        anime.get("producers"),
+        anime.get("animation_studio"),
+        anime.get("animationStudio"),
+    ]
 
-    if isinstance(candidates, list):
-        names = []
-        for item in candidates:
-            if isinstance(item, dict):
-                name = (
-                    item.get("name")
-                    or item.get("studio")
-                    or item.get("title")
-                    or ""
-                )
-            else:
-                name = str(item or "")
-            name = name.strip()
-            if name and name not in names:
-                names.append(name)
+    media = anime.get("media") or {}
+    if isinstance(media, dict):
+        direct_candidates.extend([
+            media.get("studio"),
+            media.get("studios"),
+            media.get("studio_name"),
+            media.get("producer"),
+            media.get("producers"),
+        ])
 
-        return ", ".join(names[:2]) if names else "N/A"
+        studios_node = media.get("studios")
+        if isinstance(studios_node, dict):
+            direct_candidates.extend([
+                studios_node.get("nodes"),
+                studios_node.get("edges"),
+                studios_node.get("items"),
+            ])
 
-    return "N/A"
+    for source in direct_candidates:
+        if not source:
+            continue
+
+        if isinstance(source, str):
+            value = source.strip()
+            if value:
+                candidates.append(value)
+            continue
+
+        if isinstance(source, dict):
+            for key in ("name", "studio", "title", "value", "label"):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    candidates.append(value)
+                    break
+            continue
+
+        if isinstance(source, list):
+            for item in source:
+                if isinstance(item, dict):
+                    value = (
+                        item.get("name")
+                        or item.get("studio")
+                        or item.get("title")
+                        or item.get("value")
+                        or item.get("label")
+                        or ""
+                    )
+                else:
+                    value = str(item or "")
+                value = value.strip()
+                if value:
+                    candidates.append(value)
+
+    clean = []
+    seen = set()
+    for name in candidates:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(name)
+
+    return ", ".join(clean[:2]) if clean else "N/A"
 
 
 def _pick_portrait_image(anime: dict) -> str:
@@ -482,7 +560,7 @@ def _single_anime_keyboard(
         [
             InlineKeyboardButton(
                 "📺 Ver episódios",
-                web_app=WebAppInfo(url=f"{base}/?anime={default_id}")
+                callback_data=f"eps|{anime_id}|0",
             )
         ]
     ]
@@ -548,7 +626,7 @@ def _variant_keyboard(
         rows.append([
             InlineKeyboardButton(
                 "📺 Ver episódios",
-                web_app=WebAppInfo(url=f"{base}/?anime={default_id}")
+                callback_data=f"eps|{default_id}|0",
             )
         ])
 
