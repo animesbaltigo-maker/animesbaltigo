@@ -1,6 +1,8 @@
 import asyncio
 import html
 import time
+import re
+from urllib.parse import quote_plus
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import TelegramError
@@ -20,20 +22,14 @@ from services.referral_db import (
 from services.user_registry import register_user
 from utils.gatekeeper import ensure_channel_membership
 
-import re
 
 def _clean_anime_title(title: str) -> str:
     if not title:
         return "Sem título"
     return re.sub(r"\s*-\s*Epis[oó]dio\s*\d+", "", title, flags=re.IGNORECASE)
 
-BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBZ987imm1UGdjCzV5n7FN2F6Ayew0umj2AAJkC2sbJAWhRWilm7WSjeD5AQADAgADeQADOgQ/photo.jpg"
 
-# URL base do teu miniapp
-# Exemplo:
-# MINIAPP_URL = "https://seudominio.com/miniapp"
-# ou
-# MINIAPP_URL = "https://SEU_IP:8000"
+BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBZ987imm1UGdjCzV5n7FN2F6Ayew0umj2AAJkC2sbJAWhRWilm7WSjeD5AQADAgADeQADOgQ/photo.jpg"
 MINIAPP_URL = "https://jerusalem-editorials-screensavers-for.trycloudflare.com/miniapp/index.html"
 
 START_COOLDOWN = 1.2
@@ -41,6 +37,280 @@ START_DEEP_LINK_TTL = 8.0
 
 _START_USER_LOCKS = {}
 _START_INFLIGHT = {}
+
+
+GENRE_PT_MAP = {
+    "Action": "Ação",
+    "Adventure": "Aventura",
+    "Avant Garde": "Avant Garde",
+    "Award Winning": "Premiado",
+    "Boys Love": "Boys Love",
+    "Cars": "Carros",
+    "Comedy": "Comédia",
+    "Demons": "Demônios",
+    "Drama": "Drama",
+    "Ecchi": "Ecchi",
+    "Fantasy": "Fantasia",
+    "Girls Love": "Girls Love",
+    "Gourmet": "Culinária",
+    "Harem": "Harém",
+    "Historical": "Histórico",
+    "Horror": "Terror",
+    "Isekai": "Isekai",
+    "Josei": "Josei",
+    "Kids": "Infantil",
+    "Magic": "Magia",
+    "Mahou Shoujo": "Garota Mágica",
+    "Martial Arts": "Artes Marciais",
+    "Mecha": "Mecha",
+    "Military": "Militar",
+    "Music": "Música",
+    "Mystery": "Mistério",
+    "Parody": "Paródia",
+    "Psychological": "Psicológico",
+    "Racing": "Corrida",
+    "Romance": "Romance",
+    "Samurai": "Samurai",
+    "School": "Escolar",
+    "Sci-Fi": "Ficção Científica",
+    "Seinen": "Seinen",
+    "Shoujo": "Shoujo",
+    "Shounen": "Shounen",
+    "Slice of Life": "Slice of Life",
+    "Space": "Espacial",
+    "Sports": "Esportes",
+    "Super Power": "Superpoderes",
+    "Supernatural": "Sobrenatural",
+    "Suspense": "Suspense",
+    "Thriller": "Thriller",
+    "Vampire": "Vampiro",
+    "Work Life": "Vida Profissional",
+}
+
+STATUS_PT_MAP = {
+    "Finished Airing": "Finalizado",
+    "Currently Airing": "Em lançamento",
+    "Not yet aired": "Não lançado",
+    "Airing": "Em lançamento",
+    "Completed": "Finalizado",
+    "Upcoming": "Em breve",
+    "RELEASING": "Em lançamento",
+    "FINISHED": "Finalizado",
+    "NOT_YET_RELEASED": "Não lançado",
+    "CANCELLED": "Cancelado",
+    "HIATUS": "Em hiato",
+}
+
+RATING_MAP = {
+    "G": "Livre",
+    "PG": "10+",
+    "PG-13": "13+",
+    "R": "16+",
+    "R+": "18+",
+    "RX": "18+",
+}
+
+
+def _translate_genre(genre: str) -> str:
+    genre = (genre or "").strip()
+    return GENRE_PT_MAP.get(genre, genre)
+
+
+def _translate_status(status: str) -> str:
+    status = (status or "").strip()
+    return STATUS_PT_MAP.get(status, status or "N/A")
+
+
+def _translate_rating(anime: dict) -> str:
+    raw = (
+        anime.get("rating")
+        or anime.get("age_rating")
+        or anime.get("classification")
+        or anime.get("ageClassification")
+        or ""
+    )
+    raw = str(raw or "").strip().upper()
+    return RATING_MAP.get(raw, raw or "N/A")
+
+
+def _format_hashtag_genres(genres: list[str]) -> str:
+    if not genres:
+        return "N/A"
+
+    translated = []
+    for genre in genres[:4]:
+        value = _translate_genre(str(genre)).strip()
+        if value:
+            translated.append(f"#{value}")
+
+    if not translated:
+        return "N/A"
+
+    if len(translated) <= 2:
+        return ", ".join(translated)
+
+    return ", ".join(translated[:2]) + "\n" + ", ".join(translated[2:])
+
+
+def _pick_display_title(anime: dict, fallback_title: str = "Sem título") -> str:
+    return (
+        anime.get("title")
+        or anime.get("title_romaji")
+        or anime.get("title_english")
+        or fallback_title
+        or "Sem título"
+    ).strip()
+
+
+def _extract_alt_titles(anime: dict, fallback_item: dict | None = None) -> list[str]:
+    fallback_item = fallback_item or {}
+
+    values = (
+        anime.get("alt_titles")
+        or anime.get("alternative_titles")
+        or fallback_item.get("alt_titles")
+        or []
+    )
+
+    clean = []
+    seen = set()
+
+    for value in values:
+        value = str(value or "").strip()
+        if not value:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(value)
+
+    return clean
+
+
+def _extract_studio(anime: dict) -> str:
+    candidates = (
+        anime.get("studio")
+        or anime.get("studios")
+        or anime.get("studio_name")
+        or anime.get("producer")
+        or []
+    )
+
+    if isinstance(candidates, str):
+        value = candidates.strip()
+        return value or "N/A"
+
+    if isinstance(candidates, list):
+        names = []
+        for item in candidates:
+            if isinstance(item, dict):
+                name = (
+                    item.get("name")
+                    or item.get("studio")
+                    or item.get("title")
+                    or ""
+                )
+            else:
+                name = str(item or "")
+            name = name.strip()
+            if name and name not in names:
+                names.append(name)
+
+        return ", ".join(names[:2]) if names else "N/A"
+
+    return "N/A"
+
+
+def _pick_portrait_image(anime: dict) -> str:
+    direct_candidates = [
+        anime.get("cover_url"),
+        anime.get("media_image_url"),
+        anime.get("poster_url"),
+        anime.get("image"),
+    ]
+    for value in direct_candidates:
+        value = str(value or "").strip()
+        if value:
+            return value
+
+    cover_image = anime.get("coverImage") or anime.get("cover_image") or {}
+    if isinstance(cover_image, dict):
+        for key in ("extraLarge", "large", "medium"):
+            value = str(cover_image.get(key) or "").strip()
+            if value and value.startswith("http"):
+                return value
+
+    images = anime.get("images") or {}
+    if isinstance(images, dict):
+        for key in ("poster", "cover", "vertical", "thumbnail"):
+            value = images.get(key)
+            if isinstance(value, dict):
+                for subkey in ("extraLarge", "large", "medium", "url"):
+                    subval = str(value.get(subkey) or "").strip()
+                    if subval and subval.startswith("http"):
+                        return subval
+            else:
+                value = str(value or "").strip()
+                if value and value.startswith("http"):
+                    return value
+
+    fallback_candidates = [
+        anime.get("banner_url"),
+        anime.get("bannerImage"),
+    ]
+    for value in fallback_candidates:
+        value = str(value or "").strip()
+        if value:
+            return value
+
+    return ""
+
+
+def _build_anilist_url(anime: dict, fallback_title: str, fallback_item: dict | None = None) -> str:
+    fallback_item = fallback_item or {}
+
+    explicit = (
+        anime.get("anilist_url")
+        or anime.get("ani_list_url")
+        or anime.get("anilist")
+        or ""
+    )
+    if explicit:
+        return str(explicit).strip()
+
+    anilist_id = anime.get("anilist_id") or anime.get("anilistId")
+    if anilist_id:
+        return f"https://anilist.co/anime/{anilist_id}"
+
+    alt_titles = _extract_alt_titles(anime, fallback_item)
+    search_title = (
+        anime.get("title_english")
+        or anime.get("title_romaji")
+        or (alt_titles[0] if alt_titles else "")
+        or fallback_title
+        or "anime"
+    ).strip()
+
+    return f"https://anilist.co/search/anime?search={quote_plus(search_title)}"
+
+
+def _build_trailer_url(anime: dict) -> str:
+    trailer = anime.get("trailer") or {}
+
+    if isinstance(trailer, dict):
+        site = str(trailer.get("site") or "").lower().strip()
+        trailer_id = str(trailer.get("id") or "").strip()
+        if site == "youtube" and trailer_id:
+            return f"https://www.youtube.com/watch?v={trailer_id}"
+
+    trailer_site = str(anime.get("trailer_site") or "").lower().strip()
+    trailer_id = str(anime.get("trailer_id") or "").strip()
+    if trailer_site == "youtube" and trailer_id:
+        return f"https://www.youtube.com/watch?v={trailer_id}"
+
+    direct = anime.get("trailer_url") or anime.get("youtube_trailer") or ""
+    return str(direct).strip()
 
 
 def _normalize_quality(value: str) -> str:
@@ -81,6 +351,11 @@ def _build_miniapp_episode_url(anime_id: str, episode: str, quality: str) -> str
     quality = _normalize_quality(quality)
     base = MINIAPP_URL.rstrip("/")
     return f"{base}/?anime={anime_id}&ep={episode}&q={quality}"
+
+
+def _build_miniapp_anime_url(anime_id: str) -> str:
+    base = MINIAPP_URL.rstrip("/")
+    return f"{base}/?anime={anime_id}"
 
 
 def _player_keyboard(
@@ -162,55 +437,78 @@ def _player_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
-def _anime_text(anime: dict) -> str:
-    title = html.escape((anime.get("title") or "Sem título").strip()).upper()
-    description = (anime.get("description") or "Sem descrição disponível.").strip()
-    if len(description) > 280:
-        description = description[:277].rstrip() + "..."
-    description = html.escape(description)
+def _anime_text(anime: dict, fallback_title: str = "Sem título") -> str:
+    title = html.escape(_pick_display_title(anime, fallback_title))
+    image_url = _pick_portrait_image(anime)
 
-    score = anime.get("score")
-    status = anime.get("status")
     genres = anime.get("genres") or []
-    episodes = anime.get("episodes")
-    season_year = anime.get("season_year")
+    genres_text = _format_hashtag_genres(genres)
 
-    info_lines = []
+    year = anime.get("season_year") or anime.get("year") or "N/A"
+    status = _translate_status(str(anime.get("status") or ""))
+    episodes = anime.get("episodes") or "N/A"
+    rating = _translate_rating(anime)
+    studio = _extract_studio(anime)
 
-    if score:
-        info_lines.append(f"⭐ <b>Pontuação:</b> <code>{score}</code>")
+    if image_url:
+        title_line = f'<b><a href="{html.escape(image_url, quote=True)}">🎬</a> {title}</b>'
+    else:
+        title_line = f"<b>🎬 {title}</b>"
 
-    if status:
-        info_lines.append(f"📡 <b>Situação:</b> <code>{html.escape(str(status))}</code>")
-
-    if season_year:
-        info_lines.append(f"📅 <b>Lançamento:</b> <code>{season_year}</code>")
-
-    if episodes:
-        info_lines.append(f"📚 <b>Episódios:</b> <code>{episodes}</code>")
-
-    genres_block = ""
-    if genres:
-        safe_genres = " • ".join(html.escape(str(g)) for g in genres[:5])
-        genres_block = f"\n🎭 <b>Gêneros:</b>\n<code>{safe_genres}</code>\n"
-
-    info_block = "\n".join(info_lines)
-
-    return (
-        f"🎬 <b>{title}</b>\n\n"
-        f"━━━━━━━━━━━━━━━━\n\n"
-        f"{info_block}"
-        f"{genres_block}\n"
-        f"━━━━━━━━━━━━━━━━\n\n"
-        f"📖 <b>Info:</b>\n"
-        f"{description}"
+    text = (
+        f"{title_line}\n\n"
+        f"<b>Gênero:</b> <i>{html.escape(genres_text)}</i>\n"
+        f"<b>Ano:</b> <i>{html.escape(str(year))}</i>\n"
+        f"<b>Status:</b> <i>{html.escape(str(status))}</i>\n"
+        f"<b>Total Episódios:</b> <i>{html.escape(str(episodes))}</i>\n"
+        f"<b>Studio:</b> <i>{html.escape(str(studio))}</i>\n"
+        f"<b>Classificação:</b> <i>{html.escape(str(rating))}</i>\n\n"
+        f"🔥 <i>Assista direto pelo bot, do jeito mais simples e completo.</i>"
     )
 
+    if image_url:
+        text += f'<a href="{html.escape(image_url, quote=True)}">\u200b</a>'
 
-def _variant_keyboard(group_item: dict) -> InlineKeyboardMarkup:
+    return text
+
+
+def _single_anime_keyboard(
+    anime_id: str,
+    anime: dict,
+    fallback_title: str,
+    fallback_item: dict | None = None,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                "▶️ Assistir agora",
+                web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+            )
+        ]
+    ]
+
+    second_row = []
+    anilist_url = _build_anilist_url(anime, fallback_title, fallback_item or {})
+    trailer_url = _build_trailer_url(anime)
+
+    if anilist_url:
+        second_row.append(InlineKeyboardButton("🧾 Sinopse", url=anilist_url))
+
+    if trailer_url:
+        second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
+
+    if second_row:
+        rows.append(second_row)
+
+    return InlineKeyboardMarkup(rows)
+
+
+def _variant_keyboard(
+    group_item: dict,
+    anime: dict,
+    fallback_title: str = "Sem título",
+) -> InlineKeyboardMarkup:
     rows = []
-
-    base = MINIAPP_URL.rstrip("/")
 
     variants = group_item.get("variants") or []
     sub_variant = next((v for v in variants if not v.get("is_dubbed")), None)
@@ -220,9 +518,7 @@ def _variant_keyboard(group_item: dict) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton(
                 "🇯🇵 Legendado",
-                web_app=WebAppInfo(
-                    url=f"{base}/?anime={sub_variant['id']}"
-                ),
+                web_app=WebAppInfo(url=_build_miniapp_anime_url(sub_variant["id"]))
             )
         ])
 
@@ -230,24 +526,31 @@ def _variant_keyboard(group_item: dict) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton(
                 "🇧🇷 Dublado",
-                web_app=WebAppInfo(
-                    url=f"{base}/?anime={dub_variant['id']}"
-                ),
+                web_app=WebAppInfo(url=_build_miniapp_anime_url(dub_variant["id"]))
             )
         ])
+
+    second_row = []
+    anilist_url = _build_anilist_url(anime, fallback_title, group_item)
+    trailer_url = _build_trailer_url(anime)
+
+    if anilist_url:
+        second_row.append(InlineKeyboardButton("🧾 Sinopse", url=anilist_url))
+
+    if trailer_url:
+        second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
+
+    if second_row:
+        rows.append(second_row)
 
     if not rows:
         default_id = group_item.get("default_anime_id") or group_item.get("id")
         rows.append([
             InlineKeyboardButton(
-                "📺 Ver episódios",
-                web_app=WebAppInfo(
-                    url=f"{base}/?anime={default_id}"
-                ),
+                "▶️ Assistir agora",
+                web_app=WebAppInfo(url=_build_miniapp_anime_url(default_id))
             )
         ])
-
-    return InlineKeyboardMarkup(rows)
 
     return InlineKeyboardMarkup(rows)
 
@@ -469,12 +772,7 @@ async def start(update, context):
                         available_qualities=available_qualities,
                     )
 
-                    cover = (
-                        anime.get("media_image_url")
-                        or anime.get("cover_url")
-                        or anime.get("banner_url")
-                        or None
-                    )
+                    cover = _pick_portrait_image(anime) or None
 
                     await _safe_delete_message(loading_msg)
 
@@ -518,12 +816,9 @@ async def start(update, context):
                 try:
                     anime, group_item = await _resolve_group_from_anime_id(anime_id)
 
-                    cover = (
-                        anime.get("media_image_url")
-                        or anime.get("cover_url")
-                        or anime.get("banner_url")
-                        or None
-                    )
+                    fallback_title = group_item.get("title") or anime.get("title") or "Sem título"
+                    cover = _pick_portrait_image(anime) or None
+                    text = _anime_text(anime, fallback_title)
 
                     variants = group_item.get("variants") or []
                     sub_count = 1 if any(not v.get("is_dubbed") for v in variants) else 0
@@ -532,36 +827,18 @@ async def start(update, context):
 
                     if available_versions <= 1:
                         default_id = group_item.get("default_anime_id") or anime_id
-
-                        await _safe_delete_message(loading_msg)
-
-                        text = _anime_text(anime)
-                        keyboard = InlineKeyboardMarkup([
-                            [
-                                InlineKeyboardButton(
-                                    "📺 Ver episódios",
-                                    callback_data=f"eps|{default_id}|0",
-                                )
-                            ]
-                        ])
-
-                        if cover:
-                            await message.reply_photo(
-                                photo=cover,
-                                caption=text,
-                                parse_mode="HTML",
-                                reply_markup=keyboard,
-                            )
-                        else:
-                            await message.reply_text(
-                                text,
-                                parse_mode="HTML",
-                                reply_markup=keyboard,
-                            )
-                        return
-
-                    text = _anime_text(anime)
-                    keyboard = _variant_keyboard(group_item)
+                        keyboard = _single_anime_keyboard(
+                            anime_id=default_id,
+                            anime=anime,
+                            fallback_title=fallback_title,
+                            fallback_item=group_item,
+                        )
+                    else:
+                        keyboard = _variant_keyboard(
+                            group_item=group_item,
+                            anime=anime,
+                            fallback_title=fallback_title,
+                        )
 
                     await _safe_delete_message(loading_msg)
 
