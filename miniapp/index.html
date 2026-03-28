@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -236,6 +237,17 @@
     .player-note{background:rgba(124,58,237,0.07);border:1px solid rgba(124,58,237,0.15);border-radius:var(--r-sm);padding:12px 14px;font-size:13px;color:var(--text-2);line-height:1.6}
     .label-xs{font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em;font-weight:700;margin-bottom:10px}
 
+    .continue-wrap{margin-bottom:24px}
+    .mini-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+    .continue-card{position:relative;border-radius:var(--r-md);overflow:hidden;background:var(--bg-raised);border:1px solid var(--border);padding:10px;display:flex;gap:10px;align-items:center;text-align:left}
+    .continue-thumb{width:56px;height:78px;border-radius:10px;overflow:hidden;flex-shrink:0;background:var(--bg-float)}
+    .continue-thumb img{width:100%;height:100%;object-fit:cover}
+    .continue-meta{min-width:0;flex:1}
+    .continue-title{font-size:13px;font-weight:700;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .continue-sub{font-size:12px;color:var(--text-3);margin-top:4px}
+    .pagination-row{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:18px;flex-wrap:wrap}
+    .pagination-label{font-size:13px;color:var(--text-2)}
+
     /* ── RESULTS ── */
     .results-title{font-family:var(--font-d);font-size:24px;font-weight:800;letter-spacing:-0.03em;margin-bottom:4px}
     .results-sub{font-size:13px;color:var(--text-3)}
@@ -256,6 +268,10 @@
     .toast.show{opacity:1;transform:translateY(0)}
 
     /* ── RESPONSIVE ── */
+    .video-container:fullscreen,.video-container:-webkit-full-screen{width:100vw;height:100vh;border-radius:0;background:#000}
+    .video-container:fullscreen .video-aspect,.video-container:-webkit-full-screen .video-aspect{padding-top:0;width:100vw;height:100vh}
+    .video-container:fullscreen video,.video-container:fullscreen iframe,.video-container:-webkit-full-screen video,.video-container:-webkit-full-screen iframe{width:100vw;height:100vh}
+
     @media(max-width:1100px){
       .player-layout{grid-template-columns:1fr}
       .player-side{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -319,19 +335,22 @@
     <div class="hero">
       <div class="hero-content">
         <div>
-          <div class="hero-eyebrow">Anime Streaming</div>
-          <h1 class="hero-title">Assista seus<br/><span>animes favoritos</span></h1>
-          <p class="hero-desc">Pesquise, explore e assista direto no Telegram.</p>
+          <div class="hero-eyebrow" id="heroEyebrow">Anime em destaque</div>
+          <h1 class="hero-title" id="heroTitle">Assista seus<br/><span>animes favoritos</span></h1>
+          <p class="hero-desc" id="heroDesc">Pesquise, explore e assista direto no Telegram.</p>
           <div class="hero-actions">
-            <button class="btn btn-primary" id="heroExploreBtn">▶ Explorar catálogo</button>
+            <button class="btn btn-primary" id="heroWatchBtn">▶ Assistir Episódio 1</button>
+            <button class="btn btn-ghost" id="heroExploreBtn">✨ Explorar catálogo</button>
             <button class="btn btn-ghost" id="heroSearchBtn">🔎 Buscar anime</button>
           </div>
         </div>
         <div class="hero-art">
-          <div class="hero-art-inner">⛩️</div>
+          <div class="hero-art-inner" id="heroArtEmoji">⛩️</div>
         </div>
       </div>
     </div>
+
+    <div id="continueSection"></div>
 
     <div class="search-section">
       <div class="search-row">
@@ -365,6 +384,7 @@
       <button class="btn btn-ghost btn-sm" id="resultsBackBtn">← Voltar</button>
     </div>
     <div id="resultsGrid"></div>
+    <div id="resultsPagination"></div>
   </main>
 
   <!-- ANIME DETAIL -->
@@ -443,7 +463,8 @@
             <button class="btn btn-ghost btn-sm" id="episodeListBtn">☰</button>
             <button class="btn btn-ghost btn-sm" id="nextEpisodeBtn">Próximo ⏭</button>
           </div>
-          <div style="margin-top:10px;">
+          <div style="margin-top:10px;display:grid;gap:8px;">
+            <button class="btn btn-ghost btn-sm btn-full" id="fullscreenBtn">⛶ Tela cheia</button>
             <button class="btn btn-primary btn-sm btn-full" id="openInBrowserBtn">↗ Abrir em nova guia</button>
           </div>
         </div>
@@ -487,6 +508,8 @@ const state = {
   historyStack:[], autoBootDone:false,
   openingEpisode:false, openEpisodeRequestId:0,
   attempt:0, stallTimer:null, videoReady:false,
+  resultsMode:"section", currentSection:"", resultsPage:1, totalPages:1,
+  featured:null, userId:"guest",
 };
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
@@ -496,10 +519,11 @@ const els = {
   loadingTitle:$("loadingTitle"), loadingText:$("loadingText"), toast:$("toast"),
   backBtn:$("backBtn"), refreshBtn:$("refreshBtn"), homeBtn:$("homeBtn"),
   homePage:$("homePage"), resultsPage:$("resultsPage"), animePage:$("animePage"), playerPage:$("playerPage"),
-  heroExploreBtn:$("heroExploreBtn"), heroSearchBtn:$("heroSearchBtn"),
+  heroExploreBtn:$("heroExploreBtn"), heroSearchBtn:$("heroSearchBtn"), heroWatchBtn:$("heroWatchBtn"),
+  heroTitle:$("heroTitle"), heroDesc:$("heroDesc"), heroEyebrow:$("heroEyebrow"), heroArtEmoji:$("heroArtEmoji"), continueSection:$("continueSection"),
   searchInput:$("searchInput"), homeSections:$("homeSections"),
   resultsTitle:$("resultsTitle"), resultsSubtitle:$("resultsSubtitle"),
-  resultsGrid:$("resultsGrid"), resultsBackBtn:$("resultsBackBtn"),
+  resultsGrid:$("resultsGrid"), resultsPagination:$("resultsPagination"), resultsBackBtn:$("resultsBackBtn"),
   animeCover:$("animeCover"), animePrefix:$("animePrefix"), animeTitle:$("animeTitle"),
   animeMeta:$("animeMeta"), animeDesc:$("animeDesc"), animeGenres:$("animeGenres"),
   openFirstEpisodeBtn:$("openFirstEpisodeBtn"), goToPlayerBtn:$("goToPlayerBtn"),
@@ -513,7 +537,7 @@ const els = {
   qualityRow:$("qualityRow"), prevEpisodeBtn:$("prevEpisodeBtn"),
   nextEpisodeBtn:$("nextEpisodeBtn"), episodeListBtn:$("episodeListBtn"),
   backToAnimeBtn:$("backToAnimeBtn"), backToHomeFromPlayerBtn:$("backToHomeFromPlayerBtn"),
-  openInBrowserBtn:$("openInBrowserBtn"), retryPlayerBtn:$("retryPlayerBtn"),
+  openInBrowserBtn:$("openInBrowserBtn"), retryPlayerBtn:$("retryPlayerBtn"), fullscreenBtn:$("fullscreenBtn"),
   playerDesc:$("playerDesc"), playerNote:$("playerNote"),
 };
 
@@ -532,6 +556,24 @@ function normalizeQuality(v) {
 }
 
 function oppositeQuality(q) { return normalizeQuality(q)==="HD"?"SD":"HD"; }
+
+const WATCH_KEY = "baltigo.watch.progress.v2";
+function getWatchMap() { try { return JSON.parse(localStorage.getItem(WATCH_KEY)||"{}"); } catch { return {}; } }
+function setWatchMap(map) { localStorage.setItem(WATCH_KEY, JSON.stringify(map)); }
+function saveWatchProgress(payload) {
+  const animeId = String(payload?.animeId||"").trim();
+  const episode = String(payload?.episode||"").trim();
+  if(!animeId || !episode) return;
+  const map = getWatchMap();
+  map[animeId] = {
+    animeId, animeTitle: payload.animeTitle||"Anime", episode,
+    watchedSeconds: Number(payload.watchedSeconds||0), durationSeconds: Number(payload.durationSeconds||0),
+    cover: payload.cover||"", updatedAt: Date.now(), completed: Boolean(payload.completed),
+  };
+  setWatchMap(map);
+}
+function getContinueWatching() { return Object.values(getWatchMap()).sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0)); }
+function getAnimeWatch(animeId) { return getWatchMap()[animeId] || null; }
 
 let toastTimer = null;
 function showToast(msg) {
@@ -790,6 +832,81 @@ function skeletonGrid(count=12) {
   return h+"</div>";
 }
 
+function truncateText(text, max=220) {
+  const clean = String(text||"").trim();
+  if(clean.length<=max) return { short: clean, full: clean, truncated: false };
+  return { short: clean.slice(0,max).trimEnd()+"...", full: clean, truncated: true };
+}
+
+function renderExpandableDescription(el, text) {
+  const {short, full, truncated} = truncateText(text, 260);
+  if(!truncated) { el.textContent = full || "Sem descrição disponível."; return; }
+  let expanded = false;
+  const render = () => {
+    el.innerHTML = `${esc(expanded ? full : short)} <button class="desc-toggle" type="button">${expanded ? "Ver menos" : "Ver mais"}</button>`;
+    el.querySelector(".desc-toggle")?.addEventListener("click", () => { expanded = !expanded; render(); });
+  };
+  render();
+}
+
+function renderPagination() {
+  if((state.totalPages||1) <= 1) { els.resultsPagination.innerHTML = ""; return; }
+  const page = state.resultsPage||1;
+  const total = state.totalPages||1;
+  const buttons = [];
+  const start = Math.max(1, page - 2);
+  const end = Math.min(total, page + 2);
+  buttons.push(`<button class="btn btn-ghost btn-sm" data-page="${Math.max(1, page-1)}" ${page<=1?"disabled":""}>←</button>`);
+  for(let i=start;i<=end;i++){ buttons.push(`<button class="btn ${i===page?"btn-primary":"btn-ghost"} btn-sm" data-page="${i}">${i}</button>`); }
+  buttons.push(`<button class="btn btn-ghost btn-sm" data-page="${Math.min(total, page+1)}" ${page>=total?"disabled":""}>→</button>`);
+  els.resultsPagination.innerHTML = `<div class="pagination-row">${buttons.join("")}<div class="pagination-label">Página ${page} de ${total}</div></div>`;
+}
+
+function renderContinueWatching() {
+  const items = getContinueWatching().slice(0, 8);
+  if(!items.length) { els.continueSection.innerHTML = ""; return; }
+  els.continueSection.innerHTML = `
+    <div class="continue-wrap section">
+      <div class="mini-section-head">
+        <div class="section-label">
+          <div class="section-accent"></div>
+          <div>
+            <div class="section-title">Continue assistindo</div>
+            <div class="section-count">Seu episódio mais recente de cada anime</div>
+          </div>
+        </div>
+      </div>
+      <div class="card-grid">
+        ${items.map(item => `
+          <button class="continue-card" data-resume-anime="${esc(item.animeId)}" data-resume-episode="${esc(item.episode)}">
+            <div class="continue-thumb"><img src="${imgSrc(item.cover, item.animeTitle)}" alt="${esc(item.animeTitle)}"></div>
+            <div class="continue-meta">
+              <div class="continue-title">${esc(item.animeTitle)}</div>
+              <div class="continue-sub">Continuar do EP ${esc(item.episode)}</div>
+            </div>
+          </button>
+        `).join("")}
+      </div>
+    </div>`;
+}
+
+function renderFeatured(featured) {
+  state.featured = featured || null;
+  if(!featured) {
+    els.heroTitle.innerHTML = 'Assista seus<br/><span>animes favoritos</span>';
+    els.heroDesc.textContent = 'Pesquise, explore e assista direto no Telegram.';
+    els.heroEyebrow.textContent = 'Anime Streaming';
+    document.querySelector('.hero').style.backgroundImage = 'none';
+    els.heroWatchBtn.disabled = true;
+    return;
+  }
+  document.querySelector('.hero').style.backgroundImage = `linear-gradient(90deg, rgba(5,6,15,.92), rgba(5,6,15,.58) 50%, rgba(5,6,15,.42)), url(${featured.banner_url || featured.cover_url || ""})`;
+  els.heroEyebrow.textContent = 'Em destaque';
+  els.heroTitle.innerHTML = `${esc(featured.title||'Anime')}<br/><span>${esc(featured.status||featured.year||'Agora')}</span>`;
+  els.heroDesc.textContent = featured.description_short || featured.description || 'Anime em destaque no catálogo.';
+  els.heroWatchBtn.disabled = !featured.first_episode;
+}
+
 function renderSectionBlock(section) {
   const items = Array.isArray(section.items)?section.items:[];
   return `
@@ -831,7 +948,9 @@ function renderEpisodeButtons(episodes) {
     const num = String(ep.number??ep.episode??ep.ep??ep.slug??"").trim();
     const lbl = num?num:(ep.title||"—");
     const isActive = String(state.currentEpisode)===String(num);
-    return `<button class="ep-btn ${isActive?"active":""}" data-open-episode="${esc(num)}" ${num?"":"disabled"}>${esc(lbl)}</button>`;
+    const watched = getAnimeWatch(state.currentAnimeId);
+    const isWatched = watched && String(watched.episode)===String(num);
+    return `<button class="ep-btn ${isActive?"active":""} ${isWatched?"watched":""}" data-open-episode="${esc(num)}" ${num?"":"disabled"}>${esc(lbl)}</button>`;
   }).join("");
 }
 
@@ -857,6 +976,8 @@ async function loadHome() {
   try {
     const data = await apiGet("/api/catalog/home");
     state.home = data;
+    renderFeatured(data?.featured || null);
+    renderContinueWatching();
     const sections = data?.sections||[];
     if(!sections.length) {
       els.homeSections.innerHTML = `<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nada por aqui</div><div class="state-box-text">Nenhuma seção encontrada agora.</div></div>`;
@@ -870,18 +991,20 @@ async function loadHome() {
   }
 }
 
-async function loadSectionResults(sectionKey) {
+async function loadSectionResults(sectionKey, page=1) {
   showLoading("Carregando seção","Buscando animes...");
   setPage("results");
   try {
-    const data = await apiGet(`/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=1`);
+    const data = await apiGet(`/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=${encodeURIComponent(page)}`);
     const items = data?.items||[];
     state.searchQuery = ""; state.searchResults = items;
+    state.resultsMode = "section"; state.currentSection = sectionKey; state.resultsPage = Number(data?.page||page||1); state.totalPages = Number(data?.total_pages||1);
     els.resultsTitle.textContent = data?.title||"Seção";
-    els.resultsSubtitle.textContent = `${items.length} título(s)`;
+    els.resultsSubtitle.textContent = `${data?.total_items||items.length} item(ns) • página ${state.resultsPage}`;
     els.resultsGrid.innerHTML = items.length
       ?`<div class="card-grid">${items.map(buildCard).join("")}</div>`
       :`<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nenhum anime</div><div class="state-box-text">Nenhum resultado nessa seção.</div></div>`;
+    renderPagination();
   } catch(err) {
     console.error(err);
     els.resultsTitle.textContent = "Erro"; els.resultsSubtitle.textContent = "Não foi possível carregar";
@@ -890,20 +1013,22 @@ async function loadSectionResults(sectionKey) {
   } finally { hideLoading(); }
 }
 
-async function performSearch(query) {
+async function performSearch(query, page=1) {
   const q = String(query||"").trim();
   if(!q){ showToast("Digite algo para buscar."); return; }
   showLoading("Buscando anime","Procurando resultados...");
   setPage("results");
   try {
-    const data = await apiGet(`/api/search?q=${encodeURIComponent(q)}&page=1`);
+    const data = await apiGet(`/api/search?q=${encodeURIComponent(q)}&page=${encodeURIComponent(page)}`);
     const items = data?.items||[];
     state.searchQuery = q; state.searchResults = items;
+    state.resultsMode = "search"; state.resultsPage = Number(data?.page||page||1); state.totalPages = Number(data?.total_pages||1);
     els.resultsTitle.textContent = `"${q}"`;
-    els.resultsSubtitle.textContent = `${data?.count??items.length} resultado(s)`;
+    els.resultsSubtitle.textContent = `${data?.count??items.length} resultado(s) • página ${state.resultsPage}`;
     els.resultsGrid.innerHTML = items.length
       ?`<div class="card-grid">${items.map(buildCard).join("")}</div>`
       :`<div class="state-box"><div class="state-box-icon">🔍</div><div class="state-box-title">Nada encontrado</div><div class="state-box-text">Nenhum anime para "${esc(q)}".</div></div>`;
+    renderPagination();
   } catch(err) {
     console.error(err);
     els.resultsTitle.textContent = "Erro na busca"; els.resultsSubtitle.textContent = "Não foi possível buscar agora";
@@ -940,7 +1065,7 @@ async function openAnime(animeId, options={}) {
     els.animePrefix.className = `detail-kicker ${isDub?"dub":"leg"}`;
     els.animeTitle.textContent = item.title||"Sem título";
     els.animeMeta.innerHTML = renderAnimeMeta(item);
-    els.animeDesc.textContent = item.description||"Sem descrição disponível.";
+    renderExpandableDescription(els.animeDesc, item.description||"Sem descrição disponível.");
     els.animeGenres.innerHTML = (item.genres||[]).map(g=>`<span class="genre-tag">${esc(g)}</span>`).join("");
 
     renderEpisodeButtons(episodes);
@@ -983,6 +1108,8 @@ async function openEpisode(animeId, episode, quality="HD", options={}) {
     state.attempt = 0;
 
     const animeTitle = state.anime?.title||item.title||"Anime";
+    saveWatchProgress({ animeId, animeTitle, episode, cover: state.anime?.cover_url || state.anime?.banner_url || item.thumb || "" });
+    renderContinueWatching();
 
     els.playerPageSubtitle.textContent = `${animeTitle} • EP ${episode}`;
     els.playerTitle.textContent = animeTitle;
@@ -1016,6 +1143,25 @@ async function openEpisode(animeId, episode, quality="HD", options={}) {
   } finally {
     hideLoading();
     if(requestId===state.openEpisodeRequestId) state.openingEpisode = false;
+  }
+}
+
+async function enterBestFullscreen() {
+  const container = document.querySelector(".video-container");
+  const video = els.videoPlayer;
+  const frame = els.iframePlayer;
+  try {
+    if(video && video.style.display !== "none") {
+      if(video.requestFullscreen) await video.requestFullscreen();
+      else if(container?.requestFullscreen) await container.requestFullscreen();
+      else if(video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+    } else if(frame && frame.style.display !== "none") {
+      if(container?.requestFullscreen) await container.requestFullscreen();
+    }
+    if(screen.orientation?.lock) { try { await screen.orientation.lock("landscape"); } catch(e) {} }
+  } catch(err) {
+    console.warn("fullscreen failed", err);
+    showToast("Tela cheia não disponível aqui.");
   }
 }
 
@@ -1058,7 +1204,16 @@ document.addEventListener("click", async e => {
   const qBtn = e.target.closest("[data-quality]");
   if(qBtn){ await openEpisode(state.currentAnimeId, state.currentEpisode, qBtn.dataset.quality, {pushHistory:false,force:true}); return; }
   const chip = e.target.closest("[data-section]");
-  if(chip){ await loadSectionResults(chip.dataset.section); }
+  if(chip){ await loadSectionResults(chip.dataset.section); return; }
+  const pageBtn = e.target.closest("[data-page]");
+  if(pageBtn){
+    const page = Number(pageBtn.dataset.page||1);
+    if(state.resultsMode === "search") await performSearch(state.searchQuery, page);
+    else await loadSectionResults(state.currentSection, page);
+    return;
+  }
+  const resumeBtn = e.target.closest("[data-resume-anime]");
+  if(resumeBtn){ await openEpisode(resumeBtn.dataset.resumeAnime, resumeBtn.dataset.resumeEpisode, state.currentQuality||"HD"); return; }
 });
 
 els.searchInput.addEventListener("keydown", async e=>{
@@ -1069,9 +1224,14 @@ let searchDebounce = null;
 els.searchInput.addEventListener("input",()=>{
   clearTimeout(searchDebounce);
   const val = els.searchInput.value.trim();
-  if(val.length>=3) searchDebounce = setTimeout(()=>performSearch(val), 600);
+  if(val.length>=3) searchDebounce = setTimeout(()=>performSearch(val), 300);
 });
 
+els.heroWatchBtn.addEventListener("click", async()=>{
+  const featured = state.featured;
+  if(!featured?.id || !featured?.first_episode) { showToast("Sem anime em destaque agora."); return; }
+  await openEpisode(featured.id, featured.first_episode, state.currentQuality||"HD");
+});
 els.heroExploreBtn.addEventListener("click", async()=>{ setPage("home"); await loadHome(); });
 els.heroSearchBtn.addEventListener("click",  ()=>{ setPage("home"); focusSearch(); });
 els.resultsBackBtn.addEventListener("click",  ()=>goBack());
@@ -1084,7 +1244,11 @@ els.homeBtn.addEventListener("click", async()=>{
 els.refreshBtn.addEventListener("click", async()=>{
   const p = state.currentPage;
   if(p==="home")   { await loadHome(); return; }
-  if(p==="results"){ state.searchQuery?await performSearch(state.searchQuery):await loadHome(); return; }
+  if(p==="results"){
+    if(state.resultsMode === "search" && state.searchQuery) { await performSearch(state.searchQuery, state.resultsPage||1); return; }
+    if(state.resultsMode === "section" && state.currentSection) { await loadSectionResults(state.currentSection, state.resultsPage||1); return; }
+    await loadHome(); return;
+  }
   if(p==="anime"&&state.currentAnimeId){ await openAnime(state.currentAnimeId,{pushHistory:false}); return; }
   if(p==="player"&&state.currentAnimeId&&state.currentEpisode){
     await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality,{pushHistory:false,force:true});
@@ -1138,6 +1302,25 @@ els.retryPlayerBtn.addEventListener("click", async()=>{
   if(!state.currentAnimeId||!state.currentEpisode) return;
   state.attempt = 0;
   await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality,{pushHistory:false,force:true});
+});
+els.fullscreenBtn?.addEventListener("click", enterBestFullscreen);
+els.videoPlayer.addEventListener("timeupdate", ()=>{
+  if(!state.currentAnimeId || !state.currentEpisode) return;
+  saveWatchProgress({
+    animeId: state.currentAnimeId, animeTitle: state.anime?.title || state.currentEpisodeItem?.title || "Anime",
+    episode: state.currentEpisode, watchedSeconds: Math.floor(els.videoPlayer.currentTime || 0),
+    durationSeconds: Math.floor(els.videoPlayer.duration || 0), cover: state.anime?.cover_url || state.anime?.banner_url || state.currentEpisodeItem?.thumb || "",
+    completed: (els.videoPlayer.duration || 0) > 0 && (els.videoPlayer.currentTime || 0) / (els.videoPlayer.duration || 1) > 0.9,
+  });
+});
+els.videoPlayer.addEventListener("ended", ()=>{
+  if(!state.currentAnimeId || !state.currentEpisode) return;
+  saveWatchProgress({
+    animeId: state.currentAnimeId, animeTitle: state.anime?.title || state.currentEpisodeItem?.title || "Anime",
+    episode: state.currentEpisode, watchedSeconds: Math.floor(els.videoPlayer.duration || 0), durationSeconds: Math.floor(els.videoPlayer.duration || 0),
+    cover: state.anime?.cover_url || state.anime?.banner_url || state.currentEpisodeItem?.thumb || "", completed: true,
+  });
+  renderContinueWatching();
 });
 
 window.addEventListener("popstate",()=>goBack());
