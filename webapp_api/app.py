@@ -107,10 +107,6 @@ class ProgressPayload(BaseModel):
     completed: bool = False
 
 
-# =============================================================================
-# PROXY CLIENT
-# =============================================================================
-
 def _get_proxy_limits() -> httpx.Limits:
     return httpx.Limits(
         max_connections=PROXY_MAX_CONNECTIONS,
@@ -130,10 +126,6 @@ async def get_proxy_client() -> httpx.AsyncClient:
         )
     return _PROXY_CLIENT
 
-
-# =============================================================================
-# HELPERS
-# =============================================================================
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
@@ -450,10 +442,6 @@ def _filter_valid_items(items: list[dict[str, Any]] | None) -> list[dict[str, An
     return [item for item in (items or []) if _is_valid_catalog_item(item)]
 
 
-# =============================================================================
-# CATALOG / PAGINATION
-# =============================================================================
-
 async def _get_recent_page(page: int) -> dict[str, Any]:
     async def factory():
         recent = await get_recent_episodes(limit=250)
@@ -566,10 +554,6 @@ async def _get_paginated_section_page(section: str, page: int) -> dict[str, Any]
     return await _cached(f"page:{section}:{current_page}", SECTION_TTL, page_factory)
 
 
-# =============================================================================
-# LIFECYCLE
-# =============================================================================
-
 @app.on_event("startup")
 async def _startup_tasks():
     await get_proxy_client()
@@ -595,10 +579,6 @@ async def _shutdown_tasks():
         _PROXY_CLIENT = None
 
 
-# =============================================================================
-# ROOT / HEALTH
-# =============================================================================
-
 @app.get("/")
 def root():
     return {
@@ -618,10 +598,6 @@ def health():
         "timestamp": int(time.time()),
     }
 
-
-# =============================================================================
-# CATALOG
-# =============================================================================
 
 @app.get("/api/catalog/home")
 async def catalog_home():
@@ -697,10 +673,6 @@ async def catalog_hero():
     return await _cached("hero:home", HERO_TTL, factory)
 
 
-# =============================================================================
-# SEARCH
-# =============================================================================
-
 @app.get("/api/search")
 async def api_search(
     q: str = Query(..., min_length=1),
@@ -756,10 +728,6 @@ async def api_search(
         "has_prev": current_page > 1,
     }
 
-
-# =============================================================================
-# ANIME / EPISODES
-# =============================================================================
 
 @app.get("/api/anime/{anime_id}")
 async def api_anime(anime_id: str):
@@ -827,10 +795,6 @@ async def api_episode(
     return {"ok": True, "item": payload}
 
 
-# =============================================================================
-# PROGRESS
-# =============================================================================
-
 @app.post("/api/progress")
 async def save_progress(payload: ProgressPayload):
     user = _PROGRESS.setdefault(payload.user_id, {})
@@ -851,10 +815,6 @@ async def get_progress(user_id: str):
     return {"ok": True, "items": items}
 
 
-# =============================================================================
-# CACHE
-# =============================================================================
-
 @app.post("/api/cache/clear")
 async def clear_cache(prefix: str = Query("", description="Prefixo das chaves a limpar; vazio = tudo")):
     if prefix:
@@ -867,10 +827,6 @@ async def clear_cache(prefix: str = Query("", description="Prefixo das chaves a 
 
     return {"ok": True, "cleared": cleared}
 
-
-# =============================================================================
-# STATIC / MINIAPP
-# =============================================================================
 
 if MINIAPP_DIR.exists():
     app.mount("/miniapp", StaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
@@ -895,10 +851,6 @@ async def app_watch():
         raise HTTPException(status_code=404, detail="Watch page not found")
     return FileResponse(watch_path)
 
-
-# =============================================================================
-# PROXY STREAM
-# =============================================================================
 
 async def _proxy_request_with_retry(method: str, url: str, headers: dict[str, str]) -> httpx.Response:
     client = await get_proxy_client()
