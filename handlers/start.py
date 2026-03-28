@@ -481,8 +481,8 @@ def _single_anime_keyboard(
     rows = [
         [
             InlineKeyboardButton(
-                "▶️ Assistir agora",
-                web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+                "📺 Ver episódios",
+                web_app=WebAppInfo(url=f"{base}/?anime={default_id}")
             )
         ]
     ]
@@ -547,8 +547,8 @@ def _variant_keyboard(
         default_id = group_item.get("default_anime_id") or group_item.get("id")
         rows.append([
             InlineKeyboardButton(
-                "▶️ Assistir agora",
-                web_app=WebAppInfo(url=_build_miniapp_anime_url(default_id))
+                "📺 Ver episódios",
+                web_app=WebAppInfo(url=f"{base}/?anime={default_id}")
             )
         ])
 
