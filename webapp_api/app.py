@@ -5,6 +5,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
 import httpx
@@ -13,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from core.http_client import get_http_client
 from services.animefire_client import (
@@ -42,6 +44,9 @@ SECTION_TTL = 60 * 15
 RECENT_TTL = 60
 SEARCH_TTL = 60 * 10
 ANIME_TTL = 60 * 60 * 2
+HERO_TTL = 60 * 10
+PROGRESS_TTL = 60 * 60 * 24 * 30
+MAX_EPISODES_FETCH = 1200
 
 # Episode TTL is intentionally short because video links expire.
 # With ?refresh=1 the cache is bypassed entirely.
@@ -91,6 +96,7 @@ app.add_middleware(
 
 _CACHE: dict[str, dict[str, Any]] = {}
 _LOCKS: dict[str, asyncio.Lock] = {}
+_PROGRESS: dict[str, dict[str, Any]] = {}
 
 # ── Global persistent proxy client ───────────────────────────────────────────
 # One client for the entire process lifetime; uses connection pooling and
@@ -105,6 +111,17 @@ def _get_proxy_limits() -> httpx.Limits:
         max_keepalive_connections=PROXY_MAX_KEEPALIVE,
         keepalive_expiry=PROXY_KEEPALIVE_EXPIRY,
     )
+
+
+class ProgressPayload(BaseModel):
+    user_id: str
+    anime_id: str
+    episode: str
+    watched_seconds: int = 0
+    duration_seconds: int = 0
+    title: str = ""
+    cover_url: str = ""
+    completed: bool = False
 
 
 async def get_proxy_client() -> httpx.AsyncClient:
@@ -373,6 +390,116 @@ def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict
     }
 
 
+def _parse_episode_number(value: str | int | float | None) -> Decimal | None:
+    raw = str(value or "").strip().replace(",", ".")
+    match = re.search(r"\d+(?:\.\d+)?", raw)
+    if not match:
+        return None
+    try:
+        return Decimal(match.group(0))
+    except InvalidOperation:
+        return None
+
+
+def _episode_score(item: dict[str, Any]) -> int:
+    score = 0
+    if item.get("title"):
+        score += 2
+    if item.get("description"):
+        score += 1
+    if item.get("thumb") or item.get("image"):
+        score += 1
+    if item.get("video"):
+        score += 3
+    return score
+
+
+def _normalize_episode_item(ep: dict[str, Any]) -> dict[str, Any]:
+    value = dict(ep or {})
+    number = value.get("number") or value.get("episode") or value.get("ep") or value.get("slug") or ""
+    parsed = _parse_episode_number(number)
+    value["number"] = str(number).strip()
+    value["_sort_number"] = parsed if parsed is not None else Decimal("999999")
+    value["_sort_title"] = _clean(str(value.get("title") or value.get("number") or ""))
+    value["_score"] = _episode_score(value)
+    return value
+
+
+def _normalize_episodes(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if not items:
+        return []
+
+    dedup: dict[str, dict[str, Any]] = {}
+    for raw in items:
+        item = _normalize_episode_item(raw)
+        number = item.get("number") or item.get("_sort_title") or "sem-numero"
+        key = f"{number}|{item.get('url') or item.get('slug') or item.get('_sort_title')}"
+        previous = dedup.get(key)
+        if previous is None or item.get("_score", 0) >= previous.get("_score", 0):
+            dedup[key] = item
+
+    ordered = sorted(dedup.values(), key=lambda x: (x.get("_sort_number", Decimal("999999")), x.get("_sort_title", "")))
+    cleaned: list[dict[str, Any]] = []
+    total = len(ordered)
+    for index, item in enumerate(ordered):
+        item.pop("_score", None)
+        item.pop("_sort_title", None)
+        item.pop("_sort_number", None)
+        item["prev_episode"] = ordered[index - 1]["number"] if index > 0 else None
+        item["next_episode"] = ordered[index + 1]["number"] if index < total - 1 else None
+        item["total_episodes"] = total
+        cleaned.append(item)
+    return cleaned
+
+
+def _has_minimum_catalog_fields(item: dict[str, Any]) -> bool:
+    return bool(item.get("id") and item.get("title") and (item.get("cover_url") or item.get("banner_url")))
+
+
+def _truncate_description(text: str, size: int = 220) -> str:
+    value = _clean_description(text)
+    if len(value) <= size:
+        return value
+    return value[:size].rstrip() + "..."
+
+
+async def _build_featured_payload() -> dict[str, Any] | None:
+    async def factory():
+        candidates = []
+        for section in ("em_lancamento", "top", "recentes"):
+            try:
+                page = await _get_paginated_section_page(section, 1)
+                candidates.extend(page.get("items") or [])
+            except Exception:
+                continue
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            anime_id = candidate.get("id")
+            if not anime_id or anime_id in seen:
+                continue
+            seen.add(anime_id)
+            try:
+                details = await get_anime_details(anime_id)
+                if not details:
+                    continue
+                shaped = _shape_details(details, anime_id)
+                episodes_payload = await get_episodes(anime_id, 0, 60)
+                episodes = _normalize_episodes(episodes_payload.get("all_items") or episodes_payload.get("items") or [])
+                if not episodes:
+                    continue
+                return {
+                    **shaped,
+                    "description_short": _truncate_description(shaped.get("description") or candidate.get("description") or ""),
+                    "first_episode": episodes[0].get("number") or "1",
+                }
+            except Exception:
+                continue
+        return None
+
+    return await _cached("home:featured", HERO_TTL, factory)
+
+
 # =============================================================================
 # PAGINATION / CATALOG
 # =============================================================================
@@ -572,31 +699,28 @@ async def catalog_home():
     ]
 
     tasks = [_get_paginated_section_page(section, 1) for section in ordered_sections]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    featured_task = _build_featured_payload()
+    results = await asyncio.gather(*tasks, featured_task, return_exceptions=True)
+    featured_result = results[-1]
+    section_results = results[:-1]
 
     payload = []
-    for section, result in zip(ordered_sections, results):
+    for section, result in zip(ordered_sections, section_results):
         conf = _section_conf(section)
         title = conf["title"] if conf else section
-
         if isinstance(result, Exception):
-            payload.append({
-                "key": section,
-                "title": title,
-                "page": 1,
-                "total_pages": 0,
-                "items": [],
-            })
+            payload.append({"key": section, "title": title, "page": 1, "total_pages": 0, "items": []})
         else:
             payload.append({
                 "key": section,
                 "title": result["title"],
                 "page": 1,
                 "total_pages": result["total_pages"],
-                "items": result["items"][:HOME_SECTION_LIMIT],
+                "items": [item for item in result["items"][:HOME_SECTION_LIMIT] if _has_minimum_catalog_fields(item)],
             })
 
-    return {"ok": True, "sections": payload}
+    featured = None if isinstance(featured_result, Exception) else featured_result
+    return {"ok": True, "featured": featured, "sections": payload}
 
 
 @app.get("/api/catalog/list")
@@ -605,6 +729,7 @@ async def catalog_list(
     page: int = Query(1, ge=1),
 ):
     data = await _get_paginated_section_page(section, page)
+    data["items"] = [item for item in data["items"] if _has_minimum_catalog_fields(item)]
     return {"ok": bool(data["items"]), **data}
 
 
@@ -643,7 +768,7 @@ async def api_search(
                 "year": None,
                 "studio": "",
             })
-        return shaped
+        return [item for item in shaped if _has_minimum_catalog_fields(item)]
 
     shaped = await _cached(f"search:{query.lower()}", SEARCH_TTL, factory)
 
@@ -677,17 +802,12 @@ async def api_anime(anime_id: str):
         if not data:
             return None
 
-        episodes_payload = await get_episodes(anime_id, 0, 400)
-        episodes = (
-            episodes_payload.get("all_items")
-            or episodes_payload.get("items")
-            or []
-        )
-
-        return {
-            "item": _shape_details(data, anime_id),
-            "episodes": episodes,
-        }
+        episodes_payload = await get_episodes(anime_id, 0, MAX_EPISODES_FETCH)
+        episodes = _normalize_episodes(episodes_payload.get("all_items") or episodes_payload.get("items") or [])
+        item = _shape_details(data, anime_id)
+        if episodes:
+            item["episodes"] = len(episodes)
+        return {"item": item, "episodes": episodes}
 
     payload = await _cached(f"anime:{anime_id}", ANIME_TTL, factory)
     if not payload:
@@ -741,6 +861,39 @@ async def api_episode(
         raise HTTPException(status_code=404, detail="Episódio não encontrado")
 
     return {"ok": True, "item": payload}
+
+
+# =============================================================================
+# PROGRESS
+# =============================================================================
+
+@app.post("/api/progress")
+async def save_progress(payload: ProgressPayload):
+    user_id = _clean(payload.user_id) or "guest"
+    anime_id = _clean(payload.anime_id)
+    episode = _clean(payload.episode)
+    if not anime_id or not episode:
+        raise HTTPException(status_code=400, detail="anime_id e episode são obrigatórios")
+
+    bucket = _PROGRESS.setdefault(user_id, {})
+    bucket[anime_id] = {
+        "anime_id": anime_id,
+        "episode": episode,
+        "watched_seconds": max(0, int(payload.watched_seconds or 0)),
+        "duration_seconds": max(0, int(payload.duration_seconds or 0)),
+        "title": _clean(payload.title),
+        "cover_url": payload.cover_url or "",
+        "completed": bool(payload.completed),
+        "updated_at": int(time.time()),
+    }
+    return {"ok": True, "item": bucket[anime_id]}
+
+
+@app.get("/api/progress")
+async def get_progress(user_id: str = Query("guest")):
+    items = list((_PROGRESS.get(_clean(user_id) or "guest") or {}).values())
+    items.sort(key=lambda item: item.get("updated_at", 0), reverse=True)
+    return {"ok": True, "items": items}
 
 
 # =============================================================================
