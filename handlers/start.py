@@ -20,13 +20,6 @@ from services.referral_db import (
 from services.user_registry import register_user
 from utils.gatekeeper import ensure_channel_membership
 
-import re
-
-def _clean_anime_title(title: str) -> str:
-    if not title:
-        return "Sem título"
-    return re.sub(r"\s*-\s*Epis[oó]dio\s*\d+", "", title, flags=re.IGNORECASE)
-
 BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBZ987imm1UGdjCzV5n7FN2F6Ayew0umj2AAJkC2sbJAWhRWilm7WSjeD5AQADAgADeQADOgQ/photo.jpg"
 
 # URL base do teu miniapp
@@ -452,10 +445,11 @@ async def start(update, context):
                     available_qualities = _available_quality_set(player)
 
                     text = (
-                        f"🎬 <b>{html.escape(_clean_anime_title(anime.get('title', 'Sem título')))}</b>\n\n"
-                        f"▶️ <b>Episódio {html.escape(str(episode))}</b>\n"
-                        f"🎚 {html.escape(quality)} • 📚 {total_episodes} eps\n\n"
-                        f"<i>Escolha uma opção abaixo 👇</i>"
+                        f"🎬 <b>{html.escape(anime.get('title', 'Sem título'))}</b>\n\n"
+                        f"🎞 <b>Episódio:</b> {html.escape(str(episode))}\n"
+                        f"🎚 <b>Qualidade:</b> {html.escape(quality)}\n"
+                        f"📚 <b>Total:</b> {total_episodes}\n\n"
+                        f"Escolha uma opção abaixo para continuar."
                     )
 
                     keyboard = _player_keyboard(
