@@ -10,7 +10,9 @@ LEGACY_USERS_PATH = DATA_DIR / "users"
 
 _lock = Lock()
 
-
+def register_user(user_id: int):
+    add_user(user_id)
+    
 def _ensure_data_dir():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
