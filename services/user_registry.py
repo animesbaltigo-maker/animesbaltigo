@@ -74,11 +74,15 @@ def get_all_users() -> list[int]:
     with _lock:
         users = _load_users()
 
-        # migra automaticamente pro users.json
+        # migra automaticamente tudo para users.json
         if users:
             _save_users(users)
 
         return users
+
+
+def get_total_users() -> int:
+    return len(get_all_users())
 
 
 def add_user(user_id: int):
@@ -111,9 +115,6 @@ def remove_user(user_id: int):
             _save_users(new_users)
 
 
-# ✅ COMPATIBILIDADE COM CÓDIGO ANTIGO
+# compatibilidade com código antigo
 def register_user(user_id: int):
     add_user(user_id)
-
-def get_total_users() -> int:
-    return len(get_all_users())
