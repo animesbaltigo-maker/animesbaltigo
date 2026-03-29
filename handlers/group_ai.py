@@ -1,12 +1,13 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from services.gemini_ai import generate_anime_reply  # 👈 ESSA LINHA
+from services.gemini_ai import generate_anime_reply
 
-BOT_USERNAME = "AnimesBaltigo_Bot"  # ajusta se precisar
+BOT_USERNAME = "AnimesBaltigo_Bot"
 TRIGGER = "akira"
 
-async def group_ai_handler(update, context):
+
+async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
 
     if not message or not message.text:
@@ -25,41 +26,41 @@ async def group_ai_handler(update, context):
     )
 
     # Privado: responde qualquer mensagem
-if update.effective_chat and update.effective_chat.type == "private":
-    user_text = text
+    if update.effective_chat and update.effective_chat.type == "private":
+        user_text = text
 
-# Grupo: responde se começar com o trigger
-elif text_lower.startswith(TRIGGER):
-    user_text = text[len(TRIGGER):].strip()
+    # Grupo: precisa começar com o trigger
+    elif text_lower.startswith(TRIGGER):
+        user_text = text[len(TRIGGER):].strip()
 
-# Grupo: responde se for reply ao bot
-elif replying_to_bot:
-    user_text = text
+    # Grupo: ou ser reply ao bot
+    elif replying_to_bot:
+        user_text = text
 
-else:
-    return
+    else:
+        return
 
     if not user_text:
         await message.reply_text("Fala comigo assim: akira me recomenda um anime 🔥")
         return
 
-    # resposta
     try:
         reply = generate_anime_reply(user_text)
+
+        if not reply or reply.strip() == "[NO_REPLY]":
+            return
+
         await message.reply_text(reply)
 
     except Exception as e:
         err = str(e)
 
-        if "RESOURCE_EXHAUSTED" in err or "429" in err:
+        if "RESOURCE_EXHAUSTED" in err or "429" in err or "quota" in err.lower():
             await message.reply_text(
                 "Tch… gastei todo meu chakra respondendo vocês 😵‍💫\n"
                 "Me dá um tempinho e tenta de novo, ok?"
             )
             return
-
-        print("Erro IA:", e)
-        await message.reply_text("Tive um bug aqui 😵 tenta de novo")
 
         print("Erro IA:", e)
         await message.reply_text("Tive um bug aqui 😵 tenta de novo")
