@@ -1,10 +1,9 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import BOT_USERNAME
 from services.gemini_ai import generate_anime_reply
-from utils.gatekeeper import ensure_channel_membership
 
+BOT_USERNAME = "AnimesBaltigo_Bot"
 TRIGGER = "akira"
 
 
@@ -17,6 +16,7 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = message.text.strip()
     text_lower = text.lower()
 
+    # Verifica se é reply ao bot
     replying_to_bot = bool(
         message.reply_to_message
         and message.reply_to_message.from_user
@@ -25,15 +25,18 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         and message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower()
     )
 
+    # Privado: responde qualquer mensagem
     if update.effective_chat and update.effective_chat.type == "private":
-        allowed = await ensure_channel_membership(update, context)
-        if not allowed:
-            return
         user_text = text
+
+    # Grupo: precisa começar com o trigger
     elif text_lower.startswith(TRIGGER):
         user_text = text[len(TRIGGER):].strip()
+
+    # Grupo: ou ser reply ao bot
     elif replying_to_bot:
         user_text = text
+
     else:
         return
 
@@ -42,7 +45,7 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        reply = await generate_anime_reply(user_text)
+        reply = generate_anime_reply(user_text)
 
         if not reply or reply.strip() == "[NO_REPLY]":
             return
