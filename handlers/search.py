@@ -102,6 +102,17 @@ def _clean_button_title(title: str) -> str:
     return title or "Sem título"
 
 
+def _build_search_button_title(item: dict) -> str:
+    title = _clean_button_title(item.get("title") or "Sem título")
+
+    if item.get("is_dubbed"):
+        title = f"{title} [DUBLADO]"
+    else:
+        title = f"{title} [LEGENDADO]"
+
+    return title
+
+
 def _build_search_text(query: str, page: int, total: int) -> str:
     total_pages = max(1, ((total - 1) // RESULTS_PER_PAGE) + 1)
     safe_query = html.escape((query or "").strip())
@@ -134,7 +145,7 @@ def _build_results_keyboard(results: list, page: int, total: int, token: str) ->
     page_items = results[start:end]
 
     for idx, item in enumerate(page_items, start=start + 1):
-        title = _clean_button_title(item.get("title") or "Sem título")
+        title = _build_search_button_title(item)
 
         if len(title) > 42:
             title = title[:39].rstrip() + "..."
