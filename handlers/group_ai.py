@@ -1,57 +1,40 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+BOT_USERNAME = "AnimesBaltigo_Bot"  # ajusta se precisar
+TRIGGER = "akira"
 
-from config import BOT_USERNAME
-from services.gemini_ai import generate_anime_reply
-from services.anime_filter import is_anime_related
-from services.ai_group_state import can_reply, mark_reply, should_random_reply
+async def group_ai_handler(update, context):
+    message = update.message
 
-
-async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.effective_message
-    chat = update.effective_chat
-
-    if not message or not chat:
+    if not message or not message.text:
         return
 
-    if chat.type not in ("group", "supergroup"):
+    text = message.text.strip()
+    text_lower = text.lower()
+
+    # Verifica se é reply ao bot
+    replying_to_bot = bool(
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.username
+        and BOT_USERNAME
+        and message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower()
+    )
+
+    # Verifica se começa com "akira"
+    if text_lower.startswith(TRIGGER):
+        user_text = text[len(TRIGGER):].strip()
+    elif replying_to_bot:
+        user_text = text
+    else:
         return
 
-    text = (message.text or "").strip()
-    if not text:
+    if not user_text:
+        await message.reply_text("Fala comigo assim: akira me recomenda um anime 🔥")
         return
 
-    if not is_anime_related(text):
-        return
-
-    mentioned = False
-    if BOT_USERNAME:
-        mentioned = f"@{BOT_USERNAME}".lower() in text.lower()
-
-    replying_to_bot = False
-    if message.reply_to_message and message.reply_to_message.from_user:
-        replying_to_bot = bool(message.reply_to_message.from_user.is_bot)
-
-    auto_mode = False
-
-    if not mentioned and not replying_to_bot:
-        if not can_reply(chat.id):
-            return
-        if not should_random_reply():
-            return
-        auto_mode = True
-
+    # resposta
     try:
-        answer = generate_anime_reply(text)
+        reply = generate_anime_reply(user_text)
+        await message.reply_text(reply)
     except Exception as e:
-        print("[GROUP_AI_ERROR]", repr(e))
-        return
-
-    if not answer or answer == "[NO_REPLY]":
-        return
-
-    answer = answer[:500]
-    await message.reply_text(answer)
-
-    if auto_mode:
-        mark_reply(chat.id)
+        print("Erro IA:", e)
+        await message.reply_text("Tive um bug aqui 😵 tenta de novo")
