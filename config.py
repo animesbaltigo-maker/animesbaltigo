@@ -1,15 +1,26 @@
 import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8675150552:AAHoUu64RoMPHNdaChP9RQGF0iz-tk7Crbo").strip()
 SOURCE_SITE_BASE = os.getenv("SOURCE_SITE_BASE", "https://animefire.io").strip().rstrip("/")
 
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Centraldeanimes_Baltigo").strip()
 REQUIRED_CHANNEL_URL = os.getenv("REQUIRED_CHANNEL_URL", "t.me/Centraldeanimes_Baltigo").strip()
-BOT_USERNAME = "AnimesBaltigo_Bot"
-CANAL_POSTAGEM = "@Centraldeanimes_Baltigo"
-STICKER_DIVISOR = "CAACAgQAAx0CbKkU-AACFJtps_kRLpeUt2Gvd7mT4d0gS1vyCgACOhUAAqDAiFJSU5pkUMltvzoE"
-ADMIN_IDS = [1852596083, 987654321]
+BOT_USERNAME = os.getenv("BOT_USERNAME", "AnimesBaltigo_Bot").strip()
+CANAL_POSTAGEM = os.getenv("CANAL_POSTAGEM", "@Centraldeanimes_Baltigo").strip()
+STICKER_DIVISOR = os.getenv(
+    "STICKER_DIVISOR",
+    "CAACAgQAAx0CbKkU-AACFJtps_kRLpeUt2Gvd7mT4d0gS1vyCgACOhUAAqDAiFJSU5pkUMltvzoE",
+).strip()
 
+ADMIN_IDS = [
+    int(x.strip())
+    for x in os.getenv("ADMIN_IDS", "1852596083,987654321").split(",")
+    if x.strip().isdigit()
+]
 
 SEARCH_LIMIT = int(os.getenv("SEARCH_LIMIT", "10"))
 EPISODES_PER_PAGE = int(os.getenv("EPISODES_PER_PAGE", "12"))
