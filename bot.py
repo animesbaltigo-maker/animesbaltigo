@@ -117,20 +117,24 @@ def main():
         group=99,
     )
 
-    if app.job_queue:
-        app.job_queue.run_repeating(
-            auto_post_new_eps_job,
-            interval=600,
-            first=15,
-            name="auto_post_new_eps",
-        )
+    if not app.job_queue:
+    print("[ERRO] JobQueue não disponível. Instale: python-telegram-bot[job-queue]==22.6")
+else:
+    app.job_queue.run_repeating(
+        auto_post_new_eps_job,
+        interval=600,
+        first=15,
+        name="auto_post_new_eps",
+    )
+    print("[OK] Job registrado: auto_post_new_eps (a cada 600s)")
 
-        app.job_queue.run_repeating(
-            auto_referral_check_job,
-            interval=3600,
-            first=60,
-            name="auto_referral_check",
-        )
+    app.job_queue.run_repeating(
+        auto_referral_check_job,
+        interval=3600,
+        first=60,
+        name="auto_referral_check",
+    )
+    print("[OK] Job registrado: auto_referral_check (a cada 3600s)")
 
     app.add_error_handler(error_handler)
 
