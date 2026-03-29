@@ -114,3 +114,6 @@ def remove_user(user_id: int):
 # ✅ COMPATIBILIDADE COM CÓDIGO ANTIGO
 def register_user(user_id: int):
     add_user(user_id)
+
+def get_total_users() -> int:
+    return len(get_all_users())
