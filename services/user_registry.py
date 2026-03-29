@@ -10,9 +10,7 @@ LEGACY_USERS_PATH = DATA_DIR / "users"
 
 _lock = Lock()
 
-def register_user(user_id: int):
-    add_user(user_id)
-    
+
 def _ensure_data_dir():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -49,10 +47,6 @@ def _read_json_file(path: Path) -> list[int]:
 
 
 def _load_users() -> list[int]:
-    """
-    Lê IDs do arquivo novo (users.json) e do legado (users),
-    junta tudo, remove duplicados e retorna a lista final.
-    """
     users_new = _read_json_file(USERS_JSON_PATH)
     users_legacy = _read_json_file(LEGACY_USERS_PATH)
 
@@ -68,9 +62,6 @@ def _load_users() -> list[int]:
 
 
 def _save_users(users: list[int]):
-    """
-    Salva sempre no arquivo novo users.json.
-    """
     _ensure_data_dir()
 
     normalized = sorted(set(_normalize_user_list(users)))
@@ -118,3 +109,8 @@ def remove_user(user_id: int):
 
         if len(new_users) != len(users):
             _save_users(new_users)
+
+
+# ✅ COMPATIBILIDADE COM CÓDIGO ANTIGO
+def register_user(user_id: int):
+    add_user(user_id)
