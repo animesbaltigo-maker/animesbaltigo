@@ -117,7 +117,7 @@ def main():
         group=99,
     )
 
-    if not app.job_queue:
+if not app.job_queue:
     print("[ERRO] JobQueue não disponível. Instale: python-telegram-bot[job-queue]==22.6")
 else:
     app.job_queue.run_repeating(
