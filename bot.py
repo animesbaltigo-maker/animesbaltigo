@@ -37,13 +37,14 @@ from handlers.referral_admin import refstats, auto_referral_check_job
 from services.referral_db import init_referral_db
 from handlers.bingo import bingo
 from handlers.bingo_admin import startbingo, sortear, startbingo_auto, resetbingo
-
 from services.metrics import init_metrics_db
 from services.animefire_client import preload_popular_cache
-
 from handlers.inline import inline_query
 from handlers.testminiapp import testminiapp
 from handlers.tracemoe import traceme, tracequota, trace_photo_handler
+
+# IA Gemini
+from handlers.group_ai import group_ai_handler
 
 
 init_metrics_db()
@@ -91,6 +92,7 @@ def main():
         .build()
     )
 
+    # Comandos principais
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("testminiapp", testminiapp))
     app.add_handler(CommandHandler("buscar", buscar))
@@ -111,18 +113,24 @@ def main():
     app.add_handler(CommandHandler("baltigoflix", baltigoflix))
     app.add_handler(CommandHandler("metricas", metricas))
     app.add_handler(CommandHandler("metricaslimpar", metricas_limpar))
-    app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CommandHandler("pedido", pedido))
     app.add_handler(CommandHandler("calendario", calendario))
 
-    app.add_handler(CallbackQueryHandler(callback_info_anime, pattern=r"^info_anime:"))
-    app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern=r"^bc\|"))
-    app.add_handler(CallbackQueryHandler(referral_button, pattern=r"^noop_indicar$"))
-    app.add_handler(CallbackQueryHandler(callbacks))
+    # TraceMoe
     app.add_handler(CommandHandler("traceme", traceme))
     app.add_handler(CommandHandler("tracequota", tracequota))
     app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, trace_photo_handler))
 
+    # Inline
+    app.add_handler(InlineQueryHandler(inline_query))
+
+    # Callbacks
+    app.add_handler(CallbackQueryHandler(callback_info_anime, pattern=r"^info_anime:"))
+    app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern=r"^bc\|"))
+    app.add_handler(CallbackQueryHandler(referral_button, pattern=r"^noop_indicar$"))
+    app.add_handler(CallbackQueryHandler(callbacks))
+
+    # Broadcast router
     app.add_handler(
         MessageHandler(
             filters.ALL & ~filters.COMMAND,
@@ -131,6 +139,16 @@ def main():
         group=99,
     )
 
+    # IA Gemini nos grupos
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            group_ai_handler,
+        ),
+        group=100,
+    )
+
+    # Jobs
     if not app.job_queue:
         print("[ERRO] JobQueue não disponível. Instale: python-telegram-bot[job-queue]==22.6")
     else:
