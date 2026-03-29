@@ -13,23 +13,41 @@
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg-void:#05060f; --bg-base:#080b18; --bg-raised:#0d1128; --bg-float:#111630;
-      --bg-glass:rgba(255,255,255,0.045); --bg-glass-2:rgba(255,255,255,0.07);
-      --violet:#7c3aed; --violet-2:#9b5cf6; --violet-glow:rgba(124,58,237,0.35);
-      --cyan:#06b6d4; --rose:#f43f5e; --green:#22c55e;
+      --bg-void:#05060f;
+      --bg-base:#080b18;
+      --bg-raised:#0d1128;
+      --bg-float:#111630;
+      --bg-glass:rgba(255,255,255,0.045);
+      --bg-glass-2:rgba(255,255,255,0.07);
+      --violet:#7c3aed;
+      --violet-2:#9b5cf6;
+      --violet-glow:rgba(124,58,237,0.35);
+      --cyan:#06b6d4;
+      --rose:#f43f5e;
+      --green:#22c55e;
       --grad-brand:linear-gradient(135deg,#7c3aed 0%,#2563eb 60%,#06b6d4 100%);
       --grad-card:linear-gradient(160deg,rgba(124,58,237,0.12) 0%,rgba(6,182,212,0.06) 100%);
       --grad-shine:linear-gradient(105deg,transparent 40%,rgba(255,255,255,0.06) 50%,transparent 60%);
-      --text:#eef2ff; --text-2:#94a3b8; --text-3:#64748b;
-      --border:rgba(255,255,255,0.08); --border-2:rgba(255,255,255,0.13); --border-v:rgba(124,58,237,0.45);
-      --shadow-sm:0 2px 12px rgba(0,0,0,0.4); --shadow-md:0 8px 32px rgba(0,0,0,0.5);
-      --shadow-lg:0 20px 60px rgba(0,0,0,0.6); --shadow-v:0 8px 32px rgba(124,58,237,0.3);
-      --header-h:64px; --max-w:1440px;
-      --r-xs:8px; --r-sm:12px; --r-md:18px; --r-lg:24px; --r-xl:32px;
-      --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px);
-      --font-d:'Syne',sans-serif; --font-b:'DM Sans',sans-serif;
+      --text:#eef2ff;
+      --text-2:#94a3b8;
+      --text-3:#64748b;
+      --border:rgba(255,255,255,0.08);
+      --border-2:rgba(255,255,255,0.13);
+      --border-v:rgba(124,58,237,0.45);
+      --shadow-sm:0 2px 12px rgba(0,0,0,0.4);
+      --shadow-md:0 8px 32px rgba(0,0,0,0.5);
+      --shadow-lg:0 20px 60px rgba(0,0,0,0.6);
+      --shadow-v:0 8px 32px rgba(124,58,237,0.3);
+      --header-h:64px;
+      --max-w:1440px;
+      --r-xs:8px;--r-sm:12px;--r-md:18px;--r-lg:24px;--r-xl:32px;
+      --safe-top:env(safe-area-inset-top,0px);
+      --safe-bottom:env(safe-area-inset-bottom,0px);
+      --font-d:'Syne',sans-serif;
+      --font-b:'DM Sans',sans-serif;
       --ease:cubic-bezier(0.22,1,0.36,1);
     }
+
     *,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
     html{scroll-behavior:smooth}
     body{font-family:var(--font-b);font-size:15px;color:var(--text);background:var(--bg-void);min-height:100dvh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
@@ -68,7 +86,7 @@
     .hero-eyebrow{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);margin-bottom:10px}
     .hero-eyebrow::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan);animation:pdot 2s ease-in-out infinite}
     @keyframes pdot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.7)}}
-    .hero-title-el{font-family:var(--font-d);font-size:clamp(26px,4vw,52px);font-weight:800;line-height:1;letter-spacing:-.02em;margin-bottom:10px;max-width:580px}
+    .hero-title-el{font-family:var(--font-d);font-size:clamp(26px,4vw,52px);font-weight:800;line-height:1.0;letter-spacing:-.02em;margin-bottom:10px;max-width:580px}
     .hero-meta-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
     .hero-pill{display:inline-flex;align-items:center;font-size:11px;color:var(--text-2);font-weight:600;background:var(--bg-glass-2);border:1px solid var(--border);padding:3px 9px;border-radius:999px;backdrop-filter:blur(6px)}
     .hero-desc-el{color:var(--text-2);font-size:13px;line-height:1.6;max-width:500px;margin-bottom:16px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -93,7 +111,7 @@
     .btn:active{transform:scale(0.97)}
     .btn:disabled{opacity:.4;pointer-events:none}
     .btn-primary{background:var(--grad-brand);border:none;box-shadow:var(--shadow-v);color:#fff}
-    .btn-primary:hover{opacity:.95;box-shadow:0 12px 40px rgba(124,58,237,0.45)}
+    .btn-primary:hover{opacity:.9;box-shadow:0 12px 40px rgba(124,58,237,0.45)}
     .btn-ghost{background:transparent}
     .btn-ghost:hover{background:var(--bg-glass)}
     .btn-sm{height:36px;padding:0 14px;font-size:13px;border-radius:var(--r-xs)}
@@ -183,7 +201,7 @@
     .detail-poster img{width:100%;height:100%;object-fit:cover}
     .detail-info{min-width:0}
     .detail-kicker{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
-    .detail-kicker.dub{color:var(--violet-2)} .detail-kicker.leg{color:var(--cyan)}
+    .detail-kicker.dub{color:var(--violet-2)}.detail-kicker.leg{color:var(--cyan)}
     .detail-title{font-family:var(--font-d);font-size:clamp(24px,4vw,42px);font-weight:800;letter-spacing:-.03em;line-height:1.05;margin-bottom:14px}
     .detail-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
     .pill{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:999px;background:var(--bg-glass-2);border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text-2)}
@@ -231,6 +249,7 @@
     .player-ep-info{font-size:13px;color:var(--text-2);line-height:1.5}
     .player-desc{font-size:13px;color:var(--text-2);line-height:1.65;margin-top:10px;max-height:120px;overflow-y:auto}
     .player-desc::-webkit-scrollbar{width:4px}
+    .player-desc::-webkit-scrollbar-track{background:transparent}
     .player-desc::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:4px}
     .quality-row{display:flex;gap:8px;flex-wrap:wrap}
     .quality-btn{height:36px;padding:0 16px;border-radius:var(--r-xs);background:var(--bg-glass);border:1px solid var(--border);font-size:13px;font-weight:700;color:var(--text-2);cursor:pointer;transition:all .18s var(--ease)}
@@ -247,8 +266,8 @@
     .pg-btn.active-pg{background:var(--grad-brand);border-color:transparent;color:#fff}
     .pg-btn:disabled{opacity:.3;pointer-events:none}
     .pg-input-wrap{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2)}
-    .pg-input{width:56px;height:34px;text-align:center;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--r-xs);color:var(--text);font-size:13px}
-    .pg-input:focus{border-color:var(--border-v)}
+    .pg-input{width:56px;height:34px;text-align:center;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--r-xs);color:var(--text);font-size:13px;font-family:var(--font-b)}
+    .pg-input:focus{border-color:var(--border-v);outline:none}
 
     .results-title{font-family:var(--font-d);font-size:24px;font-weight:800;letter-spacing:-.03em;margin-bottom:4px}
     .results-sub{font-size:13px;color:var(--text-3)}
@@ -305,6 +324,7 @@
 </head>
 <body>
 <div class="app">
+
   <header class="topbar" id="topbar">
     <div class="topbar-inner">
       <div class="brand">
@@ -426,8 +446,23 @@
       <div style="position:relative">
         <div class="video-container" id="videoContainer">
           <div class="video-aspect">
-            <video id="videoPlayer" controls playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5" x5-video-player-fullscreen="true" x-webkit-airplay="allow" preload="metadata" style="background:#000"></video>
-            <iframe id="iframePlayer" allow="autoplay; fullscreen; picture-in-picture; xr-spatial-tracking; accelerometer; gyroscope" allowfullscreen webkitallowfullscreen mozallowfullscreen referrerpolicy="no-referrer" style="display:none;"></iframe>
+            <video id="videoPlayer"
+              controls
+              playsinline
+              webkit-playsinline
+              x5-playsinline
+              x5-video-player-type="h5"
+              x5-video-player-fullscreen="true"
+              x-webkit-airplay="allow"
+              preload="metadata"
+              style="background:#000"></video>
+            <iframe id="iframePlayer"
+              allow="autoplay; fullscreen; picture-in-picture; xr-spatial-tracking; accelerometer; gyroscope"
+              allowfullscreen
+              webkitallowfullscreen
+              mozallowfullscreen
+              referrerpolicy="no-referrer"
+              style="display:none;"></iframe>
             <div class="video-overlay" id="videoStatusOverlay">
               <div id="videoStatusIconSlot"></div>
               <div class="overlay-title" id="videoStatusText">Carregando vídeo...</div>
@@ -467,6 +502,7 @@
       </div>
     </div>
   </main>
+
 </div>
 
 <div class="loading-screen" id="loadingOverlay">
@@ -508,7 +544,6 @@ function storageGet(k, def) {
 function storageSet(k, v) {
   try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {}
 }
-
 function getWatchMap() { return storageGet(WATCH_KEY, {}); }
 function setWatchMap(m) { storageSet(WATCH_KEY, m); }
 function getStoredRoute() { return storageGet(ROUTE_KEY, null); }
@@ -541,44 +576,43 @@ function getAnimeWatch(aid) { return getWatchMap()[aid] || null; }
 function getEpisodeWatch(aid, ep) { return getWatchMap()?.[aid]?.episodes?.[String(ep)] || null; }
 
 const state = {
-  home: null,
-  currentPage: "home",
-  searchQuery: "",
-  searchResults: [],
-  anime: null,
-  animeEpisodes: [],
-  currentAnimeId: "",
-  currentEpisode: "",
-  currentQuality: "HD",
-  currentVideoUrl: "",
-  currentEpisodeItem: null,
-  historyStack: [],
-  autoBootDone: false,
-  openingEpisode: false,
-  openEpisodeRequestId: 0,
-  attempt: 0,
-  stallTimer: null,
-  videoReady: false,
-  resultsMode: "section",
-  currentSection: "",
-  resultsPage: 1,
-  totalPages: 1,
-  heroBanners: [],
-  heroIdx: 0,
-  heroTimer: null,
-  heroCurrent: null,
-  genreExpanded: false,
-  eventSource: null,
-  cssFsActive: false,
-  nativeFsActive: false,
-  cinemaModeActive: false,
-  accessGranted: false,
-  accessChecking: false,
-  routeSyncMuted: false,
-  pendingNav: null,
-  requestSeq: { home:0, section:0, search:0, anime:0, access:0 },
-  currentAbort: { home:null, section:null, search:null, anime:null },
-  nextEpisodeTimer: null
+  home:null,
+  currentPage:"home",
+  searchQuery:"",
+  searchResults:[],
+  anime:null,
+  animeEpisodes:[],
+  currentAnimeId:"",
+  currentEpisode:"",
+  currentQuality:"HD",
+  currentVideoUrl:"",
+  currentEpisodeItem:null,
+  historyStack:[],
+  autoBootDone:false,
+  openingEpisode:false,
+  openEpisodeRequestId:0,
+  attempt:0,
+  stallTimer:null,
+  videoReady:false,
+  resultsMode:"section",
+  currentSection:"",
+  resultsPage:1,
+  totalPages:1,
+  heroBanners:[],
+  heroIdx:0,
+  heroTimer:null,
+  heroCurrent:null,
+  genreExpanded:false,
+  eventSource:null,
+  cssFsActive:false,
+  nativeFsActive:false,
+  cinemaModeActive:false,
+  accessGranted:false,
+  accessChecking:false,
+  routeSyncMuted:false,
+  requestSeq:{ home:0, section:0, search:0, anime:0, access:0 },
+  currentAbort:{ home:null, section:null, search:null, anime:null },
+  nextEpisodeTimer:null
 };
 
 const $ = id => document.getElementById(id);
@@ -716,7 +750,7 @@ function updateUrlParams({ anime, ep, q, search, section, page }) {
   if (section) url.searchParams.set("section", section);
   if (page) url.searchParams.set("page", String(page));
   history.replaceState({}, "", url.toString());
-  syncRouteState({ anime, ep, q: normalizeQuality(q || ""), search, section, page });
+  syncRouteState({ anime, ep, q:normalizeQuality(q || ""), search, section, page });
 }
 function setPage(page, push = true) {
   exitCinemaMode();
@@ -737,7 +771,7 @@ function setPage(page, push = true) {
     access:"Acesso restrito",
     home:"Início",
     results:"Resultados",
-    anime: state.anime?.title || "Anime",
+    anime:state.anime?.title || "Anime",
     player:"Player"
   };
   setSubtitle(titles[page] || "BALTIGO");
@@ -766,15 +800,14 @@ function abortNamedRequest(name) {
   try { state.currentAbort[name]?.abort?.(); } catch(e) {}
   state.currentAbort[name] = null;
 }
-
 async function apiGet(path, ms = API_TIMEOUT, requestName = "") {
   if (!state.accessGranted) throw new Error("Acesso não validado.");
   if (requestName) abortNamedRequest(requestName);
 
   const ctrl = new AbortController();
   if (requestName) state.currentAbort[requestName] = ctrl;
-
   const timer = setTimeout(() => ctrl.abort(), ms);
+
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       headers: {
@@ -793,7 +826,6 @@ async function apiGet(path, ms = API_TIMEOUT, requestName = "") {
     return res.json();
   } catch(err) {
     clearTimeout(timer);
-    if (err.name === "AbortError") throw err;
     throw err;
   }
 }
@@ -816,8 +848,8 @@ async function verifyAccess(force = false) {
 
   try {
     const res = await fetch(`${API_BASE}/api/access/check`, {
-      method: "POST",
-      headers: {
+      method:"POST",
+      headers:{
         "Content-Type":"application/json",
         "Accept":"application/json",
         "x-telegram-init-data": tg.initData
@@ -926,18 +958,21 @@ function enterCssFullscreen() {
   state.cssFsActive = true;
   const container = els.videoContainer;
   const isPortrait = window.screen.height > window.screen.width;
+
   container.classList.add("css-fs");
   if (isPortrait) container.classList.add("portrait-rotate");
+
   document.body.classList.add("in-css-fs");
   els.cssFsExit.style.display = "flex";
-  window.scrollTo({ top:0 });
+  window.scrollTo({ top: 0 });
   screen.orientation?.lock?.("landscape").catch(() => {});
   showToast("Toque ✕ para sair da tela cheia");
 }
 function exitCssFullscreen() {
   if (!state.cssFsActive) return;
   state.cssFsActive = false;
-  els.videoContainer.classList.remove("css-fs", "portrait-rotate");
+  const container = els.videoContainer;
+  container.classList.remove("css-fs", "portrait-rotate");
   document.body.classList.remove("in-css-fs");
   els.cssFsExit.style.display = "none";
   screen.orientation?.unlock?.();
@@ -957,11 +992,15 @@ async function requestFullscreen() {
   }
 
   const isVideoVisible = video.style.display !== "none";
-  if (IS_TELEGRAM_WEBVIEW) { enterCssFullscreen(); return; }
+
+  if (IS_TELEGRAM_WEBVIEW) {
+    enterCssFullscreen();
+    return;
+  }
 
   if (isVideoVisible && video.requestFullscreen) {
     try {
-      await video.requestFullscreen({ navigationUI:"hide" });
+      await video.requestFullscreen({ navigationUI: "hide" });
       state.nativeFsActive = true;
       screen.orientation?.lock?.("landscape").catch(() => {});
       return;
@@ -980,7 +1019,7 @@ async function requestFullscreen() {
   const fsMethod = container.requestFullscreen || container.webkitRequestFullscreen || container.mozRequestFullScreen;
   if (fsMethod) {
     try {
-      await fsMethod.call(container, { navigationUI:"hide" });
+      await fsMethod.call(container, { navigationUI: "hide" });
       state.nativeFsActive = true;
       screen.orientation?.lock?.("landscape").catch(() => {});
       return;
@@ -1089,7 +1128,7 @@ async function _fetchEpisodeWithTimeout(animeId, episode, quality, refresh = fal
         "Accept":"application/json",
         "x-telegram-init-data": tg?.initData || ""
       },
-      cache:"no-store",
+      cache: "no-store",
       signal: ctrl.signal
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1100,7 +1139,7 @@ async function _fetchEpisodeWithTimeout(animeId, episode, quality, refresh = fal
 }
 function _showFinalError() {
   clearStallTimer();
-  showVideoOverlay("icon:⚠️", "Vídeo indisponível", "Tente recarregar ou usar outra qualidade");
+  showVideoOverlay("icon:⚠️", "Vídeo indisponível", "Tente recarregar ou use outra qualidade");
   els.playerNote.textContent = "Não foi possível carregar esse vídeo. Recarregue ou troque a qualidade.";
   showToast("Vídeo indisponível. Tente novamente.");
 }
@@ -1115,7 +1154,6 @@ function restoreWatchProgressForCurrentEpisode() {
     showToast(`Retomado em ${Math.floor(safeTime)}s`);
   }
 }
-
 function bindVideoEvents() {
   const v = els.videoPlayer;
 
@@ -1189,7 +1227,7 @@ function bindVideoEvents() {
           clearTimeout(state.nextEpisodeTimer);
           document.removeEventListener("click", cancel);
         };
-        document.addEventListener("click", cancel, { once:true });
+        document.addEventListener("click", cancel, { once: true });
       }, 500);
     }
   });
@@ -1209,28 +1247,28 @@ function buildSuggestionChips(suggestions) {
   return `<div style="margin-top:14px"><div style="font-size:12px;color:var(--text-3);margin-bottom:8px;">Talvez você quis dizer:</div><div class="chips">${suggestions.map(s => `<button class="chip" data-suggest-search="${esc(s)}">${esc(s)}</button>`).join("")}</div></div>`;
 }
 function _normalizeCatalogResponse(data) {
-  if (Array.isArray(data)) return { items:data, page:1, total_pages:1, total_items:data.length, title:"Seção" };
+  if (Array.isArray(data)) return { items: data, page: 1, total_pages: 1, total_items: data.length, title: "Seção" };
   if (Array.isArray(data?.items)) return data;
-  if (Array.isArray(data?.results)) return { ...data, items:data.results };
-  if (Array.isArray(data?.data)) return { ...data, items:data.data };
-  if (Array.isArray(data?.animes)) return { ...data, items:data.animes };
-  if (Array.isArray(data?.list)) return { ...data, items:data.list };
+  if (Array.isArray(data?.results)) return { ...data, items: data.results };
+  if (Array.isArray(data?.data)) return { ...data, items: data.data };
+  if (Array.isArray(data?.animes)) return { ...data, items: data.animes };
+  if (Array.isArray(data?.list)) return { ...data, items: data.list };
   for (const key of Object.keys(data || {})) {
-    if (Array.isArray(data[key]) && (!data.items || !data.items.length)) return { ...data, items:data[key] };
+    if (Array.isArray(data[key]) && (!data.items || !data.items.length)) return { ...data, items: data[key] };
   }
-  return { ...(data || {}), items:[] };
+  return { ...(data || {}), items: [] };
 }
 function _normalizeSearchResponse(data) {
-  if (Array.isArray(data)) return { items:data, count:data.length, page:1, total_pages:1 };
+  if (Array.isArray(data)) return { items: data, count: data.length, page: 1, total_pages: 1 };
   if (Array.isArray(data?.items)) return data;
-  if (Array.isArray(data?.results)) return { ...data, items:data.results };
-  if (Array.isArray(data?.data)) return { ...data, items:data.data };
-  if (Array.isArray(data?.animes)) return { ...data, items:data.animes };
-  if (Array.isArray(data?.list)) return { ...data, items:data.list };
+  if (Array.isArray(data?.results)) return { ...data, items: data.results };
+  if (Array.isArray(data?.data)) return { ...data, items: data.data };
+  if (Array.isArray(data?.animes)) return { ...data, items: data.animes };
+  if (Array.isArray(data?.list)) return { ...data, items: data.list };
   for (const key of Object.keys(data || {})) {
-    if (Array.isArray(data[key]) && data[key].length > 0 && data[key][0]?.id) return { ...data, items:data[key] };
+    if (Array.isArray(data[key]) && data[key].length > 0 && data[key][0]?.id) return { ...data, items: data[key] };
   }
-  return { items:[], count:0, page:1, total_pages:1 };
+  return { items: [], count: 0, page: 1, total_pages: 1 };
 }
 function _getEpisodeDisplayTotal(episodes = []) {
   const nums = (Array.isArray(episodes) ? episodes : []).map(_parseEpNumber).filter(n => typeof n === "number" && !Number.isNaN(n));
@@ -1337,7 +1375,7 @@ function _sortEpisodes(episodes) {
 function _buildFullEpisodeList(episodes, totalFromMetadata) {
   if (!episodes || episodes.length === 0) {
     if (totalFromMetadata > 0) {
-      return Array.from({ length: totalFromMetadata }, (_, i) => ({ number:i + 1, episode:String(i + 1), synthetic:true }));
+      return Array.from({ length: totalFromMetadata }, (_, i) => ({ number: i + 1, episode: String(i + 1), synthetic: true }));
     }
     return [];
   }
@@ -1348,7 +1386,7 @@ function _buildFullEpisodeList(episodes, totalFromMetadata) {
     const existingNums = new Set(sorted.map(e => _parseEpNumber(e)));
     const filled = [...sorted];
     for (let i = 1; i <= metaTotal; i++) {
-      if (!existingNums.has(i)) filled.push({ number:i, episode:String(i), synthetic:true });
+      if (!existingNums.has(i)) filled.push({ number: i, episode: String(i), synthetic: true });
     }
     return _sortEpisodes(filled);
   }
@@ -1447,7 +1485,7 @@ function renderHeroBanner(idx) {
   $("heroWatchBtn")?.addEventListener("click", async () => {
     const id = state.heroCurrent?.id;
     if (!id) return;
-    if (!state.anime || state.currentAnimeId !== id) await openAnime(id, { pushHistory:false });
+    if (!state.anime || state.currentAnimeId !== id) await openAnime(id, { pushHistory: false });
     const ep = getFirstEpisodeNumber(state.animeEpisodes);
     if (ep) await openEpisode(id, ep, state.currentQuality || "HD");
   });
@@ -1757,9 +1795,7 @@ async function openAnime(animeId, options = {}) {
     setPage("anime", push);
     updateUrlParams({ anime: animeId });
   } catch(err) {
-    if (err.name !== "AbortError") {
-      showToast("Não foi possível abrir esse anime.");
-    }
+    if (err.name !== "AbortError") showToast("Não foi possível abrir esse anime.");
   } finally { hideLoading(); }
 }
 
@@ -1774,7 +1810,7 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
 
   try {
     if (!state.anime || state.currentAnimeId !== String(animeId)) {
-      await openAnime(animeId, { pushHistory:false });
+      await openAnime(animeId, { pushHistory: false });
     }
     if (requestId !== state.openEpisodeRequestId) return;
 
@@ -1839,9 +1875,7 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
     updateUrlParams({ anime: animeId, ep: episode, q: state.currentQuality });
     setPage("player", push);
   } catch(err) {
-    if (err.name !== "AbortError") {
-      showToast("Não foi possível abrir esse episódio.");
-    }
+    if (err.name !== "AbortError") showToast("Não foi possível abrir esse episódio.");
   } finally {
     hideLoading();
     if (requestId === state.openEpisodeRequestId) state.openingEpisode = false;
@@ -1861,7 +1895,7 @@ function parseRouteFromUrl() {
 }
 function focusSearch() {
   els.searchInput.focus();
-  els.searchInput.scrollIntoView({ behavior:"smooth", block:"center" });
+  els.searchInput.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function connectRealtimeUpdates() {
@@ -1877,7 +1911,7 @@ function connectRealtimeUpdates() {
         await loadSectionResults(state.currentSection, state.resultsPage || 1);
       }
       if (state.currentPage === "anime" && state.currentAnimeId) {
-        await openAnime(state.currentAnimeId, { pushHistory:false });
+        await openAnime(state.currentAnimeId, { pushHistory: false });
       }
     });
   } catch(e) {}
@@ -2050,7 +2084,7 @@ els.resumeEpisodeBtn.addEventListener("click", async () => {
   await openEpisode(state.currentAnimeId, ep, state.currentQuality || "HD");
 });
 els.goToPlayerBtn.addEventListener("click", async () => {
-  if (!state.currentEpisode || state.currentAnimeId !== state.currentAnimeId) {
+  if (!state.currentEpisode) {
     const ep = getFirstEpisodeNumber(state.animeEpisodes);
     if (!ep) { showToast("Sem episódio."); return; }
     await openEpisode(state.currentAnimeId, ep, state.currentQuality || "HD");
