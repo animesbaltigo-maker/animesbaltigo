@@ -36,22 +36,22 @@ async def group_ai_handler(update, context):
         await message.reply_text("Fala comigo assim: akira me recomenda um anime 🔥")
         return
 
-    # resposta
+       # resposta
     try:
         reply = generate_anime_reply(user_text)
+        # se sua função for async, usa essa linha:
+        # reply = await generate_anime_reply(user_text)
+
         await message.reply_text(reply)
+
     except Exception as e:
+        err = str(e)
 
-        except Exception as e:
-    err = str(e)
+        if "RESOURCE_EXHAUSTED" in err or "429" in err:
+            await message.reply_text(
+                "Akira tá sem chakra agora 😵‍💫 tenta de novo em alguns segundos."
+            )
+            return
 
-    if "RESOURCE_EXHAUSTED" in err or "429" in err:
-        await message.reply_text(
-            "Akira tá sem chakra agora 😵‍💫 tenta de novo em alguns segundos."
-        )
-        return
-
-    print("Erro IA:", e)
-    await message.reply_text("Tive um bug aqui 😵 tenta de novo")
         print("Erro IA:", e)
         await message.reply_text("Tive um bug aqui 😵 tenta de novo")
