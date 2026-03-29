@@ -47,12 +47,12 @@ async def group_ai_handler(update, context):
     except Exception as e:
         err = str(e)
 
-        if "RESOURCE_EXHAUSTED" in err or "429" in err:
-    await message.reply_text(
+    if "RESOURCE_EXHAUSTED" in err or "429" in err:
+        await message.reply_text(
         "Tch… gastei todo meu chakra respondendo vocês 😵‍💫\n"
         "Me dá um tempinho e tenta de novo, ok?"
     )
-    return
+       return
 
         print("Erro IA:", e)
         await message.reply_text("Tive um bug aqui 😵 tenta de novo")
