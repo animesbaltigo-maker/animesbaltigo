@@ -24,13 +24,20 @@ async def group_ai_handler(update, context):
         and message.reply_to_message.from_user.username.lower() == BOT_USERNAME.lower()
     )
 
-    # Verifica se começa com "akira"
-    if text_lower.startswith(TRIGGER):
-        user_text = text[len(TRIGGER):].strip()
-    elif replying_to_bot:
-        user_text = text
-    else:
-        return
+    # Privado: responde qualquer mensagem
+if update.effective_chat and update.effective_chat.type == "private":
+    user_text = text
+
+# Grupo: responde se começar com o trigger
+elif text_lower.startswith(TRIGGER):
+    user_text = text[len(TRIGGER):].strip()
+
+# Grupo: responde se for reply ao bot
+elif replying_to_bot:
+    user_text = text
+
+else:
+    return
 
     if not user_text:
         await message.reply_text("Fala comigo assim: akira me recomenda um anime 🔥")
