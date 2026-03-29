@@ -1,9 +1,10 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from config import BOT_USERNAME
 from services.gemini_ai import generate_anime_reply
+from utils.gatekeeper import ensure_channel_membership
 
-BOT_USERNAME = "AnimesBaltigo_Bot"
 TRIGGER = "akira"
 
 
@@ -42,6 +43,10 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not user_text:
         await message.reply_text("Fala comigo assim: akira me recomenda um anime 🔥")
+        return
+
+    # Bloqueia uso da IA para quem não estiver no canal obrigatório
+    if not await ensure_channel_membership(update, context):
         return
 
     try:
