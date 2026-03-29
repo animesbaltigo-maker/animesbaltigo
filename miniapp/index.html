@@ -1,4 +1,6 @@
-<script>
+// Versao melhorada do script do mini app Telegram.
+// Cole este conteudo dentro da sua tag <script> no arquivo correto.
+
 const tg = window.Telegram?.WebApp || null;
 if (tg) {
   try {
@@ -6,7 +8,9 @@ if (tg) {
     tg.expand();
     tg.setHeaderColor?.("#05060f");
     tg.setBackgroundColor?.("#05060f");
-  } catch(e) { console.warn("Telegram WebApp init:", e); }
+  } catch (e) {
+    console.warn("Telegram WebApp init:", e);
+  }
 }
 
 const IS_TELEGRAM_WEBVIEW = !!window.Telegram?.WebApp;
@@ -17,13 +21,22 @@ const MAX_ATTEMPTS = 4;
 const API_TIMEOUT = 25000;
 const WATCH_KEY = "baltigo.watch.progress.v3";
 const ROUTE_KEY = "baltigo.route.v2";
+const MIN_PROGRESS_SECONDS = 15;
+const PROGRESS_SAVE_INTERVAL_MS = 5000;
 
 function storageGet(k, def) {
-  try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; }
-  catch(e) { return def; }
+  try {
+    const v = localStorage.getItem(k);
+    return v ? JSON.parse(v) : def;
+  } catch (e) {
+    return def;
+  }
 }
+
 function storageSet(k, v) {
-  try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {}
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+  } catch (e) {}
 }
 
 function getWatchMap() { return storageGet(WATCH_KEY, {}); }
@@ -62,9 +75,13 @@ function saveWatchProgress(p) {
 
   setWatchMap(map);
 }
+
 function getContinueWatching() {
-  return Object.values(getWatchMap()).sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  return Object.values(getWatchMap())
+    .filter(item => item?.latestEpisode)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
 }
+
 function getAnimeWatch(aid) { return getWatchMap()[aid] || null; }
 function getEpisodeWatch(aid, ep) { return getWatchMap()?.[aid]?.episodes?.[String(ep)] || null; }
 
@@ -100,88 +117,99 @@ const state = {
   cssFsActive: false,
   nativeFsActive: false,
   cinemaModeActive: false,
-  requestSeq: { home:0, section:0, search:0, anime:0 },
-  aborters: { home:null, section:null, search:null, anime:null },
-  nextEpisodeTimer: null
+  requestSeq: { home: 0, section: 0, search: 0, anime: 0, episode: 0 },
+  aborters: { home: null, section: null, search: null, anime: null, episode: null },
+  nextEpisodeTimer: null,
+  nextEpisodeCancelHandler: null,
+  playerSessionId: 0,
+  lastProgressKey: "",
+  lastProgressSaveAt: 0,
+  loadingSeq: 0,
+  activeLoadingToken: 0
 };
 
 const $ = id => document.getElementById(id);
 const els = {
-  topbar:$("topbar"),
-  headerSubtitle:$("headerSubtitle"),
-  loadingOverlay:$("loadingOverlay"),
-  loadingTitle:$("loadingTitle"),
-  loadingText:$("loadingText"),
-  toast:$("toast"),
-  backBtn:$("backBtn"),
-  refreshBtn:$("refreshBtn"),
-  homeBtn:$("homeBtn"),
-  homePage:$("homePage"),
-  resultsPage:$("resultsPage"),
-  animePage:$("animePage"),
-  playerPage:$("playerPage"),
-  heroArea:$("heroArea"),
-  continueSection:$("continueSection"),
-  searchInput:$("searchInput"),
-  searchClear:$("searchClear"),
-  homeSections:$("homeSections"),
-  resultsTitle:$("resultsTitle"),
-  resultsSubtitle:$("resultsSubtitle"),
-  resultsGrid:$("resultsGrid"),
-  resultsPagination:$("resultsPagination"),
-  resultsBackBtn:$("resultsBackBtn"),
-  animeCover:$("animeCover"),
-  animePrefix:$("animePrefix"),
-  animeTitle:$("animeTitle"),
-  animeMeta:$("animeMeta"),
-  animeDesc:$("animeDesc"),
-  animeGenres:$("animeGenres"),
-  descToggle:$("descToggle"),
-  openFirstEpisodeBtn:$("openFirstEpisodeBtn"),
-  goToPlayerBtn:$("goToPlayerBtn"),
-  backToHomeFromAnimeBtn:$("backToHomeFromAnimeBtn"),
-  episodesInfo:$("episodesInfo"),
-  episodesGrid:$("episodesGrid"),
-  playerPageSubtitle:$("playerPageSubtitle"),
-  playerTopBar:$("playerTopBar"),
-  videoContainer:$("videoContainer"),
-  videoPlayer:$("videoPlayer"),
-  iframePlayer:$("iframePlayer"),
-  videoStatusOverlay:$("videoStatusOverlay"),
-  videoStatusIconSlot:$("videoStatusIconSlot"),
-  videoStatusText:$("videoStatusText"),
-  videoStatusSub:$("videoStatusSub"),
-  playerTitle:$("playerTitle"),
-  playerMeta:$("playerMeta"),
-  qualityRow:$("qualityRow"),
-  prevEpisodeBtn:$("prevEpisodeBtn"),
-  nextEpisodeBtn:$("nextEpisodeBtn"),
-  episodeListBtn:$("episodeListBtn"),
-  backToAnimeBtn:$("backToAnimeBtn"),
-  backToHomeFromPlayerBtn:$("backToHomeFromPlayerBtn"),
-  openInBrowserBtn:$("openInBrowserBtn"),
-  retryPlayerBtn:$("retryPlayerBtn"),
-  fullscreenBtn:$("fullscreenBtn"),
-  cssFsExit:$("cssFsExit"),
-  playerDesc:$("playerDesc"),
-  playerNote:$("playerNote")
+  topbar: $("topbar"),
+  headerSubtitle: $("headerSubtitle"),
+  loadingOverlay: $("loadingOverlay"),
+  loadingTitle: $("loadingTitle"),
+  loadingText: $("loadingText"),
+  toast: $("toast"),
+  backBtn: $("backBtn"),
+  refreshBtn: $("refreshBtn"),
+  homeBtn: $("homeBtn"),
+  homePage: $("homePage"),
+  resultsPage: $("resultsPage"),
+  animePage: $("animePage"),
+  playerPage: $("playerPage"),
+  heroArea: $("heroArea"),
+  continueSection: $("continueSection"),
+  searchInput: $("searchInput"),
+  searchClear: $("searchClear"),
+  homeSections: $("homeSections"),
+  resultsTitle: $("resultsTitle"),
+  resultsSubtitle: $("resultsSubtitle"),
+  resultsGrid: $("resultsGrid"),
+  resultsPagination: $("resultsPagination"),
+  resultsBackBtn: $("resultsBackBtn"),
+  animeCover: $("animeCover"),
+  animePrefix: $("animePrefix"),
+  animeTitle: $("animeTitle"),
+  animeMeta: $("animeMeta"),
+  animeDesc: $("animeDesc"),
+  animeGenres: $("animeGenres"),
+  descToggle: $("descToggle"),
+  openFirstEpisodeBtn: $("openFirstEpisodeBtn"),
+  goToPlayerBtn: $("goToPlayerBtn"),
+  backToHomeFromAnimeBtn: $("backToHomeFromAnimeBtn"),
+  episodesInfo: $("episodesInfo"),
+  episodesGrid: $("episodesGrid"),
+  playerPageSubtitle: $("playerPageSubtitle"),
+  playerTopBar: $("playerTopBar"),
+  videoContainer: $("videoContainer"),
+  videoPlayer: $("videoPlayer"),
+  iframePlayer: $("iframePlayer"),
+  videoStatusOverlay: $("videoStatusOverlay"),
+  videoStatusIconSlot: $("videoStatusIconSlot"),
+  videoStatusText: $("videoStatusText"),
+  videoStatusSub: $("videoStatusSub"),
+  playerTitle: $("playerTitle"),
+  playerMeta: $("playerMeta"),
+  qualityRow: $("qualityRow"),
+  prevEpisodeBtn: $("prevEpisodeBtn"),
+  nextEpisodeBtn: $("nextEpisodeBtn"),
+  episodeListBtn: $("episodeListBtn"),
+  backToAnimeBtn: $("backToAnimeBtn"),
+  backToHomeFromPlayerBtn: $("backToHomeFromPlayerBtn"),
+  openInBrowserBtn: $("openInBrowserBtn"),
+  retryPlayerBtn: $("retryPlayerBtn"),
+  fullscreenBtn: $("fullscreenBtn"),
+  cssFsExit: $("cssFsExit"),
+  playerDesc: $("playerDesc"),
+  playerNote: $("playerNote")
 };
 
 function esc(v) {
   return String(v ?? "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
+
 function normalizeQuality(v) {
   const q = String(v || "HD").trim().toUpperCase();
-  if (["FULLHD","FHD","1080P","HD","720P"].includes(q)) return "HD";
-  if (["SD","480P","360P"].includes(q)) return "SD";
+  if (["FULLHD", "FHD", "1080P", "HD", "720P"].includes(q)) return "HD";
+  if (["SD", "480P", "360P"].includes(q)) return "SD";
   return q || "HD";
 }
-function oppositeQuality(q) { return normalizeQuality(q) === "HD" ? "SD" : "HD"; }
+
+function oppositeQuality(q) {
+  return normalizeQuality(q) === "HD" ? "SD" : "HD";
+}
+
 function imgSrc(src, title) {
   if (src && src.startsWith("http")) return src;
   return `https://placehold.co/600x900/0d1128/7c3aed?text=${encodeURIComponent(title || "Anime")}`;
@@ -189,35 +217,51 @@ function imgSrc(src, title) {
 
 let toastTimer = null;
 function showToast(msg) {
-  if (!msg) return;
+  if (!msg || !els.toast) return;
   clearTimeout(toastTimer);
   els.toast.textContent = msg;
   els.toast.classList.add("show");
   toastTimer = setTimeout(() => els.toast.classList.remove("show"), 3200);
 }
+
 function showLoading(t = "Carregando...", x = "Aguarde.") {
+  const token = ++state.loadingSeq;
+  state.activeLoadingToken = token;
   els.loadingTitle.textContent = t;
-  els.loadingText.textContent  = x;
+  els.loadingText.textContent = x;
   els.loadingOverlay.classList.add("active");
+  return token;
 }
-function hideLoading() { els.loadingOverlay.classList.remove("active"); }
-function setSubtitle(t) { els.headerSubtitle.textContent = t || "BALTIGO"; }
+
+function hideLoading(token = 0) {
+  if (token && token !== state.activeLoadingToken) return;
+  if (!token || token === state.activeLoadingToken) {
+    els.loadingOverlay.classList.remove("active");
+    if (token === state.activeLoadingToken) state.activeLoadingToken = 0;
+  }
+}
+
+function setSubtitle(t) {
+  els.headerSubtitle.textContent = t || "BALTIGO";
+}
 
 function saveRoute(payload) {
   setStoredRoute(payload || null);
 }
-function updateUrlParams({ anime, ep, q, search, section, page }) {
+
+function updateUrlParams({ anime, ep, q, search, section, page }, { replace = true } = {}) {
   const url = new URL(window.location.href);
-  ["anime","ep","q","search","section","page"].forEach(k => url.searchParams.delete(k));
+  ["anime", "ep", "q", "search", "section", "page"].forEach(k => url.searchParams.delete(k));
   if (anime) url.searchParams.set("anime", anime);
   if (ep) url.searchParams.set("ep", ep);
   if (q) url.searchParams.set("q", normalizeQuality(q));
   if (search) url.searchParams.set("search", search);
   if (section) url.searchParams.set("section", section);
   if (page) url.searchParams.set("page", String(page));
-  history.replaceState({}, "", url.toString());
+  history[replace ? "replaceState" : "pushState"]({}, "", url.toString());
   saveRoute({ anime, ep, q: normalizeQuality(q || ""), search, section, page });
 }
+
 function parseRoute() {
   const p = new URLSearchParams(window.location.search);
   return {
@@ -226,8 +270,39 @@ function parseRoute() {
     q: normalizeQuality(p.get("q") || "HD"),
     search: p.get("search") || "",
     section: p.get("section") || "",
-    page: parseInt(p.get("page") || "1") || 1
+    page: parseInt(p.get("page") || "1", 10) || 1
   };
+}
+
+function openExternalUrl(url) {
+  if (!url) return;
+  try {
+    if (tg?.openLink) {
+      tg.openLink(url, { try_instant_view: false });
+      return;
+    }
+  } catch (e) {}
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function setSectionChipActive(sectionKey = "") {
+  document.querySelectorAll("[data-section]").forEach(chip => {
+    chip.classList.toggle("active", chip.dataset.section === sectionKey);
+  });
+}
+
+const telegramBackHandler = () => goBack();
+function syncTelegramBackButton() {
+  if (!tg?.BackButton) return;
+  try {
+    tg.BackButton.offClick?.(telegramBackHandler);
+    if (state.currentPage !== "home") {
+      tg.BackButton.onClick?.(telegramBackHandler);
+      tg.BackButton.show?.();
+    } else {
+      tg.BackButton.hide?.();
+    }
+  } catch (e) {}
 }
 
 function enterCinemaMode() {
@@ -236,92 +311,49 @@ function enterCinemaMode() {
   els.topbar.classList.add("cinema-mode");
   els.playerPage.classList.add("cinema-expand");
 }
+
 function exitCinemaMode() {
   if (!state.cinemaModeActive) return;
   state.cinemaModeActive = false;
   els.topbar.classList.remove("cinema-mode");
   els.playerPage.classList.remove("cinema-expand");
 }
-els.videoPlayer.addEventListener("click", () => {
-  if (state.currentPage === "player" && !document.fullscreenElement && !state.cssFsActive) {
-    state.cinemaModeActive ? exitCinemaMode() : enterCinemaMode();
-  }
-});
 
-function setPage(page, push = true) {
-  exitCinemaMode();
-  const prev = state.currentPage;
-  ["homePage","resultsPage","animePage","playerPage"].forEach(k => els[k].classList.add("hidden"));
-  if (page === "home") els.homePage.classList.remove("hidden");
-  if (page === "results") els.resultsPage.classList.remove("hidden");
-  if (page === "anime") els.animePage.classList.remove("hidden");
-  if (page === "player") {
-    els.playerPage.classList.remove("hidden");
-    setTimeout(() => {
-      if (state.currentPage === "player" && window.innerWidth <= 768) enterCinemaMode();
-    }, 800);
+function cancelNextEpisodeAutoplay() {
+  clearTimeout(state.nextEpisodeTimer);
+  state.nextEpisodeTimer = null;
+  if (state.nextEpisodeCancelHandler) {
+    document.removeEventListener("click", state.nextEpisodeCancelHandler);
+    state.nextEpisodeCancelHandler = null;
   }
-  state.currentPage = page;
-  const titles = { home:"Início", results:"Resultados", anime: state.anime?.title || "Anime", player:"Player" };
-  setSubtitle(titles[page] || "BALTIGO");
-  if (push && prev !== page) state.historyStack.push(prev);
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-function goBack() {
-  exitCinemaMode();
-  const prev = state.historyStack.pop() || "home";
-  if (prev === "anime" && state.currentAnimeId) {
-    setPage("anime", false);
-    updateUrlParams({ anime: state.currentAnimeId });
-    return;
-  }
-  if (prev === "results") {
-    setPage("results", false);
-    if (state.resultsMode === "search") updateUrlParams({ search: state.searchQuery, page: state.resultsPage });
-    else updateUrlParams({ section: state.currentSection, page: state.resultsPage });
-    return;
-  }
-  setPage("home", false);
-  updateUrlParams({});
 }
 
-function abortNamedRequest(name) {
-  try { state.aborters[name]?.abort?.(); } catch(e) {}
-  state.aborters[name] = null;
+function bumpPlayerSession() {
+  state.playerSessionId += 1;
+  return state.playerSessionId;
 }
-async function apiGet(path, ms = API_TIMEOUT, requestName = "") {
-  if (requestName) abortNamedRequest(requestName);
-  const ctrl = new AbortController();
-  if (requestName) state.aborters[requestName] = ctrl;
 
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      headers: { "Accept": "application/json" },
-      cache: "no-store",
-      signal: ctrl.signal
-    });
-    clearTimeout(timer);
-    if (!res.ok) {
-      let d = `Erro ${res.status}`;
-      try { d = (await res.json())?.detail || d; } catch(e) {}
-      throw new Error(d);
-    }
-    return res.json();
-  } catch(err) {
-    clearTimeout(timer);
-    throw err;
+function clearStallTimer() {
+  if (state.stallTimer) {
+    clearTimeout(state.stallTimer);
+    state.stallTimer = null;
   }
 }
 
 function showVideoOverlay(type, text, sub = "") {
-  if (type === "loading") els.videoStatusIconSlot.innerHTML = '<div class="spinner-ring"></div>';
-  else if (type.startsWith("icon:")) els.videoStatusIconSlot.innerHTML = `<div class="overlay-icon">${type.slice(5)}</div>`;
+  if (type === "loading") {
+    els.videoStatusIconSlot.innerHTML = '<div class="spinner-ring"></div>';
+  } else if (type.startsWith("icon:")) {
+    els.videoStatusIconSlot.innerHTML = `<div class="overlay-icon">${type.slice(5)}</div>`;
+  }
   els.videoStatusText.textContent = text;
   els.videoStatusSub.textContent = sub;
   els.videoStatusOverlay.classList.add("active");
 }
-function hideVideoOverlay() { els.videoStatusOverlay.classList.remove("active"); }
+
+function hideVideoOverlay() {
+  els.videoStatusOverlay.classList.remove("active");
+}
 
 function buildProxyUrl(rawUrl, bust = 0) {
   const p = new URL(`${API_BASE}/api/proxy-stream`);
@@ -329,56 +361,123 @@ function buildProxyUrl(rawUrl, bust = 0) {
   if (bust) p.searchParams.set("_t", String(bust));
   return p.toString();
 }
-function clearStallTimer() {
-  if (state.stallTimer) { clearTimeout(state.stallTimer); state.stallTimer = null; }
-}
-function startStallTimer() {
-  clearStallTimer();
-  state.stallTimer = setTimeout(() => {
-    if (!state.videoReady) _escalatePlayerFailure();
-  }, STALL_TIMEOUT_MS);
-}
-function _resetVideoElement() {
+
+function _resetVideoElement({ preserveOverlay = false } = {}) {
   clearStallTimer();
   state.videoReady = false;
-  try { els.videoPlayer.pause(); } catch(e) {}
+  try { els.videoPlayer.pause(); } catch (e) {}
   els.videoPlayer.removeAttribute("src");
   els.videoPlayer.load();
   els.videoPlayer.style.display = "block";
+  els.videoPlayer.dataset.rawUrl = "";
+  els.iframePlayer.onload = null;
+  els.iframePlayer.onerror = null;
   els.iframePlayer.src = "about:blank";
   els.iframePlayer.style.display = "none";
+  if (!preserveOverlay) hideVideoOverlay();
 }
-function clearPlayerState() {
+
+function clearPlayerState({ invalidateSession = true, clearEpisodeItem = false } = {}) {
+  if (invalidateSession) bumpPlayerSession();
+  cancelNextEpisodeAutoplay();
   _resetVideoElement();
-  hideVideoOverlay();
   state.currentVideoUrl = "";
-  state.currentEpisodeItem = null;
   state.attempt = 0;
+  if (clearEpisodeItem) state.currentEpisodeItem = null;
+  els.openInBrowserBtn.disabled = true;
+  els.openInBrowserBtn.dataset.url = "";
 }
-function _loadVideoUrl(rawUrl) {
+
+function startStallTimer(sessionId = state.playerSessionId) {
+  clearStallTimer();
+  state.stallTimer = setTimeout(() => {
+    if (
+      sessionId === state.playerSessionId &&
+      state.currentPage === "player" &&
+      !state.videoReady
+    ) {
+      _escalatePlayerFailure(sessionId);
+    }
+  }, STALL_TIMEOUT_MS);
+}
+
+function persistCurrentWatchProgress({ force = false, completed = false } = {}) {
+  const v = els.videoPlayer;
+  if (!state.currentAnimeId || !state.currentEpisode || v.style.display === "none") return;
+
+  const watchedSeconds = Math.floor(v.currentTime || 0);
+  const durationSeconds = Math.floor(v.duration || 0);
+  if (!force && watchedSeconds < MIN_PROGRESS_SECONDS) return;
+  if (!force && durationSeconds <= 0) return;
+
+  const key = `${state.currentAnimeId}:${state.currentEpisode}`;
+  const now = Date.now();
+  if (!force && state.lastProgressKey === key && now - state.lastProgressSaveAt < PROGRESS_SAVE_INTERVAL_MS) {
+    return;
+  }
+
+  state.lastProgressKey = key;
+  state.lastProgressSaveAt = now;
+
+  saveWatchProgress({
+    animeId: state.currentAnimeId,
+    animeTitle: state.anime?.title || "Anime",
+    episode: state.currentEpisode,
+    watchedSeconds,
+    durationSeconds,
+    cover: state.anime?.cover_url || state.anime?.banner_url || "",
+    completed: completed || (durationSeconds > 0 && watchedSeconds / durationSeconds > 0.9)
+  });
+}
+
+function _loadVideoUrl(rawUrl, sessionId = state.playerSessionId) {
+  if (!rawUrl || sessionId !== state.playerSessionId) return;
   state.currentVideoUrl = rawUrl;
   state.videoReady = false;
-  _resetVideoElement();
+  _resetVideoElement({ preserveOverlay: true });
   showVideoOverlay("loading", "Carregando vídeo...", "Conectando ao servidor");
   els.videoPlayer.dataset.rawUrl = rawUrl;
   els.videoPlayer.src = buildProxyUrl(rawUrl, Date.now());
   els.videoPlayer.load();
-  startStallTimer();
+  startStallTimer(sessionId);
 }
-function _loadIframeUrl(url) {
-  _resetVideoElement();
+
+function _loadIframeUrl(url, sessionId = state.playerSessionId) {
+  if (!url || sessionId !== state.playerSessionId) return;
+  state.currentVideoUrl = url;
+  state.videoReady = false;
+  _resetVideoElement({ preserveOverlay: true });
   showVideoOverlay("loading", "Abrindo player incorporado...", "Preparando embed");
   els.videoPlayer.style.display = "none";
   els.iframePlayer.style.display = "block";
-  els.iframePlayer.src = url;
-  setTimeout(() => {
+  els.iframePlayer.onload = () => {
+    if (sessionId !== state.playerSessionId) return;
     state.videoReady = true;
+    clearStallTimer();
     hideVideoOverlay();
-  }, 1200);
+  };
+  els.iframePlayer.onerror = () => {
+    if (sessionId !== state.playerSessionId) return;
+    _escalatePlayerFailure(sessionId);
+  };
+  els.iframePlayer.src = url;
+  startStallTimer(sessionId);
 }
+
 function _isDirectVideo(url) {
   const l = String(url || "").toLowerCase();
-  return l.includes(".m3u8") || l.includes(".mp4") || l.includes(".webm") || l.includes("videoplayback");
+  return (
+    l.includes(".m3u8") ||
+    l.includes(".mp4") ||
+    l.includes(".webm") ||
+    l.includes("videoplayback") ||
+    l.includes("googleusercontent")
+  );
+}
+
+function isIframeLikeUrl(url) {
+  const u = String(url || "").toLowerCase();
+  return /blogger\.com\/video\.g|youtube\.com\/embed|player|embed/.test(u);
 }
 
 function enterCssFullscreen() {
@@ -393,6 +492,7 @@ function enterCssFullscreen() {
   screen.orientation?.lock?.("landscape").catch(() => {});
   showToast("Toque ✕ para sair da tela cheia");
 }
+
 function exitCssFullscreen() {
   if (!state.cssFsActive) return;
   state.cssFsActive = false;
@@ -402,9 +502,13 @@ function exitCssFullscreen() {
   els.cssFsExit.style.display = "none";
   screen.orientation?.unlock?.();
 }
+
 async function requestFullscreen() {
   const video = els.videoPlayer;
-  if (state.cssFsActive) { exitCssFullscreen(); return; }
+  if (state.cssFsActive) {
+    exitCssFullscreen();
+    return;
+  }
 
   const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
   if (fsEl) {
@@ -417,8 +521,10 @@ async function requestFullscreen() {
   }
 
   const isVideoVisible = video.style.display !== "none";
-
-  if (IS_TELEGRAM_WEBVIEW) { enterCssFullscreen(); return; }
+  if (IS_TELEGRAM_WEBVIEW) {
+    enterCssFullscreen();
+    return;
+  }
 
   if (isVideoVisible && video.requestFullscreen) {
     try {
@@ -426,7 +532,7 @@ async function requestFullscreen() {
       state.nativeFsActive = true;
       screen.orientation?.lock?.("landscape").catch(() => {});
       return;
-    } catch(e) {}
+    } catch (e) {}
   }
 
   if (isVideoVisible && video.webkitEnterFullscreen) {
@@ -434,7 +540,7 @@ async function requestFullscreen() {
       video.webkitEnterFullscreen();
       state.nativeFsActive = true;
       return;
-    } catch(e) {}
+    } catch (e) {}
   }
 
   const container = els.videoContainer;
@@ -445,14 +551,16 @@ async function requestFullscreen() {
       state.nativeFsActive = true;
       screen.orientation?.lock?.("landscape").catch(() => {});
       return;
-    } catch(e) {}
+    } catch (e) {}
   }
 
   enterCssFullscreen();
 }
+
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && state.cssFsActive) exitCssFullscreen();
 });
+
 els.cssFsExit.addEventListener("click", exitCssFullscreen);
 els.videoPlayer.addEventListener("dblclick", requestFullscreen);
 
@@ -460,6 +568,7 @@ function _onNativeFsChange() {
   if (!state.nativeFsActive) return;
   if (!(document.fullscreenElement || document.webkitFullscreenElement)) state.nativeFsActive = false;
 }
+
 document.addEventListener("fullscreenchange", _onNativeFsChange);
 document.addEventListener("webkitfullscreenchange", _onNativeFsChange);
 window.addEventListener("orientationchange", () => {
@@ -470,83 +579,107 @@ window.addEventListener("orientationchange", () => {
   }, 200);
 });
 
-async function _escalatePlayerFailure() {
-  clearStallTimer();
-  state.attempt++;
-  const { currentAnimeId: aid, currentEpisode: ep, currentQuality: q } = state;
+els.videoPlayer.addEventListener("click", () => {
+  if (state.currentPage === "player" && !document.fullscreenElement && !state.cssFsActive) {
+    state.cinemaModeActive ? exitCinemaMode() : enterCinemaMode();
+  }
+});
 
-  if (state.attempt === 1) {
-    const rawUrl = state.currentVideoUrl;
-    if (!rawUrl) { _showFinalError(); return; }
-    showToast("Reconectando...");
-    showVideoOverlay("loading", "Reconectando...", `Tentativa ${state.attempt + 1} de ${MAX_ATTEMPTS}`);
-    _resetVideoElement();
-    els.videoPlayer.dataset.rawUrl = rawUrl;
-    els.videoPlayer.src = buildProxyUrl(rawUrl, Date.now());
-    els.videoPlayer.load();
-    startStallTimer();
-    return;
+function setPage(page, push = true) {
+  const prev = state.currentPage;
+  if (prev === "player" && page !== "player") {
+    clearPlayerState({ invalidateSession: true, clearEpisodeItem: false });
   }
 
-  if (state.attempt === 2) {
-    showToast("Buscando link atualizado...");
-    showVideoOverlay("loading", "Buscando link atualizado...", "O link anterior expirou");
-    try {
-      const data = await _fetchEpisodeWithTimeout(aid, ep, q, true);
-      const newUrl = pickEpisodeVideoUrl(data?.item);
-      if (!newUrl) throw new Error("no video");
-      state.currentEpisodeItem = data.item;
-      state.currentVideoUrl = newUrl;
-      if (isIframeLikeUrl(newUrl) || !_isDirectVideo(newUrl)) _loadIframeUrl(newUrl);
-      else {
-        _resetVideoElement();
-        els.videoPlayer.dataset.rawUrl = newUrl;
-        els.videoPlayer.src = buildProxyUrl(newUrl, Date.now());
-        els.videoPlayer.load();
-        startStallTimer();
-      }
-    } catch(e) {
-      state.attempt++;
-      await _escalatePlayerFailure();
-    }
-    return;
+  exitCinemaMode();
+  ["homePage", "resultsPage", "animePage", "playerPage"].forEach(k => els[k].classList.add("hidden"));
+  if (page === "home") els.homePage.classList.remove("hidden");
+  if (page === "results") els.resultsPage.classList.remove("hidden");
+  if (page === "anime") els.animePage.classList.remove("hidden");
+  if (page === "player") {
+    els.playerPage.classList.remove("hidden");
+    setTimeout(() => {
+      if (state.currentPage === "player" && window.innerWidth <= 768) enterCinemaMode();
+    }, 800);
   }
 
-  if (state.attempt === 3) {
-    const alt = oppositeQuality(q);
-    showToast(`Tentando qualidade ${alt}...`);
-    showVideoOverlay("loading", `Tentando ${alt}...`, "Última tentativa automática");
-    try {
-      const data = await _fetchEpisodeWithTimeout(aid, ep, alt, true);
-      const newUrl = pickEpisodeVideoUrl(data?.item);
-      if (!newUrl) throw new Error("no video");
-      state.currentQuality = alt;
-      state.currentEpisodeItem = data.item;
-      state.currentVideoUrl = newUrl;
-      renderQualityButtons(data.item);
-      if (isIframeLikeUrl(newUrl) || !_isDirectVideo(newUrl)) _loadIframeUrl(newUrl);
-      else {
-        _resetVideoElement();
-        els.videoPlayer.dataset.rawUrl = newUrl;
-        els.videoPlayer.src = buildProxyUrl(newUrl, Date.now());
-        els.videoPlayer.load();
-        startStallTimer();
-      }
-    } catch(e) {
-      _showFinalError();
-    }
-    return;
-  }
-
-  _showFinalError();
+  state.currentPage = page;
+  const titles = {
+    home: "Início",
+    results: "Resultados",
+    anime: state.anime?.title || "Anime",
+    player: "Player"
+  };
+  setSubtitle(titles[page] || "BALTIGO");
+  if (push && prev !== page) state.historyStack.push(prev);
+  syncTelegramBackButton();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
+
+function goBack() {
+  exitCinemaMode();
+  const fallback = state.currentPage === "player" && state.currentAnimeId ? "anime" : "home";
+  const prev = state.historyStack.pop() || fallback;
+
+  if (prev === "anime" && state.currentAnimeId) {
+    setPage("anime", false);
+    updateUrlParams({ anime: state.currentAnimeId });
+    return;
+  }
+
+  if (prev === "results") {
+    setPage("results", false);
+    if (state.resultsMode === "search") {
+      updateUrlParams({ search: state.searchQuery, page: state.resultsPage });
+    } else {
+      updateUrlParams({ section: state.currentSection, page: state.resultsPage });
+    }
+    return;
+  }
+
+  setPage("home", false);
+  updateUrlParams({});
+}
+
+function abortNamedRequest(name) {
+  try { state.aborters[name]?.abort?.(); } catch (e) {}
+  state.aborters[name] = null;
+}
+
+async function apiGet(path, ms = API_TIMEOUT, requestName = "") {
+  if (requestName) abortNamedRequest(requestName);
+  const ctrl = new AbortController();
+  if (requestName) state.aborters[requestName] = ctrl;
+
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      let d = `Erro ${res.status}`;
+      try { d = (await res.json())?.detail || d; } catch (e) {}
+      throw new Error(d);
+    }
+    return res.json();
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
 async function _fetchEpisodeWithTimeout(animeId, episode, quality, refresh = false) {
-  const path = `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(quality)}${refresh ? "&refresh=1" : ""}`;
+  const path =
+    `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}` +
+    `?quality=${encodeURIComponent(quality)}${refresh ? "&refresh=1" : ""}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), LINK_FETCH_TIMEOUT);
   try {
     const res = await fetch(`${API_BASE}${path}`, {
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
       cache: "no-store",
       signal: ctrl.signal
     });
@@ -556,11 +689,81 @@ async function _fetchEpisodeWithTimeout(animeId, episode, quality, refresh = fal
     clearTimeout(timer);
   }
 }
+
 function _showFinalError() {
   clearStallTimer();
+  state.videoReady = false;
   showVideoOverlay("icon:⚠️", "Vídeo indisponível", "Tente recarregar ou use outra qualidade");
   els.playerNote.textContent = "Não foi possível carregar esse vídeo. Recarregue ou troque a qualidade.";
   showToast("Vídeo indisponível. Tente novamente.");
+}
+
+async function _escalatePlayerFailure(sessionId = state.playerSessionId) {
+  if (sessionId !== state.playerSessionId || state.currentPage !== "player") return;
+  clearStallTimer();
+
+  const aid = state.currentAnimeId;
+  const ep = state.currentEpisode;
+  const q = state.currentQuality;
+  if (!aid || !ep) {
+    _showFinalError();
+    return;
+  }
+
+  const attempt = ++state.attempt;
+
+  if (attempt === 1) {
+    const rawUrl = state.currentVideoUrl;
+    if (!rawUrl) {
+      _showFinalError();
+      return;
+    }
+    showToast("Reconectando...");
+    showVideoOverlay("loading", "Reconectando...", `Tentativa 2 de ${MAX_ATTEMPTS}`);
+    _loadVideoUrl(rawUrl, sessionId);
+    return;
+  }
+
+  if (attempt === 2) {
+    showToast("Buscando link atualizado...");
+    showVideoOverlay("loading", "Buscando link atualizado...", "O link anterior expirou");
+    try {
+      const data = await _fetchEpisodeWithTimeout(aid, ep, q, true);
+      if (sessionId !== state.playerSessionId) return;
+      const newUrl = pickEpisodeVideoUrl(data?.item);
+      if (!newUrl) throw new Error("no video");
+      state.currentEpisodeItem = data.item;
+      state.currentVideoUrl = newUrl;
+      if (isIframeLikeUrl(newUrl) || !_isDirectVideo(newUrl)) _loadIframeUrl(newUrl, sessionId);
+      else _loadVideoUrl(newUrl, sessionId);
+    } catch (e) {
+      if (sessionId === state.playerSessionId) await _escalatePlayerFailure(sessionId);
+    }
+    return;
+  }
+
+  if (attempt === 3) {
+    const alt = oppositeQuality(q);
+    showToast(`Tentando qualidade ${alt}...`);
+    showVideoOverlay("loading", `Tentando ${alt}...`, "Última tentativa automática");
+    try {
+      const data = await _fetchEpisodeWithTimeout(aid, ep, alt, true);
+      if (sessionId !== state.playerSessionId) return;
+      const newUrl = pickEpisodeVideoUrl(data?.item);
+      if (!newUrl) throw new Error("no video");
+      state.currentQuality = alt;
+      state.currentEpisodeItem = data.item;
+      state.currentVideoUrl = newUrl;
+      renderQualityButtons(data.item);
+      if (isIframeLikeUrl(newUrl) || !_isDirectVideo(newUrl)) _loadIframeUrl(newUrl, sessionId);
+      else _loadVideoUrl(newUrl, sessionId);
+    } catch (e) {
+      if (sessionId === state.playerSessionId) _showFinalError();
+    }
+    return;
+  }
+
+  _showFinalError();
 }
 
 function restoreWatchProgressForCurrentEpisode() {
@@ -573,6 +776,7 @@ function restoreWatchProgressForCurrentEpisode() {
     showToast(`Retomado em ${Math.floor(safeTime)}s`);
   }
 }
+
 function bindVideoEvents() {
   const v = els.videoPlayer;
 
@@ -582,146 +786,188 @@ function bindVideoEvents() {
     hideVideoOverlay();
     restoreWatchProgressForCurrentEpisode();
   });
+
   v.addEventListener("canplay", () => {
     state.videoReady = true;
     clearStallTimer();
     hideVideoOverlay();
   });
+
   v.addEventListener("playing", () => {
     state.videoReady = true;
     clearStallTimer();
     hideVideoOverlay();
     state.attempt = 0;
   });
-  v.addEventListener("waiting", () => {
-    if (!state.videoReady) {
-      showVideoOverlay("loading","Buffering...","Aguardando dados");
-      startStallTimer();
-    }
-  });
-  v.addEventListener("stalled", () => {
-    if (!state.videoReady) {
-      showVideoOverlay("loading","Conexão lenta...","Tentando recuperar");
-      startStallTimer();
-    }
-  });
+
+  const handleBuffering = () => {
+    if (state.currentPage !== "player" || v.style.display === "none" || v.paused || v.ended) return;
+    state.videoReady = false;
+    showVideoOverlay("loading", "Buffering...", "Aguardando dados");
+    startStallTimer(state.playerSessionId);
+  };
+
+  v.addEventListener("waiting", handleBuffering);
+  v.addEventListener("stalled", handleBuffering);
+
   v.addEventListener("error", async () => {
     if (!v.src || v.src === window.location.href) return;
-    await _escalatePlayerFailure();
+    await _escalatePlayerFailure(state.playerSessionId);
   });
+
   v.addEventListener("timeupdate", () => {
-    if (!state.currentAnimeId || !state.currentEpisode) return;
-    saveWatchProgress({
-      animeId: state.currentAnimeId,
-      animeTitle: state.anime?.title || "Anime",
-      episode: state.currentEpisode,
-      watchedSeconds: Math.floor(v.currentTime || 0),
-      durationSeconds: Math.floor(v.duration || 0),
-      cover: state.anime?.cover_url || state.anime?.banner_url || "",
-      completed: (v.duration || 0) > 0 && (v.currentTime || 0) / (v.duration || 1) > 0.9
-    });
+    persistCurrentWatchProgress();
   });
+
+  v.addEventListener("pause", () => {
+    persistCurrentWatchProgress({ force: true });
+  });
+
   v.addEventListener("ended", () => {
     if (!state.currentAnimeId || !state.currentEpisode) return;
-    saveWatchProgress({
-      animeId: state.currentAnimeId,
-      animeTitle: state.anime?.title || "Anime",
-      episode: state.currentEpisode,
-      watchedSeconds: Math.floor(v.duration || 0),
-      durationSeconds: Math.floor(v.duration || 0),
-      cover: state.anime?.cover_url || state.anime?.banner_url || "",
-      completed: true
-    });
+
+    persistCurrentWatchProgress({ force: true, completed: true });
     renderContinueWatching();
 
+    const animeId = state.currentAnimeId;
+    const episode = state.currentEpisode;
+    const quality = state.currentQuality;
     const nextEp = els.nextEpisodeBtn.dataset.episode;
+    const sessionId = state.playerSessionId;
+
     if (nextEp && !els.nextEpisodeBtn.disabled) {
-      clearTimeout(state.nextEpisodeTimer);
+      cancelNextEpisodeAutoplay();
       setTimeout(() => {
+        if (sessionId !== state.playerSessionId || animeId !== state.currentAnimeId) return;
         showToast("Próximo episódio em 3s... Toque para cancelar");
+        state.nextEpisodeCancelHandler = () => cancelNextEpisodeAutoplay();
+        document.addEventListener("click", state.nextEpisodeCancelHandler, { once: true });
         state.nextEpisodeTimer = setTimeout(() => {
-          openEpisode(state.currentAnimeId, nextEp, state.currentQuality, { pushHistory: false, force: true });
+          cancelNextEpisodeAutoplay();
+          if (
+            sessionId === state.playerSessionId &&
+            state.currentPage === "player" &&
+            animeId === state.currentAnimeId &&
+            episode === state.currentEpisode
+          ) {
+            openEpisode(animeId, nextEp, quality, { pushHistory: false, force: true });
+          }
         }, 3000);
-        const cancel = () => {
-          clearTimeout(state.nextEpisodeTimer);
-          document.removeEventListener("click", cancel);
-        };
-        document.addEventListener("click", cancel, { once: true });
       }, 500);
     }
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) persistCurrentWatchProgress({ force: true });
+  });
+
+  window.addEventListener("pagehide", () => {
+    persistCurrentWatchProgress({ force: true });
   });
 }
 
 function renderGenreTags(genres, expanded = false) {
   const list = Array.isArray(genres) ? genres.filter(Boolean) : [];
   const visible = expanded ? list : list.slice(0, 5);
-  const tags = visible.map(g => `<span class="genre-tag" data-genre-search="${esc(g)}">${esc(g)}</span>`).join("");
+  const tags = visible
+    .map(g => `<span class="genre-tag" data-genre-search="${esc(g)}">${esc(g)}</span>`)
+    .join("");
   const toggle = list.length > 5
     ? `<div class="genre-toggle-row"><button class="btn btn-ghost btn-xs" id="genreToggleBtn">${expanded ? "Ver menos" : "Ver mais"}</button></div>`
     : "";
   els.animeGenres.innerHTML = tags + toggle;
 }
+
 function buildSuggestionChips(suggestions) {
   if (!Array.isArray(suggestions) || !suggestions.length) return "";
   return `<div style="margin-top:14px"><div style="font-size:12px;color:var(--text-3);margin-bottom:8px;">Talvez você quis dizer:</div><div class="chips">${suggestions.map(s => `<button class="chip" data-suggest-search="${esc(s)}">${esc(s)}</button>`).join("")}</div></div>`;
 }
+
 function _normalizeCatalogResponse(data) {
-  if (Array.isArray(data)) return { items:data, page:1, total_pages:1, total_items:data.length, title:"Seção" };
+  if (Array.isArray(data)) return { items: data, page: 1, total_pages: 1, total_items: data.length, title: "Seção" };
   if (Array.isArray(data?.items)) return data;
-  if (Array.isArray(data?.results)) return { ...data, items:data.results };
-  if (Array.isArray(data?.data)) return { ...data, items:data.data };
-  if (Array.isArray(data?.animes)) return { ...data, items:data.animes };
-  if (Array.isArray(data?.list)) return { ...data, items:data.list };
+  if (Array.isArray(data?.results)) return { ...data, items: data.results };
+  if (Array.isArray(data?.data)) return { ...data, items: data.data };
+  if (Array.isArray(data?.animes)) return { ...data, items: data.animes };
+  if (Array.isArray(data?.list)) return { ...data, items: data.list };
   for (const key of Object.keys(data || {})) {
-    if (Array.isArray(data[key]) && (!data.items || !data.items.length)) return { ...data, items:data[key] };
+    if (Array.isArray(data[key]) && (!data.items || !data.items.length)) return { ...data, items: data[key] };
   }
-  return { ...(data || {}), items:[] };
+  return { ...(data || {}), items: [] };
 }
+
 function _normalizeSearchResponse(data) {
-  if (Array.isArray(data)) return { items:data, count:data.length, page:1, total_pages:1 };
+  if (Array.isArray(data)) return { items: data, count: data.length, page: 1, total_pages: 1 };
   if (Array.isArray(data?.items)) return data;
-  if (Array.isArray(data?.results)) return { ...data, items:data.results };
-  if (Array.isArray(data?.data)) return { ...data, items:data.data };
-  if (Array.isArray(data?.animes)) return { ...data, items:data.animes };
-  if (Array.isArray(data?.list)) return { ...data, items:data.list };
+  if (Array.isArray(data?.results)) return { ...data, items: data.results };
+  if (Array.isArray(data?.data)) return { ...data, items: data.data };
+  if (Array.isArray(data?.animes)) return { ...data, items: data.animes };
+  if (Array.isArray(data?.list)) return { ...data, items: data.list };
   for (const key of Object.keys(data || {})) {
-    if (Array.isArray(data[key]) && data[key].length > 0 && data[key][0]?.id) return { ...data, items:data[key] };
+    if (Array.isArray(data[key]) && data[key].length > 0 && data[key][0]?.id) return { ...data, items: data[key] };
   }
-  return { items:[], count:0, page:1, total_pages:1 };
+  return { items: [], count: 0, page: 1, total_pages: 1 };
 }
+
+function _parseEpNumber(ep) {
+  const raw = ep?.number ?? ep?.episode ?? ep?.ep ?? ep?.slug ?? ep?.num ?? "";
+  const n = parseFloat(String(raw).replace(",", "."));
+  return Number.isNaN(n) ? null : n;
+}
+
 function _getEpisodeDisplayTotal(episodes = []) {
-  const nums = (Array.isArray(episodes) ? episodes : []).map(_parseEpNumber).filter(n => typeof n === "number" && !Number.isNaN(n));
+  const nums = (Array.isArray(episodes) ? episodes : [])
+    .map(_parseEpNumber)
+    .filter(n => typeof n === "number" && !Number.isNaN(n));
   const maxFromList = nums.length ? Math.max(...nums) : 0;
-  const metaTotal = parseInt(state.anime?.episodes) || 0;
-  const playerTotal = parseInt(state.currentEpisodeItem?.total_episodes) || 0;
-  const currentEp = parseInt(state.currentEpisode) || 0;
+  const metaTotal = parseInt(state.anime?.episodes, 10) || 0;
+  const playerTotal = parseInt(state.currentEpisodeItem?.total_episodes, 10) || 0;
+  const currentEp = parseInt(state.currentEpisode, 10) || 0;
   return Math.max(maxFromList, metaTotal, playerTotal, currentEp, Array.isArray(episodes) ? episodes.length : 0);
 }
+
 function pickEpisodeVideoUrl(item) {
   if (!item || typeof item !== "object") return "";
   const candidates = [
-    item.video_iframe, item.iframe, item.iframe_url, item.embed, item.embed_url,
-    item.player, item.player_url, item.stream_url, item.stream, item.video
+    item.stream_url,
+    item.stream,
+    item.video,
+    item.video_iframe,
+    item.iframe,
+    item.iframe_url,
+    item.embed,
+    item.embed_url,
+    item.player,
+    item.player_url
   ].filter(Boolean).map(v => String(v).trim()).filter(Boolean);
-  const preferred = candidates.find(v => /blogger\.com\/video\.g|googleusercontent|youtube\.com\/embed|player|embed/i.test(v));
-  return preferred || candidates[0] || "";
+
+  const direct = candidates.find(v => _isDirectVideo(v));
+  if (direct) return direct;
+
+  const nonEmbed = candidates.find(v => !isIframeLikeUrl(v));
+  if (nonEmbed) return nonEmbed;
+
+  const embedPreferred = candidates.find(v => /blogger\.com\/video\.g|googleusercontent|youtube\.com\/embed/i.test(v));
+  return embedPreferred || candidates[0] || "";
 }
-function isIframeLikeUrl(url) {
-  const u = String(url || "").toLowerCase();
-  return /blogger\.com\/video\.g|youtube\.com\/embed|player|embed/.test(u);
-}
+
 function buildCard(item) {
   const cover = imgSrc(item.banner_url || item.cover_url, item.title);
-  const isDub = item.is_dubbed || (item.prefix === "DUB");
+  const isDub = item.is_dubbed || item.prefix === "DUB";
   const badge = isDub ? "DUB" : "LEG";
   const epTag = item.episode ? `<div class="card-ep-tag">EP ${esc(item.episode)}</div>` : "";
-  const watchKey = item.anime_id || item.id;
+  const watchKey = String(item.anime_id || item.id || "");
   const hasWatched = !!getWatchMap()[watchKey];
   const watchBadge = hasWatched ? `<div class="card-watched-badge">✓</div>` : "";
-  const meta = [item.status, item.year, item.episodes ? `${item.episodes} eps` : item.episode ? `Episódio ${item.episode}` : ""].filter(Boolean).map(esc);
+  const meta = [
+    item.status,
+    item.year,
+    item.episodes ? `${item.episodes} eps` : item.episode ? `Episódio ${item.episode}` : ""
+  ].filter(Boolean).map(esc);
   const attrs = item.open_mode === "episode" && item.anime_id && item.episode
     ? `data-open-direct="1" data-anime-id="${esc(item.anime_id)}" data-episode="${esc(item.episode)}"`
     : `data-anime-id="${esc(item.id)}"`;
+
   return `<article class="anime-card" ${attrs}>
     <div class="card-thumb">
       <div class="card-badge ${isDub ? "dub" : "leg"}">${badge}</div>
@@ -735,6 +981,7 @@ function buildCard(item) {
     </div>
   </article>`;
 }
+
 function skeletonGrid(count = 12) {
   let h = '<div class="card-grid">';
   for (let i = 0; i < count; i++) {
@@ -748,6 +995,7 @@ function skeletonGrid(count = 12) {
   }
   return h + "</div>";
 }
+
 function renderSectionBlock(section) {
   const items = Array.isArray(section.items) ? section.items : [];
   return `<div class="section">
@@ -764,6 +1012,7 @@ function renderSectionBlock(section) {
     <div class="card-grid">${items.map(buildCard).join("")}</div>
   </div>`;
 }
+
 function renderAnimeMeta(item) {
   const isDub = item.is_dubbed || item.prefix === "DUB";
   const pills = [];
@@ -776,11 +1025,6 @@ function renderAnimeMeta(item) {
   return pills.join("");
 }
 
-function _parseEpNumber(ep) {
-  const raw = ep.number ?? ep.episode ?? ep.ep ?? ep.slug ?? ep.num ?? "";
-  const n = parseFloat(String(raw).replace(",", "."));
-  return isNaN(n) ? null : n;
-}
 function _sortEpisodes(episodes) {
   return [...episodes].sort((a, b) => {
     const na = _parseEpNumber(a);
@@ -791,26 +1035,34 @@ function _sortEpisodes(episodes) {
     return na - nb;
   });
 }
+
 function _buildFullEpisodeList(episodes, totalFromMetadata) {
   if (!episodes || episodes.length === 0) {
     if (totalFromMetadata > 0) {
-      return Array.from({ length: totalFromMetadata }, (_, i) => ({ number: i + 1, episode: String(i + 1), synthetic: true }));
+      return Array.from({ length: totalFromMetadata }, (_, i) => ({
+        number: i + 1,
+        episode: String(i + 1),
+        synthetic: true
+      }));
     }
     return [];
   }
 
   const sorted = _sortEpisodes(episodes);
-  const metaTotal = parseInt(totalFromMetadata) || 0;
+  const metaTotal = parseInt(totalFromMetadata, 10) || 0;
   if (metaTotal > 0 && sorted.length < metaTotal) {
     const existingNums = new Set(sorted.map(e => _parseEpNumber(e)));
     const filled = [...sorted];
     for (let i = 1; i <= metaTotal; i++) {
-      if (!existingNums.has(i)) filled.push({ number: i, episode: String(i), synthetic: true });
+      if (!existingNums.has(i)) {
+        filled.push({ number: i, episode: String(i), synthetic: true });
+      }
     }
     return _sortEpisodes(filled);
   }
   return sorted;
 }
+
 function renderEpisodeButtons(episodes) {
   const metaTotal = _getEpisodeDisplayTotal(episodes);
   const fullList = _buildFullEpisodeList(episodes, metaTotal);
@@ -826,7 +1078,7 @@ function renderEpisodeButtons(episodes) {
   }
 
   const realCount = episodes?.length || 0;
-  const displayTotal = Math.max(realCount, metaTotal, fullList.length, parseInt(state.currentEpisode) || 0);
+  const displayTotal = Math.max(realCount, metaTotal, fullList.length, parseInt(state.currentEpisode, 10) || 0);
   els.episodesInfo.textContent = `${displayTotal} episódio(s) disponível(is)`;
 
   els.episodesGrid.innerHTML = fullList.map(ep => {
@@ -834,13 +1086,14 @@ function renderEpisodeButtons(episodes) {
     const lbl = num || (ep.title || "—");
     const isActive = String(state.currentEpisode) === String(num);
     const watchInfo = getAnimeWatch(state.currentAnimeId);
-    const isWatched = !!(watchInfo?.episodes?.[String(num)]?.completed);
+    const isWatched = !!watchInfo?.episodes?.[String(num)]?.completed;
     const isSynthetic = ep.synthetic === true;
     return `<button class="ep-btn ${isActive ? "active" : ""} ${isWatched ? "watched" : ""} ${isSynthetic ? "synthetic" : ""}"
       ${isSynthetic || !num ? "disabled" : `data-open-episode="${esc(num)}"`}
-      title="${isSynthetic ? `Episódio ${lbl} ainda não confirmado pela API` : `Abrir episódio ${lbl}`}">${esc(lbl)}</button>`;
+      title="${esc(isSynthetic ? `Episódio ${lbl} ainda não confirmado pela API` : `Abrir episódio ${lbl}`)}">${esc(lbl)}</button>`;
   }).join("");
 }
+
 function getAllQualities(playerItem) {
   const raw = Array.isArray(playerItem?.available_qualities) ? playerItem.available_qualities : [];
   const set = new Set(raw.map(normalizeQuality));
@@ -848,6 +1101,7 @@ function getAllQualities(playerItem) {
   if (!set.size) set.add("HD");
   return [...set].filter(Boolean);
 }
+
 function renderQualityButtons(playerItem) {
   const qualities = getAllQualities(playerItem);
   els.qualityRow.innerHTML = qualities.map(q => {
@@ -863,13 +1117,40 @@ els.descToggle.addEventListener("click", () => {
   els.descToggle.textContent = isCollapsed ? "Ver menos ▴" : "Ver mais ▾";
 });
 
+function getFirstEpisodeNumber(episodes) {
+  if (!Array.isArray(episodes) || !episodes.length) return "";
+  const sorted = _sortEpisodes(episodes);
+  for (const ep of sorted) {
+    const n = String(_parseEpNumber(ep) ?? ep.slug ?? "").trim();
+    if (n) return n;
+  }
+  return "";
+}
+
+function _sanitizeAnimeTitle(title) {
+  if (!title) return title;
+  const patterns = [
+    /\s*[-–]\s*Epis[oó]dio\s+\d+.*$/i,
+    /\s*[-–]\s*Episode\s+\d+.*$/i,
+    /\s*[-–]\s*Ep\.?\s*\d+.*$/i,
+    /\s*\|\s*Epis[oó]dio\s+\d+.*$/i
+  ];
+  let clean = title;
+  for (const p of patterns) clean = clean.replace(p, "").trim();
+  return clean;
+}
+
 function setupHeroBanner(items) {
   const banners = items.filter(i => i.banner_url || i.cover_url).slice(0, 5);
-  if (!banners.length) { renderStaticHero(); return; }
+  if (!banners.length) {
+    renderStaticHero();
+    return;
+  }
   state.heroBanners = banners;
   renderHeroBanner(0);
   if (banners.length > 1) startHeroTimer();
 }
+
 function renderHeroBanner(idx) {
   const item = state.heroBanners[idx];
   if (!item) return;
@@ -886,7 +1167,7 @@ function renderHeroBanner(idx) {
   const dots = state.heroBanners.map((_, i) => `<button class="hero-dot ${i === idx ? "on" : ""}" data-hidx="${i}"></button>`).join("");
   els.heroArea.innerHTML = `
     <div class="hero-banner" id="heroBannerEl">
-      <div class="hero-bg" style="background-image:url('${cover}')"></div>
+      <div class="hero-bg" style="background-image:url('${cover.replaceAll("'", "\\'")}')"></div>
       <div class="hero-grad"></div>
       <div class="hero-body">
         <div class="hero-eyebrow">Em Destaque</div>
@@ -902,20 +1183,23 @@ function renderHeroBanner(idx) {
     </div>`;
 
   $("heroWatchBtn")?.addEventListener("click", async () => {
-    const id = state.heroCurrent?.id;
+    const id = String(state.heroCurrent?.id || "");
     if (!id) return;
     if (!state.anime || state.currentAnimeId !== id) await openAnime(id, { pushHistory: false });
     const ep = getFirstEpisodeNumber(state.animeEpisodes);
     if (ep) await openEpisode(id, ep, state.currentQuality || "HD");
   });
+
   $("heroMoreBtn")?.addEventListener("click", () => {
-    if (state.heroCurrent?.id) openAnime(state.heroCurrent.id);
+    if (state.heroCurrent?.id) openAnime(String(state.heroCurrent.id));
   });
+
   $("heroBannerEl")?.addEventListener("click", e => {
     if (e.target.closest("button") || e.target.closest(".hero-dot")) return;
-    if (state.heroCurrent?.id) openAnime(state.heroCurrent.id);
+    if (state.heroCurrent?.id) openAnime(String(state.heroCurrent.id));
   });
 }
+
 function startHeroTimer() {
   clearTimeout(state.heroTimer);
   state.heroTimer = setTimeout(() => {
@@ -924,6 +1208,7 @@ function startHeroTimer() {
     startHeroTimer();
   }, 6000);
 }
+
 function renderStaticHero() {
   els.heroArea.innerHTML = `
     <div class="hero-static">
@@ -943,18 +1228,33 @@ function renderStaticHero() {
         <div class="hero-art"><div class="hero-art-inner">⛩️</div></div>
       </div>
     </div>`;
-  $("heroExploreBtn")?.addEventListener("click", () => { setPage("home"); loadHome(); });
-  $("heroSearchBtn")?.addEventListener("click", () => { setPage("home"); focusSearch(); });
+
+  $("heroExploreBtn")?.addEventListener("click", async () => {
+    setPage("home", false);
+    await loadHome();
+  });
+
+  $("heroSearchBtn")?.addEventListener("click", () => {
+    setPage("home", false);
+    focusSearch();
+  });
 }
 
 function renderContinueWatching() {
   const items = getContinueWatching().slice(0, 8);
-  if (!items.length) { els.continueSection.innerHTML = ""; return; }
+  if (!items.length) {
+    els.continueSection.innerHTML = "";
+    return;
+  }
+
   const pct = item => {
     const ep = item.latestEpisode;
     const epInfo = item.episodes?.[ep];
-    return epInfo?.durationSeconds > 0 ? Math.min(100, Math.round((epInfo.watchedSeconds / epInfo.durationSeconds) * 100)) : 0;
+    return epInfo?.durationSeconds > 0
+      ? Math.min(100, Math.round((epInfo.watchedSeconds / epInfo.durationSeconds) * 100))
+      : 0;
   };
+
   const cards = items.map(item => `
     <div class="cw-card" data-resume-anime="${esc(item.animeId)}" data-resume-ep="${esc(item.latestEpisode)}">
       <div class="cw-thumb">
@@ -968,6 +1268,7 @@ function renderContinueWatching() {
         <div class="cw-sub">Continuar EP ${esc(item.latestEpisode)} · ${pct(item)}%</div>
       </div>
     </div>`).join("");
+
   els.continueSection.innerHTML = `
     <div class="section" style="margin-bottom:24px">
       <div class="section-head">
@@ -984,22 +1285,31 @@ function renderContinueWatching() {
 }
 
 function renderPagination(current, total, onPage) {
-  if (total <= 1) { els.resultsPagination.innerHTML = ""; return; }
+  if (total <= 1) {
+    els.resultsPagination.innerHTML = "";
+    return;
+  }
+
   const delta = 2;
   const range = [];
-  for (let i = Math.max(2, current - delta); i <= Math.min(total - 1, current + delta); i++) range.push(i);
+  for (let i = Math.max(2, current - delta); i <= Math.min(total - 1, current + delta); i++) {
+    range.push(i);
+  }
   if (current - delta > 2) range.unshift("...");
   if (current + delta < total - 1) range.push("...");
+
   const pages = [1, ...range, total];
   const btns = pages.map(p => {
     if (p === "...") return `<span class="pg-btn" style="border:none;pointer-events:none;opacity:.4">…</span>`;
     return `<button class="pg-btn ${p === current ? "active-pg" : ""}" data-pg="${p}">${p}</button>`;
   }).join("");
+
   const gotoHtml = `<div class="pg-input-wrap">
     <span>Ir para</span>
     <input class="pg-input" id="pgGotoInput" type="number" min="1" max="${total}" value="${current}" />
     <button class="pg-btn" id="pgGotoBtn">→</button>
   </div>`;
+
   els.resultsPagination.innerHTML = `
     <div class="pagination-row">
       <button class="pg-btn" data-pg="${current - 1}" ${current <= 1 ? "disabled" : ""}>← Ant</button>
@@ -1010,18 +1320,20 @@ function renderPagination(current, total, onPage) {
     <div class="pagination-row" style="margin-top:8px">${gotoHtml}</div>`;
 
   els.resultsPagination.querySelectorAll("[data-pg]").forEach(btn => {
-    const pg = parseInt(btn.dataset.pg);
-    if (isNaN(pg) || btn.disabled) return;
+    const pg = parseInt(btn.dataset.pg, 10);
+    if (Number.isNaN(pg) || btn.disabled) return;
     btn.addEventListener("click", () => onPage(pg));
   });
+
   $("pgGotoBtn")?.addEventListener("click", () => {
-    const v = parseInt($("pgGotoInput")?.value || "");
-    if (!isNaN(v) && v >= 1 && v <= total) onPage(v);
+    const v = parseInt($("pgGotoInput")?.value || "", 10);
+    if (!Number.isNaN(v) && v >= 1 && v <= total) onPage(v);
   });
+
   $("pgGotoInput")?.addEventListener("keydown", e => {
     if (e.key === "Enter") {
-      const v = parseInt(e.target.value || "");
-      if (!isNaN(v) && v >= 1 && v <= total) onPage(v);
+      const v = parseInt(e.target.value || "", 10);
+      if (!Number.isNaN(v) && v >= 1 && v <= total) onPage(v);
     }
   });
 }
@@ -1032,9 +1344,11 @@ async function loadHome() {
   renderContinueWatching();
   renderStaticHero();
   els.homeSections.innerHTML = skeletonGrid(12);
+
   try {
     const data = await apiGet("/api/catalog/home", API_TIMEOUT, "home");
     if (reqId !== state.requestSeq.home) return;
+
     state.home = data;
     setSubtitle("Anime Streaming");
     const sections = data?.sections || [];
@@ -1046,35 +1360,43 @@ async function loadHome() {
       </div>`;
       return;
     }
+
     els.homeSections.innerHTML = sections.map(renderSectionBlock).join("");
-    const featured = data?.featured ? [data.featured] : (sections[1]?.items || sections[0]?.items || []);
+    const featured = data?.featured ? [data.featured] : (sections[1]?.items?.length ? sections[1].items : (sections[0]?.items || []));
     if (featured.length) setupHeroBanner(featured.slice(0, 5));
     updateUrlParams({});
     setPage("home", state.currentPage !== "home");
-  } catch(err) {
+  } catch (err) {
     if (err.name === "AbortError") return;
     setSubtitle("Erro");
     els.homeSections.innerHTML = `<div class="state-box error">
       <div class="state-box-icon">⚠️</div>
       <div class="state-box-title">Falha ao carregar</div>
       <div class="state-box-text">${esc(err.message || "Erro desconhecido")}</div>
-      <button class="btn btn-primary btn-sm" onclick="loadHome()" style="margin-top:4px">↺ Tentar novamente</button>
+      <button class="btn btn-primary btn-sm" id="retryHomeBtn" style="margin-top:4px">↺ Tentar novamente</button>
     </div>`;
+    $("retryHomeBtn")?.addEventListener("click", () => loadHome());
     showToast("Falha ao carregar catálogo.");
   }
 }
 
 async function loadSectionResults(sectionKey, page = 1) {
   const reqId = ++state.requestSeq.section;
-  showLoading("Carregando seção", "Buscando animes...");
+  const loadingToken = showLoading("Carregando seção", "Buscando animes...");
   setPage("results");
   state.resultsMode = "section";
   state.currentSection = sectionKey;
   state.searchQuery = "";
-  document.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c.dataset.section === sectionKey));
+  setSectionChipActive(sectionKey);
+
   try {
-    const raw = await apiGet(`/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=${page}`, API_TIMEOUT, "section");
+    const raw = await apiGet(
+      `/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=${page}`,
+      API_TIMEOUT,
+      "section"
+    );
     if (reqId !== state.requestSeq.section) return;
+
     const data = _normalizeCatalogResponse(raw);
     const items = Array.isArray(data?.items) ? data.items : [];
     state.searchResults = items;
@@ -1087,7 +1409,7 @@ async function loadSectionResults(sectionKey, page = 1) {
       : `<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nenhum anime</div></div>`;
     renderPagination(state.resultsPage, state.totalPages, p => loadSectionResults(sectionKey, p));
     updateUrlParams({ section: sectionKey, page: state.resultsPage });
-  } catch(err) {
+  } catch (err) {
     if (err.name !== "AbortError") {
       els.resultsTitle.textContent = "Erro";
       els.resultsSubtitle.textContent = err.message || "";
@@ -1098,26 +1420,31 @@ async function loadSectionResults(sectionKey, page = 1) {
       </div>`;
       showToast("Erro ao abrir seção.");
     }
-  } finally { hideLoading(); }
+  } finally {
+    hideLoading(loadingToken);
+  }
 }
 
 async function performSearch(query, page = 1, { silent = false } = {}) {
   const q = String(query || "").trim();
-  if (q.length < 2) { if (!silent) showToast("Digite pelo menos 2 caracteres."); return; }
+  if (q.length < 2) {
+    if (!silent) showToast("Digite pelo menos 2 caracteres.");
+    return;
+  }
 
   const reqId = ++state.requestSeq.search;
-  if (!silent) {
-    showLoading("Buscando anime", "Procurando resultados...");
-    setPage("results");
-  }
+  const loadingToken = silent ? 0 : showLoading("Buscando anime", "Procurando resultados...");
+  if (!silent) setPage("results");
+
   state.resultsMode = "search";
   state.searchQuery = q;
   state.currentSection = "";
-  document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+  setSectionChipActive("");
 
   try {
     const rawData = await apiGet(`/api/search?q=${encodeURIComponent(q)}&page=${page}`, API_TIMEOUT, "search");
     if (reqId !== state.requestSeq.search) return;
+
     const data = _normalizeSearchResponse(rawData);
     const items = data?.items || [];
     state.searchResults = items;
@@ -1136,7 +1463,7 @@ async function performSearch(query, page = 1, { silent = false } = {}) {
         </div>`;
     renderPagination(state.resultsPage, state.totalPages, p => performSearch(q, p));
     updateUrlParams({ search: q, page: state.resultsPage });
-  } catch(err) {
+  } catch (err) {
     if (err.name !== "AbortError") {
       els.resultsTitle.textContent = "Erro na busca";
       els.resultsSubtitle.textContent = err.message || "";
@@ -1148,48 +1475,36 @@ async function performSearch(query, page = 1, { silent = false } = {}) {
       if (!silent) showToast("Falha na busca.");
     }
   } finally {
-    if (!silent) hideLoading();
+    if (!silent) hideLoading(loadingToken);
   }
-}
-
-function getFirstEpisodeNumber(episodes) {
-  if (!Array.isArray(episodes) || !episodes.length) return "";
-  const sorted = _sortEpisodes(episodes);
-  for (const ep of sorted) {
-    const n = String(_parseEpNumber(ep) ?? ep.slug ?? "").trim();
-    if (n) return n;
-  }
-  return "";
-}
-function _sanitizeAnimeTitle(title) {
-  if (!title) return title;
-  const patterns = [
-    /\s*[-–]\s*Epis[oó]dio\s+\d+.*$/i,
-    /\s*[-–]\s*Episode\s+\d+.*$/i,
-    /\s*[-–]\s*Ep\.?\s*\d+.*$/i,
-    /\s*\|\s*Epis[oó]dio\s+\d+.*$/i
-  ];
-  let clean = title;
-  for (const p of patterns) clean = clean.replace(p, "").trim();
-  return clean;
 }
 
 async function openAnime(animeId, options = {}) {
   if (!animeId) return;
   const reqId = ++state.requestSeq.anime;
   const push = options.pushHistory !== false;
-  showLoading("Abrindo anime", "Carregando detalhes...");
+  const loadingToken = showLoading("Abrindo anime", "Carregando detalhes...");
+
   try {
     const data = await apiGet(`/api/anime/${encodeURIComponent(animeId)}`, API_TIMEOUT, "anime");
     if (reqId !== state.requestSeq.anime) return;
+
     const item = data?.item || null;
     const episodes = Array.isArray(data?.episodes) ? data.episodes : [];
     if (!item) throw new Error("Anime não encontrado");
 
     const cleanTitle = _sanitizeAnimeTitle(item.title);
+    const nextAnimeId = String(animeId);
+    const switchingAnime = !!state.currentAnimeId && state.currentAnimeId !== nextAnimeId;
+    if (switchingAnime) {
+      clearPlayerState({ invalidateSession: true, clearEpisodeItem: true });
+      state.currentEpisode = "";
+      state.currentQuality = "HD";
+    }
+
     item.title = cleanTitle;
     state.anime = item;
-    state.currentAnimeId = String(animeId);
+    state.currentAnimeId = nextAnimeId;
     state.animeEpisodes = episodes;
 
     const isDub = item.is_dubbed || item.prefix === "DUB";
@@ -1206,25 +1521,40 @@ async function openAnime(animeId, options = {}) {
     renderGenreTags(item.genres || [], false);
     renderEpisodeButtons(episodes);
 
+    const firstEpisode = getFirstEpisodeNumber(episodes);
     const resume = getAnimeWatch(state.currentAnimeId);
-    els.openFirstEpisodeBtn.disabled = !getFirstEpisodeNumber(episodes);
-    els.goToPlayerBtn.disabled = !(state.currentEpisode && state.currentAnimeId === String(animeId));
+    els.openFirstEpisodeBtn.disabled = !firstEpisode;
+    if (resume?.latestEpisode) {
+      els.goToPlayerBtn.disabled = false;
+      els.goToPlayerBtn.textContent = `Continuar EP ${resume.latestEpisode}`;
+    } else if (state.currentEpisode && state.currentAnimeId === String(animeId)) {
+      els.goToPlayerBtn.disabled = false;
+      els.goToPlayerBtn.textContent = `Ir para EP ${state.currentEpisode}`;
+    } else {
+      els.goToPlayerBtn.disabled = !firstEpisode;
+      els.goToPlayerBtn.textContent = firstEpisode ? "Assistir agora" : "Sem episódios";
+    }
 
     setPage("anime", push);
     updateUrlParams({ anime: animeId });
-  } catch(err) {
+  } catch (err) {
     if (err.name !== "AbortError") showToast("Não foi possível abrir esse anime.");
-  } finally { hideLoading(); }
+  } finally {
+    hideLoading(loadingToken);
+  }
 }
 
 async function openEpisode(animeId, episode, quality = "HD", options = {}) {
-  if (!animeId || !episode) { showToast("Anime ou episódio inválido."); return; }
-  if (state.openingEpisode && !options.force) return;
+  if (!animeId || !episode) {
+    showToast("Anime ou episódio inválido.");
+    return;
+  }
+
   const requestId = ++state.openEpisodeRequestId;
   state.openingEpisode = true;
   const q = normalizeQuality(quality || state.currentQuality || "HD");
   const push = options.pushHistory !== false;
-  showLoading("Abrindo episódio", `Carregando EP ${episode} em ${q}...`);
+  const loadingToken = showLoading("Abrindo episódio", `Carregando EP ${episode} em ${q}...`);
 
   try {
     if (!state.anime || state.currentAnimeId !== String(animeId)) {
@@ -1232,8 +1562,15 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
     }
     if (requestId !== state.openEpisodeRequestId) return;
 
-    const data = await apiGet(`/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(q)}`);
-    if (requestId !== state.openEpisodeRequestId) return;
+    const sessionId = bumpPlayerSession();
+    cancelNextEpisodeAutoplay();
+    const data = await apiGet(
+      `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(q)}`,
+      API_TIMEOUT,
+      "episode"
+    );
+    if (requestId !== state.openEpisodeRequestId || sessionId !== state.playerSessionId) return;
+
     const item = data?.item || null;
     if (!item) throw new Error("Episódio não encontrado");
 
@@ -1241,22 +1578,17 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
     state.currentEpisode = String(episode);
     state.currentQuality = normalizeQuality(item.quality || q);
     state.currentEpisodeItem = item;
+    state.currentVideoUrl = "";
     state.attempt = 0;
-
-    saveWatchProgress({
-      animeId,
-      animeTitle: state.anime?.title || "Anime",
-      episode,
-      watchedSeconds: getEpisodeWatch(String(animeId), String(episode))?.watchedSeconds || 0,
-      durationSeconds: getEpisodeWatch(String(animeId), String(episode))?.durationSeconds || 0,
-      cover: state.anime?.cover_url || state.anime?.banner_url || item.thumb || ""
-    });
-    renderContinueWatching();
 
     const animeTitle = state.anime?.title || "Anime";
     els.playerPageSubtitle.textContent = `${animeTitle} • EP ${episode}`;
     els.playerTitle.textContent = animeTitle;
-    const displayTotalEpisodes = Math.max(parseInt(item.total_episodes) || 0, _getEpisodeDisplayTotal(state.animeEpisodes), parseInt(episode) || 0);
+    const displayTotalEpisodes = Math.max(
+      parseInt(item.total_episodes, 10) || 0,
+      _getEpisodeDisplayTotal(state.animeEpisodes),
+      parseInt(episode, 10) || 0
+    );
     els.playerMeta.textContent = [
       `EP ${episode}`,
       state.currentQuality,
@@ -1264,9 +1596,12 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
       item.is_dubbed ? "Dublado" : "Legendado"
     ].filter(Boolean).join(" · ");
     els.playerDesc.textContent = item.description || state.anime?.description || "";
+
     const previewVideoUrl = pickEpisodeVideoUrl(item);
     els.playerNote.textContent = previewVideoUrl
-      ? (isIframeLikeUrl(previewVideoUrl) ? "Esse episódio está usando player incorporado para evitar falha no proxy." : "Player reforçado: reconecta automaticamente se o link expirar.")
+      ? (isIframeLikeUrl(previewVideoUrl)
+        ? "Esse episódio está usando player incorporado como fallback mais estável."
+        : "Player reforçado: reconecta automaticamente se o link expirar.")
       : "Esse episódio não retornou URL de vídeo.";
 
     renderQualityButtons(item);
@@ -1277,11 +1612,15 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
 
     const resolvedVideoUrl = pickEpisodeVideoUrl(item);
     if (resolvedVideoUrl) {
-      (isIframeLikeUrl(resolvedVideoUrl) || !_isDirectVideo(resolvedVideoUrl)) ? _loadIframeUrl(resolvedVideoUrl) : _loadVideoUrl(resolvedVideoUrl);
       els.openInBrowserBtn.disabled = false;
       els.openInBrowserBtn.dataset.url = resolvedVideoUrl;
+      if (isIframeLikeUrl(resolvedVideoUrl) || !_isDirectVideo(resolvedVideoUrl)) {
+        _loadIframeUrl(resolvedVideoUrl, sessionId);
+      } else {
+        _loadVideoUrl(resolvedVideoUrl, sessionId);
+      }
     } else {
-      clearPlayerState();
+      clearPlayerState({ invalidateSession: false, clearEpisodeItem: false });
       showVideoOverlay("icon:⚠️", "Sem vídeo", "Esse episódio não tem URL de vídeo");
       els.openInBrowserBtn.disabled = true;
       showToast("Esse episódio não retornou vídeo.");
@@ -1289,40 +1628,34 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
 
     renderEpisodeButtons(state.animeEpisodes);
     els.goToPlayerBtn.disabled = false;
+    els.goToPlayerBtn.textContent = `Assistindo EP ${episode}`;
     updateUrlParams({ anime: animeId, ep: episode, q: state.currentQuality });
     setPage("player", push);
-  } catch(err) {
-    if (err.name !== "AbortError") showToast("Não foi possível abrir esse episódio.");
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      showToast("Não foi possível abrir esse episódio.");
+      showVideoOverlay("icon:⚠️", "Falha ao abrir episódio", err.message || "Tente novamente.");
+    }
   } finally {
-    hideLoading();
+    hideLoading(loadingToken);
     if (requestId === state.openEpisodeRequestId) state.openingEpisode = false;
   }
 }
 
-function parseRoute() {
-  const p = new URLSearchParams(window.location.search);
-  return {
-    anime: p.get("anime") || "",
-    ep: p.get("ep") || p.get("episode") || "",
-    q: normalizeQuality(p.get("q") || "HD"),
-    search: p.get("search") || "",
-    section: p.get("section") || "",
-    page: parseInt(p.get("page") || "1") || 1
-  };
-}
 function focusSearch() {
   els.searchInput.focus();
   els.searchInput.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function connectRealtimeUpdates() {
-  try { state.eventSource?.close?.(); } catch(e) {}
+  try { state.eventSource?.close?.(); } catch (e) {}
   try {
-    state.eventSource = new EventSource("/api/events");
+    state.eventSource = new EventSource(`${API_BASE}/api/events`);
     state.eventSource.addEventListener("catalog", async ev => {
       let payload = null;
-      try { payload = JSON.parse(ev.data || "{}"); } catch(e) {}
+      try { payload = JSON.parse(ev.data || "{}"); } catch (e) {}
       if (!payload) return;
+
       if (state.currentPage === "home") await loadHome();
       if (state.currentPage === "results" && (state.currentSection === "recentes" || state.currentSection === "em_lancamento")) {
         await loadSectionResults(state.currentSection, state.resultsPage || 1);
@@ -1331,7 +1664,7 @@ function connectRealtimeUpdates() {
         await openAnime(state.currentAnimeId, { pushHistory: false });
       }
     });
-  } catch(e) {}
+  } catch (e) {}
 }
 
 async function bootFromRoute() {
@@ -1372,58 +1705,72 @@ async function bootFromRoute() {
 document.addEventListener("click", async e => {
   const hdot = e.target.closest("[data-hidx]");
   if (hdot) {
-    const idx = parseInt(hdot.dataset.hidx);
-    if (!isNaN(idx)) { clearTimeout(state.heroTimer); renderHeroBanner(idx); startHeroTimer(); }
+    const idx = parseInt(hdot.dataset.hidx, 10);
+    if (!Number.isNaN(idx)) {
+      clearTimeout(state.heroTimer);
+      renderHeroBanner(idx);
+      startHeroTimer();
+    }
     return;
   }
+
   const cwCard = e.target.closest("[data-resume-anime]");
   if (cwCard) {
     await openEpisode(cwCard.dataset.resumeAnime, cwCard.dataset.resumeEp, state.currentQuality || "HD");
     return;
   }
+
   const directCard = e.target.closest(".anime-card[data-open-direct]");
   if (directCard) {
     await openEpisode(directCard.dataset.animeId, directCard.dataset.episode, state.currentQuality || "HD");
     return;
   }
+
   const card = e.target.closest(".anime-card[data-anime-id]:not([data-open-direct])");
   if (card) {
     await openAnime(card.dataset.animeId);
     return;
   }
+
   const secBtn = e.target.closest("[data-open-section]");
   if (secBtn) {
     await loadSectionResults(secBtn.dataset.openSection);
     return;
   }
+
   const epBtn = e.target.closest("[data-open-episode]");
   if (epBtn) {
     await openEpisode(state.currentAnimeId, epBtn.dataset.openEpisode, state.currentQuality);
     return;
   }
+
   const qBtn = e.target.closest("[data-quality]");
   if (qBtn) {
     await openEpisode(state.currentAnimeId, state.currentEpisode, qBtn.dataset.quality, { pushHistory: false, force: true });
     return;
   }
+
   const genreToggle = e.target.closest("#genreToggleBtn");
   if (genreToggle) {
     state.genreExpanded = !state.genreExpanded;
     renderGenreTags(state.anime?.genres || [], state.genreExpanded);
     return;
   }
+
   const genreTag = e.target.closest("[data-genre-search]");
   if (genreTag) {
     els.searchInput.value = genreTag.dataset.genreSearch;
     await performSearch(genreTag.dataset.genreSearch);
     return;
   }
+
   const sug = e.target.closest("[data-suggest-search]");
   if (sug) {
     els.searchInput.value = sug.dataset.suggestSearch;
     await performSearch(sug.dataset.suggestSearch);
     return;
   }
+
   const chip = e.target.closest("[data-section]");
   if (chip) await loadSectionResults(chip.dataset.section);
 });
@@ -1434,17 +1781,26 @@ els.searchInput.addEventListener("keydown", async e => {
     await performSearch(els.searchInput.value);
   }
 });
+
 let sdeb = null;
 els.searchInput.addEventListener("input", () => {
   const val = els.searchInput.value.trim();
   els.searchClear.style.display = val ? "block" : "none";
   clearTimeout(sdeb);
-  if (val.length >= 2) sdeb = setTimeout(() => performSearch(val, 1, { silent: false }), 550);
+  if (val.length >= 2 && state.currentPage === "results") {
+    sdeb = setTimeout(() => performSearch(val, 1, { silent: false }), 550);
+  }
 });
-els.searchClear.addEventListener("click", () => {
+
+els.searchClear.addEventListener("click", async () => {
   els.searchInput.value = "";
   els.searchClear.style.display = "none";
   els.searchInput.focus();
+  if (state.currentPage === "results" && state.resultsMode === "search") {
+    setPage("home", false);
+    updateUrlParams({});
+    if (!state.home) await loadHome();
+  }
 });
 
 els.resultsBackBtn.addEventListener("click", () => goBack());
@@ -1453,21 +1809,31 @@ els.backBtn.addEventListener("click", () => goBack());
 els.homeBtn.addEventListener("click", async () => {
   if (state.cssFsActive) exitCssFullscreen();
   exitCinemaMode();
-  clearPlayerState();
+  clearPlayerState({ invalidateSession: true, clearEpisodeItem: false });
   setPage("home");
   await loadHome();
 });
+
 els.refreshBtn.addEventListener("click", async () => {
   const p = state.currentPage;
-  if (p === "home") { await loadHome(); return; }
-  if (p === "results") {
-    state.resultsMode === "search" && state.searchQuery
-      ? await performSearch(state.searchQuery, state.resultsPage)
-      : await loadSectionResults(state.currentSection || "dublados", state.resultsPage);
+  if (p === "home") {
+    await loadHome();
     return;
   }
-  if (p === "anime" && state.currentAnimeId) { await openAnime(state.currentAnimeId, { pushHistory: false }); return; }
+  if (p === "results") {
+    if (state.resultsMode === "search" && state.searchQuery) {
+      await performSearch(state.searchQuery, state.resultsPage);
+    } else {
+      await loadSectionResults(state.currentSection || "dublados", state.resultsPage);
+    }
+    return;
+  }
+  if (p === "anime" && state.currentAnimeId) {
+    await openAnime(state.currentAnimeId, { pushHistory: false });
+    return;
+  }
   if (p === "player" && state.currentAnimeId && state.currentEpisode) {
+    state.attempt = 0;
     await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false, force: true });
   }
 });
@@ -1476,28 +1842,38 @@ els.backToHomeFromAnimeBtn.addEventListener("click", async () => {
   setPage("home");
   await loadHome();
 });
+
 els.backToAnimeBtn.addEventListener("click", () => {
   exitCinemaMode();
   setPage("anime");
   updateUrlParams({ anime: state.currentAnimeId });
 });
+
 els.backToHomeFromPlayerBtn.addEventListener("click", async () => {
   if (state.cssFsActive) exitCssFullscreen();
   exitCinemaMode();
-  clearPlayerState();
+  clearPlayerState({ invalidateSession: true, clearEpisodeItem: false });
   setPage("home");
   await loadHome();
 });
 
 els.openFirstEpisodeBtn.addEventListener("click", async () => {
   const ep = getFirstEpisodeNumber(state.animeEpisodes);
-  if (!ep) { showToast("Sem episódios disponíveis."); return; }
+  if (!ep) {
+    showToast("Sem episódios disponíveis.");
+    return;
+  }
   await openEpisode(state.currentAnimeId, ep, state.currentQuality || "HD");
 });
+
 els.goToPlayerBtn.addEventListener("click", async () => {
+  const resumeEpisode = getAnimeWatch(state.currentAnimeId)?.latestEpisode || "";
   if (!state.currentEpisode) {
-    const ep = getFirstEpisodeNumber(state.animeEpisodes);
-    if (!ep) { showToast("Sem episódio."); return; }
+    const ep = resumeEpisode || getFirstEpisodeNumber(state.animeEpisodes);
+    if (!ep) {
+      showToast("Sem episódio.");
+      return;
+    }
     await openEpisode(state.currentAnimeId, ep, state.currentQuality || "HD");
     return;
   }
@@ -1509,25 +1885,30 @@ els.prevEpisodeBtn.addEventListener("click", async () => {
   const ep = els.prevEpisodeBtn.dataset.episode;
   if (ep) await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false, force: true });
 });
+
 els.nextEpisodeBtn.addEventListener("click", async () => {
   const ep = els.nextEpisodeBtn.dataset.episode;
   if (ep) await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false, force: true });
 });
+
 els.episodeListBtn.addEventListener("click", () => {
   exitCinemaMode();
   setPage("anime");
   updateUrlParams({ anime: state.currentAnimeId });
   setTimeout(() => $("episodesGrid")?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
 });
+
 els.openInBrowserBtn.addEventListener("click", () => {
   const url = els.openInBrowserBtn.dataset.url;
-  if (url) window.open(url, "_blank", "noopener,noreferrer");
+  openExternalUrl(url);
 });
+
 els.retryPlayerBtn.addEventListener("click", async () => {
   if (!state.currentAnimeId || !state.currentEpisode) return;
   state.attempt = 0;
   await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false, force: true });
 });
+
 els.fullscreenBtn.addEventListener("click", requestFullscreen);
 
 window.addEventListener("popstate", async () => {
@@ -1538,9 +1919,8 @@ window.addEventListener("popstate", async () => {
 async function boot() {
   bindVideoEvents();
   connectRealtimeUpdates();
+  syncTelegramBackButton();
   await bootFromRoute();
 }
+
 boot();
-</script>
-</body>
-</html>
