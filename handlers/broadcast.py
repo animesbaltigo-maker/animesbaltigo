@@ -26,24 +26,18 @@ BROADCAST_LAST_KEY = "broadcast_last_action"
 
 BROADCAST_COOLDOWN = 1.0
 
-# performance
 SEND_WORKERS = 4
 PER_MESSAGE_DELAY = 0.05
 STATUS_EVERY = 100
 STATUS_MIN_INTERVAL = 3.0
 PIN_MAX_USERS = 100
 
-# bot_data keys
 GLOBAL_BROADCAST_RUNNING_KEY = "broadcast_running"
 GLOBAL_BROADCAST_TASK_KEY = "broadcast_task"
 
 
 def _is_admin(user_id: int | None) -> bool:
     return user_id is not None and user_id in ADMIN_IDS
-
-
-def _strip_html(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", text or "").strip()
 
 
 def _escape(text: str) -> str:
@@ -230,10 +224,12 @@ async def _send_preview(query, context: ContextTypes.DEFAULT_TYPE):
     data = _get_data(context)
 
     caption = _preview_caption(data)
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Confirmar envio", callback_data="bc|send")],
-        [InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")],
-    ])
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🚀 Confirmar envio", callback_data="bc|send")],
+            [InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")],
+        ]
+    )
     msg_keyboard = _build_message_keyboard(data)
 
     if msg_keyboard:
@@ -351,9 +347,6 @@ def _should_remove_user_on_error(exc: Exception) -> bool:
 
 
 async def _safe_send_one(bot, user_id: int, data: dict, should_pin: bool) -> tuple[bool, bool]:
-    """
-    returns: (success, should_remove_user)
-    """
     try:
         msg = await _send_broadcast_message(bot, user_id, data)
         await _maybe_pin_message(bot, user_id, msg, should_pin)
@@ -415,6 +408,7 @@ async def _broadcast_worker(
             if should_remove:
                 try:
                     remove_user(user_id)
+                    counters["removed"] += 1
                 except Exception:
                     pass
 
@@ -486,12 +480,18 @@ async def _execute_broadcast_background(
                 )
                 return
 
-            ok, _ = await _safe_send_one(
+            ok, should_remove = await _safe_send_one(
                 context.bot,
                 int(target_user_id),
                 data,
                 requested_pin,
             )
+
+            if should_remove:
+                try:
+                    remove_user(int(target_user_id))
+                except Exception:
+                    pass
 
             await context.bot.send_message(
                 chat_id=admin_chat_id,
@@ -532,6 +532,7 @@ async def _execute_broadcast_background(
             "sent": 0,
             "failed": 0,
             "processed": 0,
+            "removed": 0,
             "last_status_at": time.monotonic(),
         }
 
@@ -559,22 +560,20 @@ async def _execute_broadcast_background(
         await queue.join()
         await asyncio.gather(*workers, return_exceptions=True)
 
+        final_text = (
+            f"✅ Transmissão finalizada.\n\n"
+            f"📤 Enviadas: {counters['sent']}\n"
+            f"❌ Falhas: {counters['failed']}\n"
+            f"🧹 Removidos: {counters['removed']}\n"
+            f"👥 Total processado: {counters['processed']}"
+        )
+
         try:
-            await status_msg.edit_text(
-                f"✅ Transmissão finalizada.\n\n"
-                f"📤 Enviadas: {counters['sent']}\n"
-                f"❌ Falhas: {counters['failed']}\n"
-                f"👥 Total processado: {counters['processed']}"
-            )
+            await status_msg.edit_text(final_text)
         except Exception:
             await context.bot.send_message(
                 chat_id=admin_chat_id,
-                text=(
-                    f"✅ Transmissão finalizada.\n\n"
-                    f"📤 Enviadas: {counters['sent']}\n"
-                    f"❌ Falhas: {counters['failed']}\n"
-                    f"👥 Total processado: {counters['processed']}"
-                ),
+                text=final_text,
                 reply_to_message_id=reply_to_message_id,
             )
 
@@ -609,16 +608,18 @@ async def broadcast_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not query or not user or not _is_admin(user.id):
         return
 
+    await query.answer()
+
     guard = await _guard_action(context)
     if guard == "locked":
-        await query.answer("⏳ Aguarde...", show_alert=False)
         return
     if guard == "cooldown":
-        await query.answer("⚠️ Não aperte várias vezes seguidas.", show_alert=False)
         return
 
     try:
         raw_data = query.data or ""
+        print(f"[BROADCAST][CALLBACK] data={raw_data!r}")
+
         if not raw_data.startswith("bc|"):
             return
 
@@ -626,12 +627,10 @@ async def broadcast_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE
         payload = _get_data(context)
 
         if action == "menu":
-            await query.answer()
             await _show_main_menu(query, context)
             return
 
         if action == "close":
-            await query.answer("Fechado.")
             _reset_broadcast(context)
             try:
                 await query.edit_message_text("✅ Painel de transmissão fechado.")
@@ -640,14 +639,12 @@ async def broadcast_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         if action == "reset":
-            await query.answer("Limpo.")
             _reset_broadcast(context)
             _get_data(context)
             await _show_main_menu(query, context)
             return
 
         if action == "set_mode":
-            await query.answer()
             _set_state(context, "awaiting_mode")
             await query.edit_message_text(
                 "🎯 <b>Escolha o destino</b>\n\n"
@@ -655,28 +652,26 @@ async def broadcast_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "• <code>1</code> para todos os usuários\n"
                 "• <code>2</code> para um usuário específico",
                 parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")]
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")]]
+                ),
             )
             return
 
         if action == "set_media":
-            await query.answer()
             _set_state(context, "awaiting_media")
             await query.edit_message_text(
                 "🖼 <b>Envie uma imagem</b>\n\n"
                 "Ou envie <code>remover</code> para apagar a mídia atual.\n"
                 "Ou <code>pular</code> para voltar.",
                 parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")]
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")]]
+                ),
             )
             return
 
         if action == "set_text":
-            await query.answer()
             _set_state(context, "awaiting_text")
             await query.edit_message_text(
                 "📝 <b>Envie o texto da transmissão</b>\n\n"
@@ -684,15 +679,14 @@ async def broadcast_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "Envie <code>remover</code> para apagar.\n"
                 "Envie <code>pular</code> para voltar.",
                 parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")]
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")]]
+                ),
                 disable_web_page_preview=True,
             )
             return
 
         if action == "set_button":
-            await query.answer()
             _set_state(context, "awaiting_button_text")
             await query.edit_message_text(
                 "🔘 <b>Envie o texto do botão</b>\n\n"
@@ -700,20 +694,18 @@ async def broadcast_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "Envie <code>remover</code> para apagar botão.\n"
                 "Envie <code>pular</code> para voltar.",
                 parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")]
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Voltar", callback_data="bc|menu")]]
+                ),
             )
             return
 
         if action == "toggle_pin":
             payload["pin"] = not bool(payload.get("pin"))
-            await query.answer("Pin atualizado.")
             await _show_main_menu(query, context)
             return
 
         if action == "preview":
-            await query.answer()
             await _send_preview(query, context)
             return
 
@@ -734,10 +726,8 @@ async def broadcast_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE
                 return
 
             safe_payload = payload.copy()
-            _set_state(context, "")
-            _reset_broadcast(context)
 
-            await query.answer("Broadcast iniciado.")
+            _reset_broadcast(context)
 
             task = context.application.create_task(
                 _execute_broadcast_background(
@@ -748,8 +738,16 @@ async def broadcast_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE
                 )
             )
             _set_broadcast_task(context, task)
+
+            try:
+                await query.edit_message_text("🚀 Broadcast iniciado. Acompanhe pelo chat.")
+            except Exception:
+                pass
             return
 
+    except Exception as e:
+        print(f"[BROADCAST][ERRO] {repr(e)}")
+        raise
     finally:
         _release_guard(context)
 
@@ -882,7 +880,11 @@ async def broadcast_message_router(update: Update, context: ContextTypes.DEFAULT
             await message.reply_text("↩️ Cancelado.")
             return
 
-        if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("tg://")):
+        if not (
+            raw.startswith("http://")
+            or raw.startswith("https://")
+            or raw.startswith("tg://")
+        ):
             await message.reply_text(
                 "⚠️ URL inválida. Envie uma URL começando com http://, https:// ou tg://"
             )
