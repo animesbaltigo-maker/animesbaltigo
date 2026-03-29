@@ -5,6 +5,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8675150552:AAHoUu64RoMPHNdaChP9RQGF0iz-tk7Crbo").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyDhUdR1zvqvK4topq8BS8AUPRyMduMlZ7Y").strip()
+
 SOURCE_SITE_BASE = os.getenv("SOURCE_SITE_BASE", "https://animefire.io").strip().rstrip("/")
 
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Centraldeanimes_Baltigo").strip()
