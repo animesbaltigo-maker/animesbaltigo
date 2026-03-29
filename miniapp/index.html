@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -223,7 +224,8 @@
     .desc-text.exp{max-height:3000px;-webkit-mask-image:none;mask-image:none}
     .desc-toggle{font-size:12px;color:var(--violet-2);font-weight:600;cursor:pointer;background:none;border:none;padding:4px 0;margin-top:4px;display:block;transition:color .2s}
     .desc-toggle:hover{color:var(--cyan)}
-    .genre-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+    .genre-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+    .genre-toggle-row{display:flex;justify-content:flex-start;margin-bottom:20px}
     .genre-tag{padding:4px 12px;border-radius:999px;background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.2);font-size:12px;font-weight:600;color:var(--violet-2);cursor:pointer;transition:all .2s var(--ease)}
     .genre-tag:hover{background:rgba(124,58,237,0.2);border-color:var(--border-v)}
     .detail-actions{display:flex;gap:10px;flex-wrap:wrap}
@@ -688,6 +690,7 @@ const state = {
   attempt: 0, stallTimer: null, videoReady: false,
   resultsMode: "section", currentSection: "", resultsPage: 1, totalPages: 1,
   heroBanners: [], heroIdx: 0, heroTimer: null, heroCurrent: null,
+  genreExpanded: false, eventSource: null,
   cssFsActive: false,
   nativeFsActive: false,
   cinemaModeActive: false,
@@ -1186,16 +1189,37 @@ function bindVideoEvents() {
 }
 
 // ── Render helpers ────────────────────────────────────────────────────────────
+function renderGenreTags(genres, expanded = false) {
+  const list = Array.isArray(genres) ? genres.filter(Boolean) : [];
+  const visible = expanded ? list : list.slice(0, 5);
+  const tags = visible
+    .map(g => `<span class="genre-tag" data-genre-search="${esc(g)}">${esc(g)}</span>`)
+    .join("");
+  const toggle = list.length > 5
+    ? `<div class="genre-toggle-row"><button class="btn btn-ghost btn-xs" id="genreToggleBtn">${expanded ? "Ver menos" : "Ver mais"}</button></div>`
+    : "";
+  els.animeGenres.innerHTML = tags + toggle;
+}
+
+function buildSuggestionChips(suggestions) {
+  if (!Array.isArray(suggestions) || !suggestions.length) return "";
+  return `<div style="margin-top:14px"><div style="font-size:12px;color:var(--text-3);margin-bottom:8px;">Talvez você quis dizer:</div><div class="chips">${suggestions.map(s => `<button class="chip" data-suggest-search="${esc(s)}">${esc(s)}</button>`).join("")}</div></div>`;
+}
+
 function buildCard(item) {
   const cover = imgSrc(item.banner_url || item.cover_url, item.title);
   const isDub  = item.is_dubbed || (item.prefix === "DUB");
   const badge  = isDub ? "DUB" : "LEG";
   const epTag  = item.episode ? `<div class="card-ep-tag">EP ${esc(item.episode)}</div>` : "";
-  const hasWatched = !!getWatchMap()[item.id];
+  const watchKey = item.anime_id || item.id;
+  const hasWatched = !!getWatchMap()[watchKey];
   const watchBadge = hasWatched ? `<div class="card-watched-badge">✓</div>` : "";
-  const meta = [item.status, item.year, item.episodes ? `${item.episodes} eps` : ""]
+  const meta = [item.status, item.year, item.episodes ? `${item.episodes} eps` : item.episode ? `Episódio ${item.episode}` : ""]
     .filter(Boolean).map(esc);
-  return `<article class="anime-card" data-anime-id="${esc(item.id)}">
+  const attrs = item.open_mode === "episode" && item.anime_id && item.episode
+    ? `data-open-direct="1" data-anime-id="${esc(item.anime_id)}" data-episode="${esc(item.episode)}"`
+    : `data-anime-id="${esc(item.id)}"`;
+  return `<article class="anime-card" ${attrs}>
     <div class="card-thumb">
       <div class="card-badge ${isDub ? "dub" : "leg"}">${badge}</div>
       ${watchBadge}${epTag}
@@ -1573,7 +1597,7 @@ async function loadHome() {
       return;
     }
     els.homeSections.innerHTML = sections.map(renderSectionBlock).join("");
-    const featured = sections[0]?.items || [];
+    const featured = data?.featured ? [data.featured] : (sections[1]?.items || sections[0]?.items || []);
     if (featured.length) setupHeroBanner(featured.slice(0, 5));
   } catch(err) {
     console.error("[loadHome]", err);
@@ -1680,6 +1704,7 @@ async function performSearch(query, page = 1) {
           <div class="state-box-title">Nada encontrado</div>
           <div class="state-box-text">Nenhum anime para "${esc(q)}".</div>
           <div style="font-size:12px;color:var(--text-3);margin-top:8px;">Tente variações do nome ou palavras-chave diferentes.</div>
+          ${buildSuggestionChips(data?.suggestions || [])}
         </div>`;
     renderPagination(state.resultsPage, state.totalPages, p => performSearch(q, p));
   } catch(err) {
@@ -1868,7 +1893,7 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
 // ── URL params ────────────────────────────────────────────────────────────────
 function getQueryParams() {
   const p = new URLSearchParams(window.location.search);
-  return { anime: p.get("anime") || "", ep: p.get("ep") || "", q: normalizeQuality(p.get("q") || "HD") };
+  return { anime: p.get("anime") || "", ep: p.get("ep") || p.get("episode") || "", q: normalizeQuality(p.get("q") || "HD") };
 }
 function updateUrlParams({ anime, ep, q }) {
   const url = new URL(window.location.href);
@@ -1893,6 +1918,25 @@ function updateUrlParams({ anime, ep, q }) {
    4. Só carrega home se não há params
    5. Home é carregado em background (não bloqueia deep link)
 ═══════════════════════════════════════════════════════════════════════════ */
+function connectRealtimeUpdates() {
+  try { state.eventSource?.close?.(); } catch(e) {}
+  try {
+    state.eventSource = new EventSource('/api/events');
+    state.eventSource.addEventListener('catalog', async ev => {
+      let payload = null;
+      try { payload = JSON.parse(ev.data || '{}'); } catch(e) {}
+      if (!payload) return;
+      if (state.currentPage === 'home') await loadHome();
+      if (state.currentPage === 'results' && (state.currentSection === 'recentes' || state.currentSection === 'em_lancamento')) {
+        await loadSectionResults(state.currentSection, state.resultsPage || 1);
+      }
+      if (state.currentPage === 'anime' && state.currentAnimeId) {
+        await openAnime(state.currentAnimeId, { pushHistory: false });
+      }
+    });
+  } catch(e) { console.warn('[sse]', e); }
+}
+
 async function bootFromUrl() {
   if (state.autoBootDone) return;
   state.autoBootDone = true;
@@ -1951,8 +1995,11 @@ document.addEventListener("click", async e => {
     await openEpisode(cwCard.dataset.resumeAnime, cwCard.dataset.resumeEp, state.currentQuality || "HD");
     return;
   }
+  // Card direto para episódio
+  const directCard = e.target.closest(".anime-card[data-open-direct]");
+  if (directCard) { await openEpisode(directCard.dataset.animeId, directCard.dataset.episode, state.currentQuality || "HD"); return; }
   // Anime card
-  const card = e.target.closest(".anime-card[data-anime-id]");
+  const card = e.target.closest(".anime-card[data-anime-id]:not([data-open-direct])");
   if (card) { await openAnime(card.dataset.animeId); return; }
   // Section "Ver mais"
   const secBtn = e.target.closest("[data-open-section]");
@@ -1963,9 +2010,15 @@ document.addEventListener("click", async e => {
   // Quality button
   const qBtn = e.target.closest("[data-quality]");
   if (qBtn) { await openEpisode(state.currentAnimeId, state.currentEpisode, qBtn.dataset.quality, { pushHistory: false, force: true }); return; }
+  // Genre toggle
+  const genreToggle = e.target.closest("#genreToggleBtn");
+  if (genreToggle) { state.genreExpanded = !state.genreExpanded; renderGenreTags(state.anime?.genres || [], state.genreExpanded); return; }
   // Genre tag
   const genreTag = e.target.closest("[data-genre-search]");
   if (genreTag) { await performSearch(genreTag.dataset.genreSearch); return; }
+  // Search suggestion
+  const sug = e.target.closest("[data-suggest-search]");
+  if (sug) { els.searchInput.value = sug.dataset.suggestSearch; await performSearch(sug.dataset.suggestSearch); return; }
   // Filter chip
   const chip = e.target.closest("[data-section]");
   if (chip) { await loadSectionResults(chip.dataset.section); }
@@ -2083,6 +2136,7 @@ window.addEventListener("popstate", () => goBack());
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 bindVideoEvents();
+connectRealtimeUpdates();
 bootFromUrl();
 </script>
 </body>
