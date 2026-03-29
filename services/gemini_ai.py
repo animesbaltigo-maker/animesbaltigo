@@ -1,7 +1,7 @@
 import os
-from google import genai
+from groq import Groq
 
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 SYSTEM_PROMPT = """Você é uma assistente com personalidade inspirada em anime.
 Você só responde mensagens relacionadas a anime, mangá, personagens,
@@ -20,21 +20,24 @@ Regras:
 """
 
 def get_client():
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
 
     if not api_key:
-        raise ValueError("❌ GEMINI_API_KEY não definida!")
+        raise ValueError("❌ GROQ_API_KEY não definida!")
 
-    return genai.Client(api_key=api_key)
+    return Groq(api_key=api_key)
 
 def generate_anime_reply(user_text: str) -> str:
     client = get_client()
 
-    prompt = f"{SYSTEM_PROMPT}\n\nMensagem do grupo:\n{user_text[:800]}"
-
-    response = client.models.generate_content(
+    response = client.chat.completions.create(
         model=MODEL_NAME,
-        contents=prompt,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_text[:800]},
+        ],
+        temperature=0.8,
+        max_tokens=250,
     )
 
-    return (response.text or "").strip()
+    return (response.choices[0].message.content or "").strip()
