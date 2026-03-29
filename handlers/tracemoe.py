@@ -11,7 +11,7 @@ from utils.gatekeeper import ensure_channel_membership
 
 # TROQUE ESSA IMPORT SE O NOME DA SUA FUNÇÃO DE BUSCA FOR OUTRO
 # A ideia é usar a mesma fonte da /buscar
-from services.animefire_client import search_animes
+from services.animefire_client import search_anime
 
 
 TRACE_MOE_API = "https://api.trace.moe/search"
