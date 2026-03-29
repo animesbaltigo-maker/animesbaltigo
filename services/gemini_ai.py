@@ -30,22 +30,11 @@ def get_client():
 def generate_anime_reply(user_text: str) -> str:
     client = get_client()
 
-    prompt = f"{SYSTEM_PROMPT}\n\nMensagem do grupo:\n{user_text}"
-
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt,
-    )
-
-    def generate_anime_reply(user_text: str) -> str:
-    client = get_client()
     prompt = f"{SYSTEM_PROMPT}\n\nMensagem do grupo:\n{user_text[:800]}"
 
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
     )
-
-    return (response.text or "").strip()
 
     return (response.text or "").strip()
