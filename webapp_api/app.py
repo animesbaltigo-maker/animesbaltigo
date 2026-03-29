@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 from decimal import Decimal, InvalidOperation
@@ -97,6 +99,7 @@ app.add_middleware(
 _CACHE: dict[str, dict[str, Any]] = {}
 _LOCKS: dict[str, asyncio.Lock] = {}
 _PROGRESS: dict[str, dict[str, Any]] = {}
+_EVENT_STATE: dict[str, Any] = {"seq": 0, "last": {"type": "boot", "scope": "all", "ts": int(time.time())}}
 
 # ── Global persistent proxy client ───────────────────────────────────────────
 # One client for the entire process lifetime; uses connection pooling and
@@ -142,6 +145,69 @@ async def get_proxy_client() -> httpx.AsyncClient:
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
+
+
+def _normalize_text(value: str) -> str:
+    value = unicodedata.normalize("NFKD", _clean(value).lower())
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = re.sub(r"[^a-z0-9\s-]", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _tokenize(value: str) -> list[str]:
+    return [token for token in _normalize_text(value).split(" ") if token]
+
+
+def _score_text_match(query: str, *values: str) -> int:
+    q = _normalize_text(query)
+    if not q:
+        return 0
+    score = 0
+    q_tokens = _tokenize(q)
+    for raw in values:
+        value = _normalize_text(raw)
+        if not value:
+            continue
+        if value == q:
+            score = max(score, 200)
+        elif value.startswith(q):
+            score = max(score, 170)
+        elif q in value:
+            score = max(score, 140)
+        token_hits = sum(1 for token in q_tokens if token and token in value)
+        score = max(score, min(120, token_hits * 25))
+    return score
+
+
+def _suggestions(query: str, values: list[str], limit: int = 5) -> list[str]:
+    import difflib
+    q = _normalize_text(query)
+    pairs = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = _clean(value)
+        if not cleaned:
+            continue
+        norm = _normalize_text(cleaned)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        ratio = difflib.SequenceMatcher(None, q, norm).ratio()
+        if q and q in norm:
+            ratio += 0.25
+        pairs.append((ratio, cleaned))
+    pairs.sort(key=lambda item: (-item[0], item[1].lower()))
+    return [value for ratio, value in pairs if ratio >= 0.35][:limit]
+
+
+def _emit_event(kind: str, scope: str = "all") -> None:
+    _EVENT_STATE["seq"] += 1
+    _EVENT_STATE["last"] = {
+        "id": _EVENT_STATE["seq"],
+        "type": kind,
+        "scope": scope,
+        "ts": int(time.time()),
+    }
 
 
 def _clean_description(text: str) -> str:
@@ -463,6 +529,60 @@ def _truncate_description(text: str, size: int = 220) -> str:
     return value[:size].rstrip() + "..."
 
 
+async def _has_episodes(anime_id: str) -> bool:
+    if not anime_id:
+        return False
+    async def factory():
+        try:
+            payload = await get_episodes(anime_id, 0, 2)
+            items = _normalize_episodes(payload.get("all_items") or payload.get("items") or [])
+            return bool(items)
+        except Exception:
+            return False
+    return await _cached(f"haseps:{anime_id}", 300, factory)
+
+
+async def _filter_items_with_episodes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not items:
+        return []
+    checks = await asyncio.gather(*[_has_episodes(item.get("id") or item.get("anime_id") or "") for item in items], return_exceptions=True)
+    filtered = []
+    for item, ok in zip(items, checks):
+        if ok is True:
+            filtered.append(item)
+    return filtered
+
+
+async def _enrich_search_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    anime_id = item.get("id") or ""
+    if not anime_id:
+        return None
+    try:
+        details = await get_anime_details(anime_id)
+    except Exception:
+        details = None
+    shaped = _shape_details(details or item, anime_id)
+    if not await _has_episodes(anime_id):
+        return None
+    return shaped
+
+
+async def _build_search_candidates() -> list[dict[str, Any]]:
+    section_ids: set[str] = set()
+    seed_items: list[dict[str, Any]] = []
+    for section in ("em_lancamento", "top", "dublados", "legendados", "acao", "aventura", "fantasia", "romance"):
+        try:
+            page = await _get_paginated_section_page(section, 1)
+        except Exception:
+            continue
+        for item in page.get("items") or []:
+            anime_id = item.get("id") or ""
+            if anime_id and anime_id not in section_ids:
+                section_ids.add(anime_id)
+                seed_items.append(item)
+    return seed_items
+
+
 async def _build_featured_payload() -> dict[str, Any] | None:
     async def factory():
         candidates = []
@@ -507,14 +627,13 @@ async def _build_featured_payload() -> dict[str, Any] | None:
 async def _get_recent_page(page: int) -> dict:
     async def factory():
         recent = await get_recent_episodes(limit=200)
-        seen: set[str] = set()
         items = []
 
         for item in recent:
             anime_id = item.get("anime_id")
-            if not anime_id or anime_id in seen:
+            episode = str(item.get("episode") or "").strip()
+            if not anime_id or not episode:
                 continue
-            seen.add(anime_id)
 
             title = item.get("title") or anime_id.replace("-", " ").title()
             dubbed = _is_dubbed(anime_id, title)
@@ -539,14 +658,15 @@ async def _get_recent_page(page: int) -> dict:
                     cover = ""
 
             items.append({
-                "id": anime_id,
+                "id": f"{anime_id}__ep__{episode}",
+                "anime_id": anime_id,
                 "title": title,
                 "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
                 "prefix": "DUB" if dubbed else "LEG",
                 "is_dubbed": dubbed,
                 "cover_url": cover,
                 "banner_url": cover,
-                "episode": item.get("episode"),
+                "episode": episode,
                 "description": "",
                 "genres": [],
                 "score": None,
@@ -554,10 +674,11 @@ async def _get_recent_page(page: int) -> dict:
                 "episodes": None,
                 "year": None,
                 "studio": "",
+                "open_mode": "episode",
             })
 
         total = len(items)
-        total_pages = max(1, (total + GRID_PAGE_LIMIT - 1) // GRID_PAGE_LIMIT)
+        total_pages = max(1, (total + GRID_PAGE_LIMIT - 1) // GRID_PAGE_LIMIT) if total else 1
         current_page = min(max(1, page), total_pages)
         start = (current_page - 1) * GRID_PAGE_LIMIT
         end = start + GRID_PAGE_LIMIT
@@ -612,20 +733,39 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
         else:
             page_html = await _get(_section_url(slug, current_page))
 
-        items = _extract_listing_cards(page_html)
+        raw_items = _extract_listing_cards(page_html)
+        items = await _filter_items_with_episodes(raw_items)
+
+        if section == "em_lancamento":
+            enriched = []
+            for item in items:
+                anime_id = item.get("id") or ""
+                latest = 0
+                try:
+                    payload = await get_episodes(anime_id, 0, MAX_EPISODES_FETCH)
+                    episodes = _normalize_episodes(payload.get("all_items") or payload.get("items") or [])
+                    if episodes:
+                        latest = int(_parse_episode_number(episodes[-1].get("number")) or 0)
+                        item["episodes"] = len(episodes)
+                        item["latest_episode"] = latest
+                except Exception:
+                    item["latest_episode"] = latest
+                enriched.append(item)
+            items = sorted(enriched, key=lambda x: (-(x.get("latest_episode") or 0), x.get("title") or ""))
+
         return {
             "section": section,
             "title": conf["title"],
             "page": current_page,
             "limit": GRID_PAGE_LIMIT,
-            "total_items": total_pages * GRID_PAGE_LIMIT,
+            "total_items": len(items) if current_page == 1 else total_pages * GRID_PAGE_LIMIT,
             "total_pages": total_pages,
             "has_next": current_page < total_pages,
             "has_prev": current_page > 1,
             "items": items[:GRID_PAGE_LIMIT],
         }
 
-    return await _cached(f"page:{section}:{current_page}", SECTION_TTL, page_factory)
+    return await _cached(f"page:{section}:{current_page}", 30 if section == "em_lancamento" else SECTION_TTL, page_factory)
 
 
 # =============================================================================
@@ -642,6 +782,9 @@ async def _startup_tasks():
             try:
                 _invalidate_prefix("recentes:")
                 _invalidate_prefix("page:recentes")
+                _invalidate_prefix("page:em_lancamento")
+                _invalidate_prefix("meta:em_lancamento")
+                _emit_event("catalog_refresh", "recentes")
             except Exception:
                 pass
             await asyncio.sleep(60)
@@ -744,33 +887,48 @@ async def api_search(
     limit: int = Query(GRID_PAGE_LIMIT, ge=1, le=60),
 ):
     query = q.strip()
+    normalized_query = _normalize_text(query)
 
     async def factory():
-        raw_items = await search_anime(query)
-        shaped = []
-        for item in raw_items:
-            anime_id = item.get("id") or ""
-            title = item.get("title") or anime_id
-            dubbed = bool(item.get("is_dubbed")) or _is_dubbed(anime_id, title)
-            shaped.append({
-                "id": anime_id,
-                "title": title,
-                "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
-                "prefix": "DUB" if dubbed else "LEG",
-                "is_dubbed": dubbed,
-                "cover_url": item.get("cover_url") or item.get("banner_url") or "",
-                "banner_url": item.get("banner_url") or item.get("cover_url") or "",
-                "description": "",
-                "genres": [],
-                "score": None,
-                "status": "",
-                "episodes": None,
-                "year": None,
-                "studio": "",
-            })
-        return [item for item in shaped if _has_minimum_catalog_fields(item)]
+        upstream: list[dict[str, Any]] = []
+        try:
+            upstream = await search_anime(query)
+        except Exception:
+            upstream = []
 
-    shaped = await _cached(f"search:{query.lower()}", SEARCH_TTL, factory)
+        seeds = await _build_search_candidates()
+        merged: dict[str, dict[str, Any]] = {}
+        for item in upstream + seeds:
+            anime_id = item.get("id") or item.get("default_anime_id") or ""
+            if anime_id and anime_id not in merged:
+                merged[anime_id] = {"id": anime_id, **item}
+
+        enriched = await asyncio.gather(*[_enrich_search_item(item) for item in merged.values()], return_exceptions=True)
+        results = []
+        titles_for_suggestions = []
+        for item in enriched:
+            if not item or isinstance(item, Exception):
+                continue
+            titles_for_suggestions.append(item.get("title") or "")
+            title_score = _score_text_match(query, item.get("title") or "", *(item.get("alt_titles") or []))
+            tag_score = _score_text_match(query, *(item.get("genres") or []))
+            score = max(title_score, tag_score + 15 if tag_score else 0)
+            if score <= 0:
+                continue
+            item["_score"] = score
+            results.append(item)
+
+        results.sort(key=lambda item: (-item.get("_score", 0), item.get("title") or ""))
+        suggestions = _suggestions(query, titles_for_suggestions)
+        cleaned = []
+        for item in results:
+            item.pop("_score", None)
+            cleaned.append(item)
+        return {"items": cleaned, "suggestions": suggestions}
+
+    payload = await _cached(f"search:v2:{normalized_query}", SEARCH_TTL, factory)
+    shaped = payload.get("items") or []
+    suggestions = payload.get("suggestions") or []
 
     total = len(shaped)
     total_pages = max(1, (total + limit - 1) // limit) if total else 0
@@ -788,6 +946,7 @@ async def api_search(
         "total_pages": total_pages,
         "has_next": current_page < total_pages if total_pages else False,
         "has_prev": current_page > 1,
+        "suggestions": suggestions,
     }
 
 
@@ -861,6 +1020,47 @@ async def api_episode(
         raise HTTPException(status_code=404, detail="Episódio não encontrado")
 
     return {"ok": True, "item": payload}
+
+
+@app.get("/api/episode/{episode_id}")
+async def api_episode_direct(
+    episode_id: str,
+    quality: str = Query("HD"),
+    refresh: int = Query(0),
+):
+    raw = (episode_id or "").strip().strip("/")
+    match = re.match(r"^(?P<anime>.+?)-ep-(?P<ep>\d+(?:[.,]\d+)?)$", raw)
+    if not match:
+        raise HTTPException(status_code=400, detail="Formato inválido. Use anime-slug-ep-12")
+    return await api_episode(match.group("anime"), match.group("ep"), quality=quality, refresh=refresh)
+
+
+@app.get("/api/events")
+async def api_events(request: Request):
+    async def event_stream():
+        last_sent = -1
+        while True:
+            if await request.is_disconnected():
+                break
+            event = _EVENT_STATE.get("last") or {}
+            event_id = int(event.get("id") or 0)
+            if event_id != last_sent:
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"id: {event_id}\nevent: catalog\ndata: {payload}\n\n"
+                last_sent = event_id
+            await asyncio.sleep(2)
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+
+
+@app.post("/api/cache/invalidate")
+async def invalidate_runtime(scope: str = Query("all")):
+    _invalidate_prefix("recentes:")
+    _invalidate_prefix("page:recentes")
+    _invalidate_prefix("page:em_lancamento")
+    _invalidate_prefix("meta:em_lancamento")
+    _invalidate_prefix("home:")
+    _emit_event("manual_invalidate", scope)
+    return {"ok": True, "scope": scope}
 
 
 # =============================================================================
