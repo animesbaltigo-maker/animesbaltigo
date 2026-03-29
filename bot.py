@@ -43,6 +43,7 @@ from services.animefire_client import preload_popular_cache
 
 from handlers.inline import inline_query
 from handlers.testminiapp import testminiapp
+from handlers.tracemoe import traceme, tracequota, trace_photo_handler
 
 
 init_metrics_db()
@@ -118,6 +119,9 @@ def main():
     app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern=r"^bc\|"))
     app.add_handler(CallbackQueryHandler(referral_button, pattern=r"^noop_indicar$"))
     app.add_handler(CallbackQueryHandler(callbacks))
+    app.add_handler(CommandHandler("traceme", traceme))
+    app.add_handler(CommandHandler("tracequota", tracequota))
+    app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, trace_photo_handler))
 
     app.add_handler(
         MessageHandler(
