@@ -117,31 +117,56 @@ def main():
         group=99,
     )
 
-if not app.job_queue:
-    print("[ERRO] JobQueue não disponível. Instale: python-telegram-bot[job-queue]==22.6")
-else:
-    app.job_queue.run_repeating(
-        auto_post_new_eps_job,
-        interval=600,
-        first=15,
-        name="auto_post_new_eps",
-    )
-    print("[OK] Job registrado: auto_post_new_eps (a cada 600s)")
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("Configure BOT_TOKEN nas variáveis de ambiente.")
 
-    app.job_queue.run_repeating(
-        auto_referral_check_job,
-        interval=3600,
-        first=60,
-        name="auto_referral_check",
+    init_referral_db()
+
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
     )
-    print("[OK] Job registrado: auto_referral_check (a cada 3600s)")
+
+    # handlers...
+    app.add_handler(CommandHandler("start", start))
+    # ... (resto igual)
+
+    app.add_handler(
+        MessageHandler(
+            filters.ALL & ~filters.COMMAND,
+            broadcast_message_router,
+        ),
+        group=99,
+    )
+
+    # ✅ AQUI DENTRO (não fora!)
+    if not app.job_queue:
+        print("[ERRO] JobQueue não disponível. Instale: python-telegram-bot[job-queue]==22.6")
+    else:
+        app.job_queue.run_repeating(
+            auto_post_new_eps_job,
+            interval=600,
+            first=15,
+            name="auto_post_new_eps",
+        )
+        print("[OK] Job registrado: auto_post_new_eps (a cada 600s)")
+
+        app.job_queue.run_repeating(
+            auto_referral_check_job,
+            interval=3600,
+            first=60,
+            name="auto_referral_check",
+        )
+        print("[OK] Job registrado: auto_referral_check (a cada 3600s)")
 
     app.add_error_handler(error_handler)
 
     print("Bot rodando...")
 
     app.run_polling(drop_pending_updates=True)
-
-
 if __name__ == "__main__":
     main()
