@@ -1,3 +1,8 @@
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from services.gemini_ai import generate_anime_reply  # 👈 ESSA LINHA
+
 BOT_USERNAME = "AnimesBaltigo_Bot"  # ajusta se precisar
 TRIGGER = "akira"
 
