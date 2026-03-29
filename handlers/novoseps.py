@@ -7,13 +7,13 @@ import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from config import ADMIN_IDS, BOT_USERNAME
+from config import ADMIN_IDS, BOT_USERNAME, DATA_DIR
 from services.animefire_client import get_anime_details
 from services.recent_episodes_client import get_recent_episodes
 
 
 CANAL_ATUALIZACOES = "@AtualizacoesOn"
-POSTED_JSON_PATH = "data/episodios_postados.json"
+POSTED_JSON_PATH = str(DATA_DIR / "episodios_postados.json")
 
 
 def _is_admin(user_id: int | None) -> bool:
@@ -276,6 +276,7 @@ async def postnovoseps(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def auto_post_new_eps_job(context: ContextTypes.DEFAULT_TYPE):
+    print("[AUTO_NOVOSEPS] iniciando checagem...")
     try:
         success_count, fail_count = await _check_and_post_recent(
             context,
