@@ -1,3 +1,5 @@
+
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -774,7 +776,7 @@ function normalizeQuality(v) {
 function oppositeQuality(q) { return normalizeQuality(q) === "HD" ? "SD" : "HD"; }
 function imgSrc(src, title) {
   if (src && src.startsWith("http")) return src;
-  return https://placehold.co/600x900/0d1128/7c3aed?text=${encodeURIComponent(title || "Anime")};
+  return `https://placehold.co/600x900/0d1128/7c3aed?text=${encodeURIComponent(title || "Anime")}`;
 }
 
 let toastTimer = null;
@@ -847,14 +849,14 @@ async function apiGet(path, ms = API_TIMEOUT) {
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    const res = await fetch(${API_BASE}${path}, {
+    const res = await fetch(`${API_BASE}${path}`, {
       headers: { "Accept": "application/json" },
       cache: "no-store",
       signal: ctrl.signal,
     });
     clearTimeout(timer);
     if (!res.ok) {
-      let d = Erro ${res.status};
+      let d = `Erro ${res.status}`;
       try { d = (await res.json())?.detail || d; } catch(e) {}
       throw new Error(d);
     }
@@ -871,7 +873,7 @@ function showVideoOverlay(type, text, sub = "") {
   if (type === "loading")
     els.videoStatusIconSlot.innerHTML = '<div class="spinner-ring"></div>';
   else if (type.startsWith("icon:"))
-    els.videoStatusIconSlot.innerHTML = <div class="overlay-icon">${type.slice(5)}</div>;
+    els.videoStatusIconSlot.innerHTML = `<div class="overlay-icon">${type.slice(5)}</div>`;
   els.videoStatusText.textContent = text;
   els.videoStatusSub.textContent  = sub;
   els.videoStatusOverlay.classList.add("active");
@@ -880,7 +882,7 @@ function hideVideoOverlay() { els.videoStatusOverlay.classList.remove("active");
 
 // ── Proxy ─────────────────────────────────────────────────────────────────────
 function buildProxyUrl(rawUrl, bust = 0) {
-  const p = new URL(${API_BASE}/api/proxy-stream);
+  const p = new URL(`${API_BASE}/api/proxy-stream`);
   p.searchParams.set("url", rawUrl);
   if (bust) p.searchParams.set("_t", String(bust));
   return p.toString();
@@ -1063,7 +1065,7 @@ async function _escalatePlayerFailure() {
     const rawUrl = state.currentVideoUrl;
     if (!rawUrl) { _showFinalError(); return; }
     showToast("Reconectando...");
-    showVideoOverlay("loading", "Reconectando...", Tentativa ${state.attempt + 1} de ${MAX_ATTEMPTS});
+    showVideoOverlay("loading", "Reconectando...", `Tentativa ${state.attempt + 1} de ${MAX_ATTEMPTS}`);
     _resetVideoElement();
     els.videoPlayer.dataset.rawUrl = rawUrl;
     els.videoPlayer.src = buildProxyUrl(rawUrl, Date.now());
@@ -1096,8 +1098,8 @@ async function _escalatePlayerFailure() {
 
   if (state.attempt === 3) {
     const alt = oppositeQuality(q);
-    showToast(Tentando qualidade ${alt}...);
-    showVideoOverlay("loading", Tentando ${alt}..., "Última tentativa automática");
+    showToast(`Tentando qualidade ${alt}...`);
+    showVideoOverlay("loading", `Tentando ${alt}...`, "Última tentativa automática");
     try {
       const data   = await _fetchEpisodeWithTimeout(aid, ep, alt, true);
       const newUrl = pickEpisodeVideoUrl(data?.item);
@@ -1123,14 +1125,14 @@ async function _escalatePlayerFailure() {
 }
 
 async function _fetchEpisodeWithTimeout(animeId, episode, quality, refresh = false) {
-  const path = /api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(quality)}${refresh ? "&refresh=1" : ""};
+  const path = `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(quality)}${refresh ? "&refresh=1" : ""}`;
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), LINK_FETCH_TIMEOUT);
   try {
-    const res = await fetch(${API_BASE}${path}, {
+    const res = await fetch(`${API_BASE}${path}`, {
       headers: { "Accept": "application/json" }, cache: "no-store", signal: ctrl.signal,
     });
-    if (!res.ok) throw new Error(HTTP ${res.status});
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } finally { clearTimeout(timer); }
 }
@@ -1200,17 +1202,17 @@ function renderGenreTags(genres, expanded = false) {
   const list = Array.isArray(genres) ? genres.filter(Boolean) : [];
   const visible = expanded ? list : list.slice(0, 5);
   const tags = visible
-    .map(g => <span class="genre-tag" data-genre-search="${esc(g)}">${esc(g)}</span>)
+    .map(g => `<span class="genre-tag" data-genre-search="${esc(g)}">${esc(g)}</span>`)
     .join("");
   const toggle = list.length > 5
-    ? <div class="genre-toggle-row"><button class="btn btn-ghost btn-xs" id="genreToggleBtn">${expanded ? "Ver menos" : "Ver mais"}</button></div>
+    ? `<div class="genre-toggle-row"><button class="btn btn-ghost btn-xs" id="genreToggleBtn">${expanded ? "Ver menos" : "Ver mais"}</button></div>`
     : "";
   els.animeGenres.innerHTML = tags + toggle;
 }
 
 function buildSuggestionChips(suggestions) {
   if (!Array.isArray(suggestions) || !suggestions.length) return "";
-  return <div style="margin-top:14px"><div style="font-size:12px;color:var(--text-3);margin-bottom:8px;">Talvez você quis dizer:</div><div class="chips">${suggestions.map(s => <button class="chip" data-suggest-search="${esc(s)}">${esc(s)}</button>).join("")}</div></div>;
+  return `<div style="margin-top:14px"><div style="font-size:12px;color:var(--text-3);margin-bottom:8px;">Talvez você quis dizer:</div><div class="chips">${suggestions.map(s => `<button class="chip" data-suggest-search="${esc(s)}">${esc(s)}</button>`).join("")}</div></div>`;
 }
 
 
@@ -1257,16 +1259,16 @@ function buildCard(item) {
   const cover = imgSrc(item.banner_url || item.cover_url, item.title);
   const isDub  = item.is_dubbed || (item.prefix === "DUB");
   const badge  = isDub ? "DUB" : "LEG";
-  const epTag  = item.episode ? <div class="card-ep-tag">EP ${esc(item.episode)}</div> : "";
+  const epTag  = item.episode ? `<div class="card-ep-tag">EP ${esc(item.episode)}</div>` : "";
   const watchKey = item.anime_id || item.id;
   const hasWatched = !!getWatchMap()[watchKey];
-  const watchBadge = hasWatched ? <div class="card-watched-badge">✓</div> : "";
-  const meta = [item.status, item.year, item.episodes ? ${item.episodes} eps : item.episode ? Episódio ${item.episode} : ""]
+  const watchBadge = hasWatched ? `<div class="card-watched-badge">✓</div>` : "";
+  const meta = [item.status, item.year, item.episodes ? `${item.episodes} eps` : item.episode ? `Episódio ${item.episode}` : ""]
     .filter(Boolean).map(esc);
   const attrs = item.open_mode === "episode" && item.anime_id && item.episode
-    ? data-open-direct="1" data-anime-id="${esc(item.anime_id)}" data-episode="${esc(item.episode)}"
-    : data-anime-id="${esc(item.id)}";
-  return <article class="anime-card" ${attrs}>
+    ? `data-open-direct="1" data-anime-id="${esc(item.anime_id)}" data-episode="${esc(item.episode)}"`
+    : `data-anime-id="${esc(item.id)}"`;
+  return `<article class="anime-card" ${attrs}>
     <div class="card-thumb">
       <div class="card-badge ${isDub ? "dub" : "leg"}">${badge}</div>
       ${watchBadge}${epTag}
@@ -1278,26 +1280,26 @@ function buildCard(item) {
       <div class="card-title">${esc(item.title || "Sem título")}</div>
       <div class="card-meta">${meta.join(" · ") || "Toque para abrir"}</div>
     </div>
-  </article>;
+  </article>`;
 }
 
 function skeletonGrid(count = 12) {
   let h = '<div class="card-grid">';
   for (let i = 0; i < count; i++) {
-    h += <div class="skeleton-card">
+    h += `<div class="skeleton-card">
       <div class="skeleton skeleton-thumb"></div>
       <div class="skeleton-lines">
         <div class="skeleton skeleton-line w-80"></div>
         <div class="skeleton skeleton-line w-50"></div>
       </div>
-    </div>;
+    </div>`;
   }
   return h + "</div>";
 }
 
 function renderSectionBlock(section) {
   const items = Array.isArray(section.items) ? section.items : [];
-  return <div class="section">
+  return `<div class="section">
     <div class="section-head">
       <div class="section-label">
         <div class="section-accent"></div>
@@ -1309,18 +1311,18 @@ function renderSectionBlock(section) {
       <button class="btn btn-ghost btn-sm" data-open-section="${esc(section.key)}">Ver mais →</button>
     </div>
     <div class="card-grid">${items.map(buildCard).join("")}</div>
-  </div>;
+  </div>`;
 }
 
 function renderAnimeMeta(item) {
   const isDub  = item.is_dubbed || item.prefix === "DUB";
   const pills  = [];
-  pills.push(<span class="pill">${isDub ? "🎙️ Dublado" : "📝 Legendado"}</span>);
-  if (item.score)    pills.push(<span class="pill score">⭐ ${esc(item.score)}</span>);
-  if (item.status)   pills.push(<span class="pill">${esc(item.status)}</span>);
-  if (item.year)     pills.push(<span class="pill">📅 ${esc(item.year)}</span>);
-  if (item.episodes) pills.push(<span class="pill">🎬 ${esc(item.episodes)} eps</span>);
-  if (item.studio)   pills.push(<span class="pill">🏢 ${esc(item.studio)}</span>);
+  pills.push(`<span class="pill">${isDub ? "🎙️ Dublado" : "📝 Legendado"}</span>`);
+  if (item.score)    pills.push(`<span class="pill score">⭐ ${esc(item.score)}</span>`);
+  if (item.status)   pills.push(`<span class="pill">${esc(item.status)}</span>`);
+  if (item.year)     pills.push(`<span class="pill">📅 ${esc(item.year)}</span>`);
+  if (item.episodes) pills.push(`<span class="pill">🎬 ${esc(item.episodes)} eps</span>`);
+  if (item.studio)   pills.push(`<span class="pill">🏢 ${esc(item.studio)}</span>`);
   return pills.join("");
 }
 
@@ -1406,17 +1408,17 @@ function renderEpisodeButtons(episodes) {
 
   if (!fullList.length) {
     els.episodesInfo.textContent = "Sem episódios disponíveis.";
-    els.episodesGrid.innerHTML   = <div class="state-box">
+    els.episodesGrid.innerHTML   = `<div class="state-box">
       <div class="state-box-icon">📭</div>
       <div class="state-box-title">Sem episódios</div>
       <div class="state-box-text">Esse anime não retornou episódios agora.</div>
-    </div>;
+    </div>`;
     return;
   }
 
   const realCount    = episodes?.length || 0;
   const displayTotal = Math.max(realCount, metaTotal, fullList.length, parseInt(state.currentEpisode) || 0);
-  els.episodesInfo.textContent = ${displayTotal} episódio(s) disponível(is);
+  els.episodesInfo.textContent = `${displayTotal} episódio(s) disponível(is)`;
 
   els.episodesGrid.innerHTML = fullList.map(ep => {
     const num      = String(_parseEpNumber(ep) ?? ep.slug ?? "").trim();
@@ -1427,9 +1429,9 @@ function renderEpisodeButtons(episodes) {
     const isSynthetic = ep.synthetic === true;
     // Episódios sintéticos (gerados, não confirmados pela API) ficam levemente diferentes
     const style   = isSynthetic ? "opacity:0.6;" : "";
-    const title   = isSynthetic ? title="Episódio ${lbl} (pode não estar disponível)" : "";
-    return <button class="ep-btn ${isActive ? "active" : ""} ${isWatched ? "watched" : ""}"
-      data-open-episode="${esc(num)}" style="${style}" ${num ? "" : "disabled"} ${title}>${esc(lbl)}</button>;
+    const title   = isSynthetic ? `title="Episódio ${lbl} (pode não estar disponível)"` : "";
+    return `<button class="ep-btn ${isActive ? "active" : ""} ${isWatched ? "watched" : ""}"
+      data-open-episode="${esc(num)}" style="${style}" ${num ? "" : "disabled"} ${title}>${esc(lbl)}</button>`;
   }).join("");
 }
 
@@ -1444,7 +1446,7 @@ function renderQualityButtons(playerItem) {
   const qualities = getAllQualities(playerItem);
   els.qualityRow.innerHTML = qualities.map(q => {
     const active = normalizeQuality(q) === normalizeQuality(state.currentQuality);
-    return <button class="quality-btn ${active ? "active" : ""}" data-quality="${esc(q)}">${esc(q)}</button>;
+    return `<button class="quality-btn ${active ? "active" : ""}" data-quality="${esc(q)}">${esc(q)}</button>`;
   }).join("");
 }
 
@@ -1473,15 +1475,15 @@ function renderHeroBanner(idx) {
   const cover  = item.banner_url || item.cover_url || "";
   const isDub  = item.is_dubbed  || item.prefix === "DUB";
   const pills  = [
-    item.status   ? <span class="hero-pill">${esc(item.status)}</span>          : "",
-    item.year     ? <span class="hero-pill">📅 ${esc(item.year)}</span>         : "",
-    item.episodes ? <span class="hero-pill">🎬 ${esc(item.episodes)} eps</span> : "",
-    <span class="hero-pill">${isDub ? "🎙️ DUB" : "📝 LEG"}</span>,
+    item.status   ? `<span class="hero-pill">${esc(item.status)}</span>`          : "",
+    item.year     ? `<span class="hero-pill">📅 ${esc(item.year)}</span>`         : "",
+    item.episodes ? `<span class="hero-pill">🎬 ${esc(item.episodes)} eps</span>` : "",
+    `<span class="hero-pill">${isDub ? "🎙️ DUB" : "📝 LEG"}</span>`,
   ].join("");
   const dots = state.heroBanners
-    .map((_, i) => <button class="hero-dot ${i === idx ? "on" : ""}" data-hidx="${i}"></button>)
+    .map((_, i) => `<button class="hero-dot ${i === idx ? "on" : ""}" data-hidx="${i}"></button>`)
     .join("");
-  els.heroArea.innerHTML = 
+  els.heroArea.innerHTML = `
     <div class="hero-banner" id="heroBannerEl">
       <div class="hero-bg" style="background-image:url('${cover}')"></div>
       <div class="hero-grad"></div>
@@ -1496,7 +1498,7 @@ function renderHeroBanner(idx) {
         </div>
       </div>
       <div class="hero-dots">${dots}</div>
-    </div>;
+    </div>`;
 
   $("heroWatchBtn")?.addEventListener("click", async () => {
     const id = state.heroCurrent?.id;
@@ -1524,7 +1526,7 @@ function startHeroTimer() {
 }
 
 function renderStaticHero() {
-  els.heroArea.innerHTML = 
+  els.heroArea.innerHTML = `
     <div class="hero-static">
       <div class="hero-static-inner">
         <div>
@@ -1541,7 +1543,7 @@ function renderStaticHero() {
         </div>
         <div class="hero-art"><div class="hero-art-inner">⛩️</div></div>
       </div>
-    </div>;
+    </div>`;
   $("heroExploreBtn")?.addEventListener("click", () => { setPage("home"); loadHome(); });
   $("heroSearchBtn")?.addEventListener("click",  () => { setPage("home"); focusSearch(); });
 }
@@ -1552,7 +1554,7 @@ function renderContinueWatching() {
   if (!items.length) { els.continueSection.innerHTML = ""; return; }
   const pct = item => item.durationSeconds > 0
     ? Math.min(100, Math.round((item.watchedSeconds / item.durationSeconds) * 100)) : 0;
-  const cards = items.map(item => 
+  const cards = items.map(item => `
     <div class="cw-card" data-resume-anime="${esc(item.animeId)}" data-resume-ep="${esc(item.episode)}">
       <div class="cw-thumb">
         <img src="${imgSrc(item.cover, item.animeTitle)}" alt="${esc(item.animeTitle)}" loading="lazy"/>
@@ -1564,8 +1566,8 @@ function renderContinueWatching() {
         <div class="cw-title">${esc(item.animeTitle || item.animeId)}</div>
         <div class="cw-sub">Continuar EP ${esc(item.episode)} · ${pct(item)}%</div>
       </div>
-    </div>).join("");
-  els.continueSection.innerHTML = 
+    </div>`).join("");
+  els.continueSection.innerHTML = `
     <div class="section" style="margin-bottom:24px">
       <div class="section-head">
         <div class="section-label">
@@ -1577,7 +1579,7 @@ function renderContinueWatching() {
         </div>
       </div>
       <div class="cw-scroll">${cards}</div>
-    </div>;
+    </div>`;
 }
 
 // ── Pagination ────────────────────────────────────────────────────────────────
@@ -1590,22 +1592,22 @@ function renderPagination(current, total, onPage) {
   if (current + delta < total-1) range.push("...");
   const pages = [1, ...range, total];
   const btns  = pages.map(p => {
-    if (p === "...") return <span class="pg-btn" style="border:none;pointer-events:none;opacity:.4">…</span>;
-    return <button class="pg-btn ${p === current ? "active-pg" : ""}" data-pg="${p}">${p}</button>;
+    if (p === "...") return `<span class="pg-btn" style="border:none;pointer-events:none;opacity:.4">…</span>`;
+    return `<button class="pg-btn ${p === current ? "active-pg" : ""}" data-pg="${p}">${p}</button>`;
   }).join("");
-  const gotoHtml = <div class="pg-input-wrap">
+  const gotoHtml = `<div class="pg-input-wrap">
     <span>Ir para</span>
     <input class="pg-input" id="pgGotoInput" type="number" min="1" max="${total}" value="${current}" />
     <button class="pg-btn" id="pgGotoBtn">→</button>
-  </div>;
-  els.resultsPagination.innerHTML = 
+  </div>`;
+  els.resultsPagination.innerHTML = `
     <div class="pagination-row">
       <button class="pg-btn" data-pg="${current - 1}" ${current <= 1 ? "disabled" : ""}>← Ant</button>
       ${btns}
       <button class="pg-btn" data-pg="${current + 1}" ${current >= total ? "disabled" : ""}>Próx →</button>
       <button class="pg-btn" data-pg="${total}"       ${current >= total ? "disabled" : ""}>Última ⏭</button>
     </div>
-    <div class="pagination-row" style="margin-top:8px">${gotoHtml}</div>;
+    <div class="pagination-row" style="margin-top:8px">${gotoHtml}</div>`;
 
   els.resultsPagination.querySelectorAll("[data-pg]").forEach(btn => {
     const pg = parseInt(btn.dataset.pg);
@@ -1636,11 +1638,11 @@ async function loadHome() {
     setSubtitle("Anime Streaming");
     const sections = data?.sections || [];
     if (!sections.length) {
-      els.homeSections.innerHTML = <div class="state-box">
+      els.homeSections.innerHTML = `<div class="state-box">
         <div class="state-box-icon">📭</div>
         <div class="state-box-title">Nada por aqui</div>
         <div class="state-box-text">Nenhuma seção encontrada.</div>
-      </div>;
+      </div>`;
       return;
     }
     els.homeSections.innerHTML = sections.map(renderSectionBlock).join("");
@@ -1649,12 +1651,12 @@ async function loadHome() {
   } catch(err) {
     console.error("[loadHome]", err);
     setSubtitle("Erro");
-    els.homeSections.innerHTML = <div class="state-box error">
+    els.homeSections.innerHTML = `<div class="state-box error">
       <div class="state-box-icon">⚠️</div>
       <div class="state-box-title">Falha ao carregar</div>
       <div class="state-box-text">${esc(err.message || "Erro desconhecido")}</div>
       <button class="btn btn-primary btn-sm" onclick="loadHome()" style="margin-top:4px">↺ Tentar novamente</button>
-    </div>;
+    </div>`;
     showToast("Falha ao carregar catálogo.");
   }
 }
@@ -1669,27 +1671,27 @@ async function loadSectionResults(sectionKey, page = 1) {
     c.classList.toggle("active", c.dataset.section === sectionKey);
   });
   try {
-    const raw   = await apiGet(/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=${page});
+    const raw   = await apiGet(`/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=${page}`);
     const data  = _normalizeCatalogResponse(raw);
     const items = Array.isArray(data?.items) ? data.items : [];
     state.searchResults = items;
     state.resultsPage   = Number(data?.page || page);
     state.totalPages    = Number(data?.total_pages || 1);
     els.resultsTitle.textContent    = data?.title || "Seção";
-    els.resultsSubtitle.textContent = ${data?.total_items || data?.count || items.length} título(s) · Pág. ${state.resultsPage}/${state.totalPages};
+    els.resultsSubtitle.textContent = `${data?.total_items || data?.count || items.length} título(s) · Pág. ${state.resultsPage}/${state.totalPages}`;
     els.resultsGrid.innerHTML = items.length
-      ? <div class="card-grid">${items.map(buildCard).join("")}</div>
-      : <div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nenhum anime</div></div>;
+      ? `<div class="card-grid">${items.map(buildCard).join("")}</div>`
+      : `<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nenhum anime</div></div>`;
     renderPagination(state.resultsPage, state.totalPages, p => loadSectionResults(sectionKey, p));
   } catch(err) {
     console.error("[loadSection]", err);
     els.resultsTitle.textContent    = "Erro";
     els.resultsSubtitle.textContent = err.message || "";
-    els.resultsGrid.innerHTML = <div class="state-box error">
+    els.resultsGrid.innerHTML = `<div class="state-box error">
       <div class="state-box-icon">⚠️</div>
       <div class="state-box-title">Falha ao carregar</div>
       <div class="state-box-text">${esc(err.message || "")}</div>
-    </div>;
+    </div>`;
     showToast("Erro ao abrir seção.");
   } finally { hideLoading(); }
 }
@@ -1737,33 +1739,33 @@ async function performSearch(query, page = 1) {
   state.currentSection = "";
   document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
   try {
-    const rawData = await apiGet(/api/search?q=${encodeURIComponent(q)}&page=${page});
+    const rawData = await apiGet(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
     const data    = _normalizeSearchResponse(rawData);
     const items   = data?.items || [];
     state.searchResults = items;
     state.resultsPage   = Number(data?.page       || page);
     state.totalPages    = Number(data?.total_pages || 1);
-    els.resultsTitle.textContent    = "${q}";
-    els.resultsSubtitle.textContent = ${data?.count ?? items.length} resultado(s);
+    els.resultsTitle.textContent    = `"${q}"`;
+    els.resultsSubtitle.textContent = `${data?.count ?? items.length} resultado(s)`;
     els.resultsGrid.innerHTML = items.length
-      ? <div class="card-grid">${items.map(buildCard).join("")}</div>
-      : <div class="state-box">
+      ? `<div class="card-grid">${items.map(buildCard).join("")}</div>`
+      : `<div class="state-box">
           <div class="state-box-icon">🔍</div>
           <div class="state-box-title">Nada encontrado</div>
           <div class="state-box-text">Nenhum anime para "${esc(q)}".</div>
           <div style="font-size:12px;color:var(--text-3);margin-top:8px;">Tente variações do nome ou palavras-chave diferentes.</div>
           ${buildSuggestionChips(data?.suggestions || [])}
-        </div>;
+        </div>`;
     renderPagination(state.resultsPage, state.totalPages, p => performSearch(q, p));
   } catch(err) {
     console.error("[search]", err);
     els.resultsTitle.textContent    = "Erro na busca";
     els.resultsSubtitle.textContent = err.message || "";
-    els.resultsGrid.innerHTML = <div class="state-box error">
+    els.resultsGrid.innerHTML = `<div class="state-box error">
       <div class="state-box-icon">⚠️</div>
       <div class="state-box-title">Falha na busca</div>
       <div class="state-box-text">${esc(err.message || "Verifique sua conexão.")}</div>
-    </div>;
+    </div>`;
     showToast("Falha na busca.");
   } finally { hideLoading(); }
 }
@@ -1811,7 +1813,7 @@ async function openAnime(animeId, options = {}) {
   const push = options.pushHistory !== false;
   showLoading("Abrindo anime", "Carregando detalhes...");
   try {
-    const data     = await apiGet(/api/anime/${encodeURIComponent(animeId)});
+    const data     = await apiGet(`/api/anime/${encodeURIComponent(animeId)}`);
     const item     = data?.item || null;
     const episodes = Array.isArray(data?.episodes) ? data.episodes : [];
     if (!item) throw new Error("Anime não encontrado");
@@ -1828,7 +1830,7 @@ async function openAnime(animeId, options = {}) {
     els.animeCover.src       = imgSrc(item.banner_url || item.cover_url, cleanTitle);
     els.animeCover.alt       = cleanTitle || "Anime";
     els.animePrefix.textContent = isDub ? "🎙️ DUBLADO" : "📝 LEGENDADO";
-    els.animePrefix.className   = detail-kicker ${isDub ? "dub" : "leg"};
+    els.animePrefix.className   = `detail-kicker ${isDub ? "dub" : "leg"}`;
     els.animeTitle.textContent  = cleanTitle || "Sem título";
     els.animeMeta.innerHTML     = renderAnimeMeta(item);
     els.animeDesc.textContent   = item.description || "Sem descrição disponível.";
@@ -1865,7 +1867,7 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
   state.openingEpisode    = true;
   const q    = normalizeQuality(quality || state.currentQuality || "HD");
   const push = options.pushHistory !== false;
-  showLoading("Abrindo episódio", Carregando EP ${episode} em ${q}...);
+  showLoading("Abrindo episódio", `Carregando EP ${episode} em ${q}...`);
   try {
     // Só carrega o anime se não estiver carregado ou for diferente
     if (!state.anime || state.currentAnimeId !== animeId) {
@@ -1874,7 +1876,7 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
     if (requestId !== state.openEpisodeRequestId) return;
 
     const data = await apiGet(
-      /api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(q)}
+      `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(q)}`
     );
     if (requestId !== state.openEpisodeRequestId) return;
     const item = data?.item || null;
@@ -1895,7 +1897,7 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
 
     // Título limpo do anime (usa state.anime já sanitizado)
     const animeTitle = state.anime?.title || "Anime";
-    els.playerPageSubtitle.textContent = ${animeTitle} • EP ${episode};
+    els.playerPageSubtitle.textContent = `${animeTitle} • EP ${episode}`;
     els.playerTitle.textContent        = animeTitle;
     const displayTotalEpisodes = Math.max(
       parseInt(item.total_episodes) || 0,
@@ -1903,8 +1905,8 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
       parseInt(episode) || 0,
     );
     els.playerMeta.textContent = [
-      EP ${episode}, state.currentQuality,
-      displayTotalEpisodes ? de ${displayTotalEpisodes} : "",
+      `EP ${episode}`, state.currentQuality,
+      displayTotalEpisodes ? `de ${displayTotalEpisodes}` : "",
       item.is_dubbed ? "Dublado" : "Legendado",
     ].filter(Boolean).join(" · ");
     els.playerDesc.textContent = item.description || state.anime?.description || "";
