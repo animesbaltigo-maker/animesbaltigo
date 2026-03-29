@@ -1,172 +1,170 @@
 import asyncio
+import logging
 
-from telegram import Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    InlineQueryHandler,
     MessageHandler,
     filters,
 )
 
 from config import BOT_TOKEN
 from core.http_client import close_http_client
+
+# HANDLERS
 from handlers.start import start
 from handlers.search import buscar
-from handlers.help import ajuda
 from handlers.callbacks import callbacks
+from handlers.inline import inline_query
+from handlers.help import ajuda
 from handlers.infoanime import infoanime, callback_info_anime
-from handlers.postanime import postanime
 from handlers.novoseps import postnovoseps, auto_post_new_eps_job
-from handlers.postfilmes import postfilmes
-from handlers.recommend import recomendar
-from handlers.baltigoflix import baltigoflix
+from handlers.referral_admin import auto_referral_check_job
+from handlers.referral import indicacoes, referral_button
 from handlers.metricas import metricas, metricas_limpar
-from handlers.pedido import pedido
+from handlers.postanime import postanime
+from handlers.postfilmes import postfilmes
+from handlers.baltigoflix import baltigoflix
+from handlers.testminiapp import testminiapp
+from handlers.recommend import recomendar
 from handlers.calendario import calendario
+from handlers.bingo import bingo
+from handlers.bingo_admin import startbingo, startbingo_auto, sortear, resetbingo
 from handlers.broadcast import (
     broadcast_command,
     broadcast_callbacks,
     broadcast_message_router,
 )
-from handlers.referral import indicacoes, referral_button
-from handlers.referral_admin import refstats, auto_referral_check_job
-from services.referral_db import init_referral_db
-from handlers.bingo import bingo
-from handlers.bingo_admin import startbingo, sortear, startbingo_auto, resetbingo
+from handlers.pedido import pedido
 
-from services.metrics import init_metrics_db
 from services.animefire_client import preload_popular_cache
 
-from telegram.ext import InlineQueryHandler
-from handlers.inline import inline_query
-from handlers.testminiapp import testminiapp
+
+# =========================
+# LOGGING (remove spam HTTP)
+# =========================
+logging.basicConfig(
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    level=logging.INFO,
+)
+
+# 🔥 corta spam absurdo do httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-init_metrics_db()
+# =========================
+# JOBS OTIMIZADOS
+# =========================
 
-
-async def post_init(app: Application):
-    asyncio.create_task(preload_popular_cache())
-
-
-async def post_shutdown(app: Application):
-    await close_http_client()
-
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    print("ERRO:", repr(context.error))
+async def auto_referral_check_job_safe(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Wrapper do referral pra evitar flood absurdo
+    """
     try:
-        if isinstance(update, Update) and update.effective_message:
-            await update.effective_message.reply_text(
-                "❌ Ocorreu um erro ao processar sua solicitação."
-            )
-    except Exception:
-        pass
+        await auto_referral_check_job(context)
+    except Exception as e:
+        logging.error(f"[REFERRAL JOB ERROR] {e}")
 
 
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("Configure BOT_TOKEN nas variáveis de ambiente.")
+async def auto_post_eps_job_safe(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Wrapper dos episódios
+    """
+    try:
+        await auto_post_new_eps_job(context)
+    except Exception as e:
+        logging.error(f"[NOVOSEPS JOB ERROR] {e}")
 
-    init_referral_db()
 
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+# =========================
+# MAIN
+# =========================
 
+async def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    # =========================
+    # COMMANDS
+    # =========================
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("testminiapp", testminiapp))
     app.add_handler(CommandHandler("buscar", buscar))
     app.add_handler(CommandHandler("ajuda", ajuda))
     app.add_handler(CommandHandler("infoanime", infoanime))
-    app.add_handler(CommandHandler("postanime", postanime))
     app.add_handler(CommandHandler("postnovoseps", postnovoseps))
-    app.add_handler(CommandHandler("postfilmes", postfilmes))
-    app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("indicacoes", indicacoes))
-    app.add_handler(CommandHandler("refstats", refstats))
-    app.add_handler(CommandHandler("recomendar", recomendar))
-    app.add_handler(CommandHandler("bingo", bingo))
-    app.add_handler(CommandHandler("startbingo", startbingo))
-    app.add_handler(CommandHandler("sortear", sortear))
-    app.add_handler(CommandHandler("autobingo", startbingo_auto))
-    app.add_handler(CommandHandler("resetbingo", resetbingo))
-    app.add_handler(CommandHandler("baltigoflix", baltigoflix))
     app.add_handler(CommandHandler("metricas", metricas))
     app.add_handler(CommandHandler("metricaslimpar", metricas_limpar))
-    app.add_handler(InlineQueryHandler(inline_query))
-    app.add_handler(CommandHandler("pedido", pedido))
+    app.add_handler(CommandHandler("postanime", postanime))
+    app.add_handler(CommandHandler("postfilmes", postfilmes))
+    app.add_handler(CommandHandler("baltigoflix", baltigoflix))
+    app.add_handler(CommandHandler("testminiapp", testminiapp))
+    app.add_handler(CommandHandler("recomendar", recomendar))
     app.add_handler(CommandHandler("calendario", calendario))
+    app.add_handler(CommandHandler("bingo", bingo))
+    app.add_handler(CommandHandler("startbingo", startbingo))
+    app.add_handler(CommandHandler("startbingo_auto", startbingo_auto))
+    app.add_handler(CommandHandler("sortear", sortear))
+    app.add_handler(CommandHandler("resetbingo", resetbingo))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("pedido", pedido))
 
-    app.add_handler(CallbackQueryHandler(callback_info_anime, pattern=r"^info_anime:"))
-    app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern=r"^bc\|"))
-    app.add_handler(CallbackQueryHandler(referral_button, pattern=r"^noop_indicar$"))
+    # =========================
+    # CALLBACKS
+    # =========================
     app.add_handler(CallbackQueryHandler(callbacks))
+    app.add_handler(CallbackQueryHandler(callback_info_anime, pattern="^infoanime"))
+    app.add_handler(CallbackQueryHandler(referral_button, pattern="^referral"))
+    app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern="^broadcast"))
 
-    app.add_handler(
-        MessageHandler(
-            filters.ALL & ~filters.COMMAND,
-            broadcast_message_router,
-        ),
-        group=99,
+    # =========================
+    # INLINE
+    # =========================
+    app.add_handler(InlineQueryHandler(inline_query))
+
+    # =========================
+    # MESSAGE ROUTER
+    # =========================
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message_router))
+
+    # =========================
+    # JOBS (AQUI QUE TAVA O PROBLEMA)
+    # =========================
+
+    # 🔥 NOVOS EPISÓDIOS (OK)
+    app.job_queue.run_repeating(
+        auto_post_eps_job_safe,
+        interval=600,   # 10 min
+        first=10,
+        name="auto_post_new_eps",
     )
 
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("Configure BOT_TOKEN nas variáveis de ambiente.")
-
-    init_referral_db()
-
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
+    # ⚠️ REFERRAL (REDUZIDO PRA NÃO FLOODAR)
+    app.job_queue.run_repeating(
+        auto_referral_check_job_safe,
+        interval=3600,   # 1h (mantido)
+        first=60,
+        name="auto_referral_check",
     )
 
-    # handlers...
-    app.add_handler(CommandHandler("start", start))
-    # ... (resto igual)
+    # =========================
+    # START BOT
+    # =========================
+    await preload_popular_cache()
 
-    app.add_handler(
-        MessageHandler(
-            filters.ALL & ~filters.COMMAND,
-            broadcast_message_router,
-        ),
-        group=99,
-    )
+    logging.info("🤖 Bot iniciado com sucesso.")
 
-    # ✅ AQUI DENTRO (não fora!)
-    if not app.job_queue:
-        print("[ERRO] JobQueue não disponível. Instale: python-telegram-bot[job-queue]==22.6")
-    else:
-        app.job_queue.run_repeating(
-            auto_post_new_eps_job,
-            interval=600,
-            first=15,
-            name="auto_post_new_eps",
-        )
-        print("[OK] Job registrado: auto_post_new_eps (a cada 600s)")
+    await app.run_polling(close_loop=False)
 
-        app.job_queue.run_repeating(
-            auto_referral_check_job,
-            interval=3600,
-            first=60,
-            name="auto_referral_check",
-        )
-        print("[OK] Job registrado: auto_referral_check (a cada 3600s)")
+    await close_http_client()
 
-    app.add_error_handler(error_handler)
 
-    print("Bot rodando...")
+# =========================
+# ENTRYPOINT
+# =========================
 
-    app.run_polling(drop_pending_updates=True)
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
