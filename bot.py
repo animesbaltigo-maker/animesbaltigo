@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from telegram.ext import (
@@ -14,7 +13,6 @@ from telegram.ext import (
 from config import BOT_TOKEN
 from core.http_client import close_http_client
 
-# HANDLERS
 from handlers.start import start
 from handlers.search import buscar
 from handlers.callbacks import callbacks
@@ -22,7 +20,7 @@ from handlers.inline import inline_query
 from handlers.help import ajuda
 from handlers.infoanime import infoanime, callback_info_anime
 from handlers.novoseps import postnovoseps, auto_post_new_eps_job
-from handlers.referral_admin import auto_referral_check_job
+from handlers.referral_admin import auto_referral_check_job, refstats
 from handlers.referral import indicacoes, referral_button
 from handlers.metricas import metricas, metricas_limpar
 from handlers.postanime import postanime
@@ -39,63 +37,64 @@ from handlers.broadcast import (
     broadcast_message_router,
 )
 from handlers.pedido import pedido
-
 from services.animefire_client import preload_popular_cache
 
 
-# =========================
-# LOGGING (remove spam HTTP)
-# =========================
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
     level=logging.INFO,
 )
 
-# 🔥 corta spam absurdo do httpx
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-# =========================
-# JOBS OTIMIZADOS
-# =========================
-
 async def auto_referral_check_job_safe(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Wrapper do referral pra evitar flood absurdo
-    """
     try:
         await auto_referral_check_job(context)
     except Exception as e:
-        logging.error(f"[REFERRAL JOB ERROR] {e}")
+        logging.exception("[REFERRAL JOB ERROR] %r", e)
 
 
 async def auto_post_eps_job_safe(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Wrapper dos episódios
-    """
     try:
         await auto_post_new_eps_job(context)
     except Exception as e:
-        logging.error(f"[NOVOSEPS JOB ERROR] {e}")
+        logging.exception("[NOVOSEPS JOB ERROR] %r", e)
 
 
-# =========================
-# MAIN
-# =========================
+async def on_startup(app: Application):
+    try:
+        await preload_popular_cache()
+        logging.info("✅ Cache popular carregado.")
+    except Exception as e:
+        logging.exception("Erro ao carregar cache popular: %r", e)
 
-async def main():
-    app = Application.builder().token(BOT_TOKEN).build()
 
-    # =========================
-    # COMMANDS
-    # =========================
+async def on_shutdown(app: Application):
+    try:
+        await close_http_client()
+        logging.info("✅ HTTP client fechado.")
+    except Exception as e:
+        logging.exception("Erro ao fechar HTTP client: %r", e)
+
+
+def main():
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(on_startup)
+        .post_shutdown(on_shutdown)
+        .build()
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("buscar", buscar))
     app.add_handler(CommandHandler("ajuda", ajuda))
     app.add_handler(CommandHandler("infoanime", infoanime))
     app.add_handler(CommandHandler("postnovoseps", postnovoseps))
     app.add_handler(CommandHandler("indicacoes", indicacoes))
+    app.add_handler(CommandHandler("refstats", refstats))
     app.add_handler(CommandHandler("metricas", metricas))
     app.add_handler(CommandHandler("metricaslimpar", metricas_limpar))
     app.add_handler(CommandHandler("postanime", postanime))
@@ -112,59 +111,38 @@ async def main():
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("pedido", pedido))
 
-    # =========================
-    # CALLBACKS
-    # =========================
+    app.add_handler(CallbackQueryHandler(callback_info_anime, pattern=r"^infoanime"))
+    app.add_handler(CallbackQueryHandler(referral_button, pattern=r"^referral"))
+    app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern=r"^broadcast"))
     app.add_handler(CallbackQueryHandler(callbacks))
-    app.add_handler(CallbackQueryHandler(callback_info_anime, pattern="^infoanime"))
-    app.add_handler(CallbackQueryHandler(referral_button, pattern="^referral"))
-    app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern="^broadcast"))
 
-    # =========================
-    # INLINE
-    # =========================
     app.add_handler(InlineQueryHandler(inline_query))
-
-    # =========================
-    # MESSAGE ROUTER
-    # =========================
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message_router))
-
-    # =========================
-    # JOBS (AQUI QUE TAVA O PROBLEMA)
-    # =========================
-
-    # 🔥 NOVOS EPISÓDIOS (OK)
-    app.job_queue.run_repeating(
-        auto_post_eps_job_safe,
-        interval=600,   # 10 min
-        first=10,
-        name="auto_post_new_eps",
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message_router)
     )
 
-    # ⚠️ REFERRAL (REDUZIDO PRA NÃO FLOODAR)
-    app.job_queue.run_repeating(
-        auto_referral_check_job_safe,
-        interval=3600,   # 1h (mantido)
-        first=60,
-        name="auto_referral_check",
-    )
+    if app.job_queue is None:
+        logging.warning(
+            "JobQueue não disponível. Instale com: pip install 'python-telegram-bot[job-queue]'"
+        )
+    else:
+        app.job_queue.run_repeating(
+            auto_post_eps_job_safe,
+            interval=600,
+            first=10,
+            name="auto_post_new_eps",
+        )
 
-    # =========================
-    # START BOT
-    # =========================
-    await preload_popular_cache()
+        app.job_queue.run_repeating(
+            auto_referral_check_job_safe,
+            interval=3600,
+            first=60,
+            name="auto_referral_check",
+        )
 
-    logging.info("🤖 Bot iniciado com sucesso.")
+    logging.info("🤖 Bot iniciando...")
+    app.run_polling()
 
-    await app.run_polling(close_loop=False)
-
-    await close_http_client()
-
-
-# =========================
-# ENTRYPOINT
-# =========================
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
