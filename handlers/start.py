@@ -560,7 +560,7 @@ def _single_anime_keyboard(
         [
             InlineKeyboardButton(
                 "📺 Ver episódios",
-                callback_data=f"eps|{anime_id}|0",
+                 web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id))
             )
         ]
     ]
@@ -626,7 +626,7 @@ def _variant_keyboard(
         rows.append([
             InlineKeyboardButton(
                 "📺 Ver episódios",
-                callback_data=f"eps|{default_id}|0",
+                 web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id))
             )
         ])
 
