@@ -1,7 +1,7 @@
 import os
 from google import genai
 
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "gemini-2.0-flash"
 
 SYSTEM_PROMPT = """Você é uma assistente com personalidade inspirada em anime.
 Você só responde mensagens relacionadas a anime, mangá, personagens,
