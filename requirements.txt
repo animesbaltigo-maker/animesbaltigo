@@ -1,5 +1,7 @@
 python-telegram-bot[job-queue]==22.6
+google-genai
 fastapi==0.115.0
 uvicorn==0.30.6
 httpx==0.28.1
 beautifulsoup4==4.12.3
+lxml
