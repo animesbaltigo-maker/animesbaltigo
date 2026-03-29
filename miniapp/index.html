@@ -76,7 +76,6 @@
     /* ─── PAGES ─── */
     .page{max-width:var(--max-w);margin:0 auto;padding:calc(var(--header-h) + var(--safe-top) + 20px) 20px calc(40px + var(--safe-bottom));animation:page-in .35s var(--ease) both}
     .page.hidden{display:none!important}
-    /* Player page sem padding-top quando em cinema mode */
     #playerPage.cinema-expand{padding-top:8px}
     @keyframes page-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
 
@@ -223,9 +222,18 @@
     .desc-text.exp{max-height:3000px;-webkit-mask-image:none;mask-image:none}
     .desc-toggle{font-size:12px;color:var(--violet-2);font-weight:600;cursor:pointer;background:none;border:none;padding:4px 0;margin-top:4px;display:block;transition:color .2s}
     .desc-toggle:hover{color:var(--cyan)}
-    .genre-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+
+    /* ─── TAGS COM "VER MAIS" ─── */
+    .genre-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;align-items:center}
     .genre-tag{padding:4px 12px;border-radius:999px;background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.2);font-size:12px;font-weight:600;color:var(--violet-2);cursor:pointer;transition:all .2s var(--ease)}
     .genre-tag:hover{background:rgba(124,58,237,0.2);border-color:var(--border-v)}
+    /* Tags ocultas por padrão */
+    .genre-tag.genre-hidden{display:none}
+    .genre-tag.genre-visible{display:inline-flex}
+    /* Botão "Ver mais tags" */
+    .genre-more-btn{padding:4px 12px;border-radius:999px;background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);font-size:12px;font-weight:600;color:var(--cyan);cursor:pointer;transition:all .2s var(--ease);white-space:nowrap}
+    .genre-more-btn:hover{background:rgba(6,182,212,0.16)}
+
     .detail-actions{display:flex;gap:10px;flex-wrap:wrap}
 
     /* ─── PANEL ─── */
@@ -245,7 +253,6 @@
 
     /* ─── PLAYER PAGE ─── */
     .player-layout{display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start}
-    /* ─── VIDEO CONTAINER: base (não-fullscreen) ─── */
     .video-container{position:relative;border-radius:var(--r-lg);overflow:hidden;background:#000;border:1px solid var(--border);box-shadow:var(--shadow-lg)}
     .video-aspect{position:relative;padding-top:56.25%}
     .video-aspect video,.video-aspect iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
@@ -302,94 +309,26 @@
     .toast{background:var(--bg-float);border:1px solid var(--border-2);border-radius:var(--r-md);padding:13px 18px;font-size:14px;font-weight:600;color:var(--text);box-shadow:var(--shadow-lg);opacity:0;transform:translateY(12px);transition:opacity .22s var(--ease),transform .22s}
     .toast.show{opacity:1;transform:translateY(0)}
 
-    /* ═══════════════════════════════════════════════════════════════════
-       FULLSCREEN SISTEMA ROBUSTO — Android/iOS/WebView/Telegram
-       
-       Estratégia em camadas:
-       1. CSS Fullscreen (css-fs): position fixed 100vw x 100dvh
-       2. Portrait rotate: transform rotate(90deg) para simular landscape
-          quando screen.orientation.lock não funciona (Telegram WebView)
-       3. Botão X: controlado via JS
-       4. Cinema mode: esconde header, expande player page
-    ═══════════════════════════════════════════════════════════════════ */
+    /* ─── FULLSCREEN ─── */
+    .video-container.css-fs{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;z-index:9999!important;border-radius:0!important;border:none!important;background:#000!important;width:100%!important;height:100%!important}
+    .video-container.css-fs.portrait-rotate{width:100vh!important;height:100vw!important;top:0!important;left:0!important;right:auto!important;bottom:auto!important;transform:rotate(90deg) translateY(-100%)!important;transform-origin:top left!important}
+    .video-container.css-fs .video-aspect{position:absolute!important;inset:0!important;padding-top:0!important;width:100%!important;height:100%!important}
+    .video-container.css-fs video,.video-container.css-fs iframe{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:contain!important}
+    .css-fs-exit{display:none;position:fixed;top:max(12px,var(--safe-top));right:12px;z-index:10000;background:rgba(5,6,15,0.9);border:1px solid var(--border-2);color:var(--text);font-size:20px;width:52px;height:52px;border-radius:50%;cursor:pointer;align-items:center;justify-content:center;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 4px 24px rgba(0,0,0,0.6);transition:background .2s,transform .15s;min-width:44px;min-height:44px}
+    .css-fs-exit:hover{background:rgba(244,63,94,0.35);transform:scale(1.08)}
+    .css-fs-exit:active{transform:scale(0.92)}
+    body.in-css-fs{overflow:hidden;position:fixed;width:100%}
 
-    /* CSS Fullscreen — ocupa toda a tela */
-    .video-container.css-fs {
-      position: fixed !important;
-      top: 0 !important;
-      left: 0 !important;
-      right: 0 !important;
-      bottom: 0 !important;
-      z-index: 9999 !important;
-      border-radius: 0 !important;
-      border: none !important;
-      background: #000 !important;
-      width: 100% !important;
-      height: 100% !important;
-    }
-
-    /* Fallback portrait→landscape via CSS rotate */
-    .video-container.css-fs.portrait-rotate {
-      width: 100vh !important;
-      height: 100vw !important;
-      top: 0 !important;
-      left: 0 !important;
-      right: auto !important;
-      bottom: auto !important;
-      transform: rotate(90deg) translateY(-100%) !important;
-      transform-origin: top left !important;
-    }
-
-    .video-container.css-fs .video-aspect {
-      position: absolute !important;
-      inset: 0 !important;
-      padding-top: 0 !important;
-      width: 100% !important;
-      height: 100% !important;
-    }
-
-    .video-container.css-fs video,
-    .video-container.css-fs iframe {
-      position: absolute !important;
-      inset: 0 !important;
-      width: 100% !important;
-      height: 100% !important;
-      object-fit: contain !important;
-    }
-
-    /* Botão X — controlado via JS (display: flex quando ativo) */
-    .css-fs-exit {
-      display: none;
-      position: fixed;
-      top: max(12px, var(--safe-top));
-      right: 12px;
-      z-index: 10000;
-      background: rgba(5,6,15,0.9);
-      border: 1px solid var(--border-2);
-      color: var(--text);
-      font-size: 20px;
-      width: 52px;
-      height: 52px;
-      border-radius: 50%;
-      cursor: pointer;
-      align-items: center;
-      justify-content: center;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
-      transition: background .2s, transform .15s;
-      /* Mínimo 44px para toque fácil */
-      min-width: 44px;
-      min-height: 44px;
-    }
-    .css-fs-exit:hover { background: rgba(244,63,94,0.35); transform: scale(1.08); }
-    .css-fs-exit:active { transform: scale(0.92); }
-
-    body.in-css-fs {
-      overflow: hidden;
-      position: fixed;
-      width: 100%;
-    }
+    /* ─── LATEST EPISODES LIST ─── */
+    .latest-ep-list{display:flex;flex-direction:column;gap:10px}
+    .latest-ep-item{display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer;transition:all .2s var(--ease);text-decoration:none}
+    .latest-ep-item:hover{border-color:var(--border-v);background:var(--bg-float);transform:translateX(3px)}
+    .latest-ep-thumb{width:80px;height:50px;border-radius:var(--r-xs);overflow:hidden;flex-shrink:0;background:var(--bg-float)}
+    .latest-ep-thumb img{width:100%;height:100%;object-fit:cover}
+    .latest-ep-info{flex:1;min-width:0}
+    .latest-ep-title{font-size:13px;font-weight:700;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:3px}
+    .latest-ep-meta{font-size:11px;color:var(--text-3)}
+    .latest-ep-badge{flex-shrink:0;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;background:rgba(124,58,237,0.85);color:#fff}
 
     /* ─── RESPONSIVE ─── */
     @media(max-width:1100px){
@@ -463,7 +402,7 @@
       <div class="search-row">
         <div class="search-bar">
           <span class="search-icon">🔎</span>
-          <input id="searchInput" type="search" placeholder="Buscar anime por nome..." autocomplete="off" enterkeyhint="search" />
+          <input id="searchInput" type="search" placeholder="Buscar anime por nome ou tag..." autocomplete="off" enterkeyhint="search" />
           <button class="search-clear" id="searchClear" aria-label="Limpar">✕</button>
         </div>
       </div>
@@ -573,7 +512,6 @@
             </div>
           </div>
         </div>
-        <!-- Botão X do CSS fullscreen — display controlado via JS -->
         <button class="css-fs-exit" id="cssFsExit" aria-label="Sair da tela cheia">✕</button>
       </div>
 
@@ -607,7 +545,7 @@
     </div>
   </main>
 
-</div><!-- /.app -->
+</div>
 
 <div class="loading-screen" id="loadingOverlay">
   <div class="loading-card">
@@ -621,11 +559,21 @@
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
-   BALTIGO — Anime Streaming · index.html
-   Versão corrigida: deep-link direto, busca, fullscreen, episódios, cinema mode
+   BALTIGO — index.html — Versão corrigida completa
+   Correções aplicadas:
+   1. openEpisode vai DIRETO ao episódio — sem redirecionar pela página do anime
+   2. "Em lançamento" inclui ep 1, todos os episódios, ordenados, sem cache stale
+   3. Animes sem episódios filtrados do catálogo e das listagens
+   4. Busca funcional: normaliza resposta da API, ignora case/acento, 2 chars min
+   5. Tags com "Ver mais" — exibe 4 tags, oculta o resto com botão expandível
+   6. "Últimos episódios": clique vai DIRETO ao episódio via data-ep-direct
+   7. Título sanitizado — remove sufixo "- Episódio N" contaminado da API
+   8. Lista de episódios completa: preenche buracos, inclui ep 1 sempre
+   9. Cinema mode + fullscreen corrigidos
+   10. Deep link por URL: ?anime=X&ep=Y abre direto sem intermediário
 ═══════════════════════════════════════════════════════════════════════════ */
 
-// ── Telegram WebApp ───────────────────────────────────────────────────────────
+// ── Telegram WebApp ──────────────────────────────────────────────────────────
 const tg = window.Telegram?.WebApp || null;
 if (tg) {
   try {
@@ -635,17 +583,16 @@ if (tg) {
     tg.setBackgroundColor?.("#05060f");
   } catch(e) { console.warn("Telegram WebApp init:", e); }
 }
-
 const IS_TELEGRAM_WEBVIEW = !!window.Telegram?.WebApp;
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
 const API_BASE           = window.location.origin;
 const STALL_TIMEOUT_MS   = 14000;
 const LINK_FETCH_TIMEOUT = 10000;
 const MAX_ATTEMPTS       = 4;
 const API_TIMEOUT        = 25000;
 
-// ── localStorage helpers ──────────────────────────────────────────────────────
+// ── localStorage helpers ─────────────────────────────────────────────────────
 function storageGet(k, def) {
   try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; }
   catch(e) { return def; }
@@ -653,11 +600,9 @@ function storageGet(k, def) {
 function storageSet(k, v) {
   try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {}
 }
-
 const WATCH_KEY = "baltigo.watch.progress.v2";
 function getWatchMap()  { return storageGet(WATCH_KEY, {}); }
 function setWatchMap(m) { storageSet(WATCH_KEY, m); }
-
 function saveWatchProgress(p) {
   const aid = String(p?.animeId || "").trim();
   const ep  = String(p?.episode  || "").trim();
@@ -677,7 +622,7 @@ function getContinueWatching() {
 }
 function getAnimeWatch(aid) { return getWatchMap()[aid] || null; }
 
-// ── App State ─────────────────────────────────────────────────────────────────
+// ── App State ────────────────────────────────────────────────────────────────
 const state = {
   home: null, currentPage: "home",
   searchQuery: "", searchResults: [],
@@ -688,9 +633,7 @@ const state = {
   attempt: 0, stallTimer: null, videoReady: false,
   resultsMode: "section", currentSection: "", resultsPage: 1, totalPages: 1,
   heroBanners: [], heroIdx: 0, heroTimer: null, heroCurrent: null,
-  cssFsActive: false,
-  nativeFsActive: false,
-  cinemaModeActive: false,
+  cssFsActive: false, nativeFsActive: false, cinemaModeActive: false,
 };
 
 // ── DOM references ────────────────────────────────────────────────────────────
@@ -756,7 +699,7 @@ const els = {
   playerNote:        $("playerNote"),
 };
 
-// ── Utils ─────────────────────────────────────────────────────────────────────
+// ── Utils ────────────────────────────────────────────────────────────────────
 function esc(v) {
   return String(v ?? "")
     .replaceAll("&","&amp;").replaceAll("<","&lt;")
@@ -775,6 +718,17 @@ function imgSrc(src, title) {
   return `https://placehold.co/600x900/0d1128/7c3aed?text=${encodeURIComponent(title || "Anime")}`;
 }
 
+/* ── Normalização de texto para busca ──────────────────────────────────────
+   Remove acentos, converte para minúsculo — permite busca "fuzzy"
+   sem depender de case ou diacríticos */
+function normalizeStr(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 let toastTimer = null;
 function showToast(msg) {
   if (!msg) return;
@@ -791,7 +745,7 @@ function showLoading(t = "Carregando...", x = "Aguarde.") {
 function hideLoading() { els.loadingOverlay.classList.remove("active"); }
 function setSubtitle(t) { els.headerSubtitle.textContent = t || "BALTIGO"; }
 
-// ── Cinema mode (auto-hide header no player) ──────────────────────────────────
+// ── Cinema mode ───────────────────────────────────────────────────────────────
 function enterCinemaMode() {
   if (state.cinemaModeActive) return;
   state.cinemaModeActive = true;
@@ -804,7 +758,6 @@ function exitCinemaMode() {
   els.topbar.classList.remove("cinema-mode");
   els.playerPage.classList.remove("cinema-expand");
 }
-// Tap no vídeo toggle cinema mode
 els.videoPlayer.addEventListener("click", () => {
   if (state.currentPage === "player") {
     state.cinemaModeActive ? exitCinemaMode() : enterCinemaMode();
@@ -822,11 +775,8 @@ function setPage(page, push = true) {
   if (page === "anime")   els.animePage.classList.remove("hidden");
   if (page === "player") {
     els.playerPage.classList.remove("hidden");
-    // Auto-entrar cinema mode no player em mobile
     setTimeout(() => {
-      if (state.currentPage === "player" && window.innerWidth <= 768) {
-        enterCinemaMode();
-      }
+      if (state.currentPage === "player" && window.innerWidth <= 768) enterCinemaMode();
     }, 800);
   }
   state.currentPage = page;
@@ -859,7 +809,7 @@ async function apiGet(path, ms = API_TIMEOUT) {
     return res.json();
   } catch(err) {
     clearTimeout(timer);
-    if (err.name === "AbortError") throw new Error("Tempo limite excedido — servidor pode estar off.");
+    if (err.name === "AbortError") throw new Error("Tempo limite excedido.");
     throw err;
   }
 }
@@ -936,33 +886,19 @@ function _isDirectVideo(url) {
   return l.includes(".m3u8") || l.includes(".mp4") || l.includes(".webm") || l.includes("videoplayback");
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   FULLSCREEN SISTEMA CORRIGIDO
-   Prioridade:
-   1. Telegram → CSS fullscreen imediato
-   2. video.requestFullscreen() → Chrome Android (alvo = <video>)
-   3. video.webkitEnterFullscreen() → iOS Safari
-   4. container.requestFullscreen() → browsers genéricos
-   5. CSS fullscreen + rotate → último recurso
-═══════════════════════════════════════════════════════════════════════════ */
-
+// ── Fullscreen ────────────────────────────────────────────────────────────────
 function enterCssFullscreen() {
   state.cssFsActive = true;
   const container   = els.videoContainer;
   const isPortrait  = window.screen.height > window.screen.width;
-
   container.classList.add("css-fs");
   if (isPortrait) container.classList.add("portrait-rotate");
-
   document.body.classList.add("in-css-fs");
   els.cssFsExit.style.display = "flex";
   window.scrollTo({ top: 0 });
-
-  // Tenta lock landscape (pode falhar silenciosamente)
   screen.orientation?.lock?.("landscape").catch(() => {});
   showToast("Toque ✕ para sair da tela cheia");
 }
-
 function exitCssFullscreen() {
   if (!state.cssFsActive) return;
   state.cssFsActive = false;
@@ -972,77 +908,38 @@ function exitCssFullscreen() {
   els.cssFsExit.style.display = "none";
   screen.orientation?.unlock?.();
 }
-
 async function requestFullscreen() {
   const video = els.videoPlayer;
-
-  // Toggle saída
   if (state.cssFsActive) { exitCssFullscreen(); return; }
   const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-  if (fsEl) {
-    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document).catch(() => {});
-    return;
-  }
-
+  if (fsEl) { (document.exitFullscreen || document.webkitExitFullscreen)?.call(document).catch(() => {}); return; }
   const isVideoVisible = video.style.display !== "none";
-
-  // Estratégia 1: Telegram → CSS direto
-  if (IS_TELEGRAM_WEBVIEW) {
-    enterCssFullscreen();
-    return;
-  }
-
-  // Estratégia 2: video.requestFullscreen (Chrome Android)
+  if (IS_TELEGRAM_WEBVIEW) { enterCssFullscreen(); return; }
   if (isVideoVisible && video.requestFullscreen) {
-    try {
-      await video.requestFullscreen({ navigationUI: "hide" });
-      state.nativeFsActive = true;
-      screen.orientation?.lock?.("landscape").catch(() => {});
-      return;
-    } catch(e) { console.warn("[FS] video.requestFullscreen:", e.message); }
+    try { await video.requestFullscreen({ navigationUI: "hide" }); state.nativeFsActive = true; screen.orientation?.lock?.("landscape").catch(() => {}); return; }
+    catch(e) { console.warn("[FS] video.requestFullscreen:", e.message); }
   }
-
-  // Estratégia 3: webkitEnterFullscreen (iOS)
   if (isVideoVisible && video.webkitEnterFullscreen) {
-    try {
-      video.webkitEnterFullscreen();
-      state.nativeFsActive = true;
-      return;
-    } catch(e) { console.warn("[FS] webkitEnterFullscreen:", e.message); }
+    try { video.webkitEnterFullscreen(); state.nativeFsActive = true; return; }
+    catch(e) { console.warn("[FS] webkitEnterFullscreen:", e.message); }
   }
-
-  // Estratégia 4: container fullscreen
   const container = els.videoContainer;
   const fsMethod = container.requestFullscreen || container.webkitRequestFullscreen || container.mozRequestFullScreen;
   if (fsMethod) {
-    try {
-      await fsMethod.call(container, { navigationUI: "hide" });
-      state.nativeFsActive = true;
-      screen.orientation?.lock?.("landscape").catch(() => {});
-      return;
-    } catch(e) { console.warn("[FS] container fullscreen:", e.message); }
+    try { await fsMethod.call(container, { navigationUI: "hide" }); state.nativeFsActive = true; screen.orientation?.lock?.("landscape").catch(() => {}); return; }
+    catch(e) { console.warn("[FS] container fullscreen:", e.message); }
   }
-
-  // Estratégia 5: CSS rotate fallback
   enterCssFullscreen();
 }
-
-// Listeners fullscreen
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && state.cssFsActive) exitCssFullscreen();
-});
+document.addEventListener("keydown", e => { if (e.key === "Escape" && state.cssFsActive) exitCssFullscreen(); });
 els.cssFsExit.addEventListener("click", exitCssFullscreen);
 els.videoPlayer.addEventListener("dblclick", requestFullscreen);
-
 function _onNativeFsChange() {
   if (!state.nativeFsActive) return;
-  if (!(document.fullscreenElement || document.webkitFullscreenElement)) {
-    state.nativeFsActive = false;
-  }
+  if (!(document.fullscreenElement || document.webkitFullscreenElement)) state.nativeFsActive = false;
 }
 document.addEventListener("fullscreenchange",       _onNativeFsChange);
 document.addEventListener("webkitfullscreenchange", _onNativeFsChange);
-
 window.addEventListener("orientationchange", () => {
   if (!state.cssFsActive) return;
   setTimeout(() => {
@@ -1056,7 +953,6 @@ async function _escalatePlayerFailure() {
   clearStallTimer();
   state.attempt++;
   const { currentAnimeId: aid, currentEpisode: ep, currentQuality: q } = state;
-
   if (state.attempt === 1) {
     const rawUrl = state.currentVideoUrl;
     if (!rawUrl) { _showFinalError(); return; }
@@ -1069,7 +965,6 @@ async function _escalatePlayerFailure() {
     startStallTimer();
     return;
   }
-
   if (state.attempt === 2) {
     showToast("Buscando link atualizado...");
     showVideoOverlay("loading", "Buscando link atualizado...", "O link anterior expirou");
@@ -1087,7 +982,6 @@ async function _escalatePlayerFailure() {
     } catch(e) { state.attempt++; await _escalatePlayerFailure(); }
     return;
   }
-
   if (state.attempt === 3) {
     const alt = oppositeQuality(q);
     showToast(`Tentando qualidade ${alt}...`);
@@ -1108,10 +1002,8 @@ async function _escalatePlayerFailure() {
     } catch(e) { _showFinalError(); }
     return;
   }
-
   _showFinalError();
 }
-
 async function _fetchEpisodeWithTimeout(animeId, episode, quality, refresh = false) {
   const path = `/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=${encodeURIComponent(quality)}${refresh ? "&refresh=1" : ""}`;
   const ctrl  = new AbortController();
@@ -1124,7 +1016,6 @@ async function _fetchEpisodeWithTimeout(animeId, episode, quality, refresh = fal
     return await res.json();
   } finally { clearTimeout(timer); }
 }
-
 function _showFinalError() {
   clearStallTimer();
   showVideoOverlay("icon:⚠️", "Vídeo indisponível", "Tente recarregar ou use outra qualidade");
@@ -1135,7 +1026,6 @@ function _showFinalError() {
 // ── Video events ──────────────────────────────────────────────────────────────
 function bindVideoEvents() {
   const v = els.videoPlayer;
-
   v.addEventListener("loadedmetadata", () => { state.videoReady = true; clearStallTimer(); hideVideoOverlay(); });
   v.addEventListener("canplay",        () => { state.videoReady = true; clearStallTimer(); hideVideoOverlay(); });
   v.addEventListener("playing",        () => { state.videoReady = true; clearStallTimer(); hideVideoOverlay(); state.attempt = 0; });
@@ -1186,16 +1076,32 @@ function bindVideoEvents() {
 }
 
 // ── Render helpers ────────────────────────────────────────────────────────────
+
+/* FILTRO: retorna true se o item tem pelo menos 1 episódio disponível.
+   Usado para suprimir animes sem conteúdo das listagens. */
+function _animeHasEpisodes(item) {
+  // Campos que indicam existência de episódios
+  const epCount = parseInt(item.episodes || item.episode_count || item.total_episodes || 0);
+  const hasEpData = epCount > 0;
+  // Pode também ter campo de episódio direto (em listagens de "últimos episódios")
+  const hasEpField = !!(item.episode || item.latest_episode || item.last_episode);
+  return hasEpData || hasEpField;
+}
+
 function buildCard(item) {
   const cover = imgSrc(item.banner_url || item.cover_url, item.title);
   const isDub  = item.is_dubbed || (item.prefix === "DUB");
   const badge  = isDub ? "DUB" : "LEG";
-  const epTag  = item.episode ? `<div class="card-ep-tag">EP ${esc(item.episode)}</div>` : "";
+  // Se o item é de "últimos episódios", tem número de episódio diretamente
+  const epNum = item.episode || item.latest_episode || "";
+  const epTag  = epNum ? `<div class="card-ep-tag">EP ${esc(epNum)}</div>` : "";
   const hasWatched = !!getWatchMap()[item.id];
   const watchBadge = hasWatched ? `<div class="card-watched-badge">✓</div>` : "";
   const meta = [item.status, item.year, item.episodes ? `${item.episodes} eps` : ""]
     .filter(Boolean).map(esc);
-  return `<article class="anime-card" data-anime-id="${esc(item.id)}">
+  // data-anime-id + opcionalmente data-direct-ep para ir direto ao episódio
+  const directEpAttr = epNum ? ` data-direct-ep="${esc(epNum)}"` : "";
+  return `<article class="anime-card" data-anime-id="${esc(item.id)}"${directEpAttr}>
     <div class="card-thumb">
       <div class="card-badge ${isDub ? "dub" : "leg"}">${badge}</div>
       ${watchBadge}${epTag}
@@ -1208,6 +1114,28 @@ function buildCard(item) {
       <div class="card-meta">${meta.join(" · ") || "Toque para abrir"}</div>
     </div>
   </article>`;
+}
+
+/* buildLatestEpItem — card horizontal para a aba "Últimos Episódios".
+   Clicar vai DIRETO ao episódio, não à página do anime. */
+function buildLatestEpItem(item) {
+  const cover  = imgSrc(item.thumb || item.banner_url || item.cover_url, item.title);
+  const epNum  = String(item.episode || item.latest_episode || item.ep || "").trim();
+  const animeId = String(item.anime_id || item.id || "").trim();
+  return `<div class="latest-ep-item"
+      data-anime-id="${esc(animeId)}"
+      data-direct-ep="${esc(epNum)}"
+      data-force-episode="1">
+    <div class="latest-ep-thumb">
+      <img src="${cover}" alt="${esc(item.title || "")}" loading="lazy"
+           onerror="this.src='https://placehold.co/160x100/0d1128/7c3aed?text=EP'" />
+    </div>
+    <div class="latest-ep-info">
+      <div class="latest-ep-title">${esc(item.title || "Anime")}</div>
+      <div class="latest-ep-meta">${item.aired_at || item.date || ""}</div>
+    </div>
+    ${epNum ? `<div class="latest-ep-badge">EP ${esc(epNum)}</div>` : ""}
+  </div>`;
 }
 
 function skeletonGrid(count = 12) {
@@ -1224,20 +1152,49 @@ function skeletonGrid(count = 12) {
   return h + "</div>";
 }
 
+/* renderSectionBlock — detecta seção "últimos_episódios" / "lancamentos"
+   e usa layout de lista horizontal com link direto ao episódio */
 function renderSectionBlock(section) {
+  const key   = String(section.key || "").toLowerCase();
   const items = Array.isArray(section.items) ? section.items : [];
+
+  // Filtra animes sem episódios de qualquer seção
+  const filtered = items.filter(i => _animeHasEpisodes(i));
+
+  // Seções de episódios recentes: usa layout de lista com link direto
+  const isEpSection = key.includes("ultim") || key.includes("lançamento") ||
+    key.includes("lancamento") || key.includes("recente") || key.includes("latest");
+
+  // Ordena seção de lançamentos: mais recente primeiro (maior ep primeiro)
+  let displayItems = [...filtered];
+  if (isEpSection) {
+    displayItems.sort((a, b) => {
+      const ea = parseFloat(String(a.episode || a.latest_episode || 0)) || 0;
+      const eb = parseFloat(String(b.episode || b.latest_episode || 0)) || 0;
+      if (eb !== ea) return eb - ea;
+      // Desempate por data de atualização se disponível
+      const da = new Date(a.aired_at || a.updated_at || 0).getTime();
+      const db = new Date(b.aired_at || b.updated_at || 0).getTime();
+      return db - da;
+    });
+  }
+
+  const gridHtml = isEpSection
+    ? `<div class="latest-ep-list">${displayItems.slice(0, 20).map(buildLatestEpItem).join("")}</div>`
+    : `<div class="card-grid">${displayItems.map(buildCard).join("")}</div>`;
+
   return `<div class="section">
     <div class="section-head">
       <div class="section-label">
         <div class="section-accent"></div>
         <div>
           <div class="section-title">${esc(section.title || "Seção")}</div>
-          <div class="section-count">${items.length} títulos</div>
+          <div class="section-count">${displayItems.length} título(s)</div>
         </div>
       </div>
       <button class="btn btn-ghost btn-sm" data-open-section="${esc(section.key)}">Ver mais →</button>
     </div>
-    <div class="card-grid">${items.map(buildCard).join("")}</div>
+    ${gridHtml}
   </div>`;
 }
 
@@ -1253,33 +1210,39 @@ function renderAnimeMeta(item) {
   return pills.join("");
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   EPISÓDIOS — CORRECTED
-   
-   BUGS corrigidos:
-   1. Título mostrava "Niwatori Fighter - Episódio 1" em vez do título real
-      → O título do anime não deve vir do item de episódio, mas de state.anime.title
-   
-   2. Contador "1 eps" vs botão "2"
-      → A API retornava o total de episódios no campo episodes do anime (metadata),
-         mas a lista real de episódios pode ter contagem diferente.
-      → Agora mostramos a contagem REAL da lista + a contagem da metadata separadas.
-   
-   3. Lista mostrava só 1 botão "2" em vez de 1, 2
-      → Normalização de número de episódio: alguns endpoints retornam
-         { number: 2 } como único item porque é o mais recente.
-      → Geramos a lista completa de 1..totalEpisodes se a lista retornada
-         for menor que o esperado (fill mode).
-   
-   4. Ordenação: garantir crescente (ep 1 primeiro)
-═══════════════════════════════════════════════════════════════════════════ */
+/* renderGenreTags — exibe até TAGS_VISIBLE tags, oculta o resto com botão "Ver mais"
+   Resolve: tags poluindo o layout da página de detalhes */
+const TAGS_VISIBLE = 4;
+function renderGenreTags(genres) {
+  if (!genres || !genres.length) { els.animeGenres.innerHTML = ""; return; }
+  const all = genres.slice();
+  let html = all.map((g, i) =>
+    `<span class="genre-tag ${i < TAGS_VISIBLE ? "genre-visible" : "genre-hidden"}"
+      data-genre-search="${esc(g)}">${esc(g)}</span>`
+  ).join("");
+  if (all.length > TAGS_VISIBLE) {
+    html += `<button class="genre-more-btn" id="genreMoreBtn">+${all.length - TAGS_VISIBLE} Ver mais</button>`;
+  }
+  els.animeGenres.innerHTML = html;
+  // Listener do botão "Ver mais"
+  const moreBtn = $("genreMoreBtn");
+  if (moreBtn) {
+    moreBtn.addEventListener("click", () => {
+      els.animeGenres.querySelectorAll(".genre-hidden").forEach(el => {
+        el.classList.remove("genre-hidden");
+        el.classList.add("genre-visible");
+      });
+      moreBtn.remove();
+    });
+  }
+}
+
+// ── Episódios ─────────────────────────────────────────────────────────────────
 function _parseEpNumber(ep) {
-  // Extrai número do episódio de múltiplos campos possíveis
   const raw = ep.number ?? ep.episode ?? ep.ep ?? ep.slug ?? ep.num ?? "";
   const n = parseFloat(String(raw).replace(",", "."));
   return isNaN(n) ? null : n;
 }
-
 function _sortEpisodes(episodes) {
   return [...episodes].sort((a, b) => {
     const na = _parseEpNumber(a);
@@ -1291,30 +1254,22 @@ function _sortEpisodes(episodes) {
   });
 }
 
+/* _buildFullEpisodeList — CORRIGIDO
+   Garante que ep 1 e todos os outros apareçam.
+   Se a API retornou lista incompleta (ex: só ep 2), preenche os buracos.
+   Usa o total do metadata como referência. */
 function _buildFullEpisodeList(episodes, totalFromMetadata) {
-  // Se a lista da API está vazia ou incompleta, tenta gerar lista completa
   if (!episodes || episodes.length === 0) {
     if (totalFromMetadata > 0) {
-      // Gera episódios sintéticos de 1 a total
       return Array.from({ length: totalFromMetadata }, (_, i) => ({
-        number: i + 1,
-        episode: String(i + 1),
-        synthetic: true,
+        number: i + 1, episode: String(i + 1), synthetic: true,
       }));
     }
     return [];
   }
-
   const sorted = _sortEpisodes(episodes);
-
-  // Verifica se há "buracos" na lista (ex: API retornou só ep 2, mas total=2)
-  const maxEp = _parseEpNumber(sorted[sorted.length - 1]) || sorted.length;
-  const minEp = _parseEpNumber(sorted[0]) || 1;
-
-  // Se a lista tem menos episódios do que o esperado E temos o total do metadata
   const metaTotal = parseInt(totalFromMetadata) || 0;
   if (metaTotal > 0 && sorted.length < metaTotal) {
-    // Preenche episódios faltantes
     const existingNums = new Set(sorted.map(e => _parseEpNumber(e)));
     const filled = [...sorted];
     for (let i = 1; i <= metaTotal; i++) {
@@ -1324,29 +1279,24 @@ function _buildFullEpisodeList(episodes, totalFromMetadata) {
     }
     return _sortEpisodes(filled);
   }
-
   return sorted;
 }
 
 function renderEpisodeButtons(episodes) {
-  // Total de episódios do metadata do anime (pode ser diferente da lista)
   const metaTotal = parseInt(state.anime?.episodes) || 0;
   const fullList  = _buildFullEpisodeList(episodes, metaTotal);
-
   if (!fullList.length) {
     els.episodesInfo.textContent = "Sem episódios disponíveis.";
     els.episodesGrid.innerHTML   = `<div class="state-box">
       <div class="state-box-icon">📭</div>
       <div class="state-box-title">Sem episódios</div>
-      <div class="state-box-text">Esse anime não retornou episódios agora.</div>
+      <div class="state-box-text">Esse anime não retornou episódios.</div>
     </div>`;
     return;
   }
-
   const realCount    = episodes?.length || 0;
   const displayTotal = Math.max(realCount, metaTotal, fullList.length);
   els.episodesInfo.textContent = `${displayTotal} episódio(s) disponível(is)`;
-
   els.episodesGrid.innerHTML = fullList.map(ep => {
     const num      = String(_parseEpNumber(ep) ?? ep.slug ?? "").trim();
     const lbl      = num || (ep.title || "—");
@@ -1354,7 +1304,6 @@ function renderEpisodeButtons(episodes) {
     const watchInfo   = getAnimeWatch(state.currentAnimeId);
     const isWatched   = watchInfo && String(watchInfo.episode) === String(num);
     const isSynthetic = ep.synthetic === true;
-    // Episódios sintéticos (gerados, não confirmados pela API) ficam levemente diferentes
     const style   = isSynthetic ? "opacity:0.6;" : "";
     const title   = isSynthetic ? `title="Episódio ${lbl} (pode não estar disponível)"` : "";
     return `<button class="ep-btn ${isActive ? "active" : ""} ${isWatched ? "watched" : ""}"
@@ -1387,13 +1336,14 @@ els.descToggle.addEventListener("click", () => {
 
 // ── Hero banner ───────────────────────────────────────────────────────────────
 function setupHeroBanner(items) {
-  const banners = items.filter(i => i.banner_url || i.cover_url).slice(0, 5);
+  // Filtra apenas animes com episódios para o banner
+  const eligible = items.filter(i => _animeHasEpisodes(i));
+  const banners  = eligible.filter(i => i.banner_url || i.cover_url).slice(0, 5);
   if (!banners.length) { renderStaticHero(); return; }
   state.heroBanners = banners;
   renderHeroBanner(0);
   if (banners.length > 1) startHeroTimer();
 }
-
 function renderHeroBanner(idx) {
   const item = state.heroBanners[idx];
   if (!item) return;
@@ -1402,8 +1352,8 @@ function renderHeroBanner(idx) {
   const cover  = item.banner_url || item.cover_url || "";
   const isDub  = item.is_dubbed  || item.prefix === "DUB";
   const pills  = [
-    item.status   ? `<span class="hero-pill">${esc(item.status)}</span>`          : "",
-    item.year     ? `<span class="hero-pill">📅 ${esc(item.year)}</span>`         : "",
+    item.status   ? `<span class="hero-pill">${esc(item.status)}</span>` : "",
+    item.year     ? `<span class="hero-pill">📅 ${esc(item.year)}</span>` : "",
     item.episodes ? `<span class="hero-pill">🎬 ${esc(item.episodes)} eps</span>` : "",
     `<span class="hero-pill">${isDub ? "🎙️ DUB" : "📝 LEG"}</span>`,
   ].join("");
@@ -1426,7 +1376,6 @@ function renderHeroBanner(idx) {
       </div>
       <div class="hero-dots">${dots}</div>
     </div>`;
-
   $("heroWatchBtn")?.addEventListener("click", async () => {
     const id = state.heroCurrent?.id;
     if (!id) return;
@@ -1442,7 +1391,6 @@ function renderHeroBanner(idx) {
     if (state.heroCurrent?.id) openAnime(state.heroCurrent.id);
   });
 }
-
 function startHeroTimer() {
   clearTimeout(state.heroTimer);
   state.heroTimer = setTimeout(() => {
@@ -1451,7 +1399,6 @@ function startHeroTimer() {
     startHeroTimer();
   }, 6000);
 }
-
 function renderStaticHero() {
   els.heroArea.innerHTML = `
     <div class="hero-static">
@@ -1535,7 +1482,6 @@ function renderPagination(current, total, onPage) {
       <button class="pg-btn" data-pg="${total}"       ${current >= total ? "disabled" : ""}>Última ⏭</button>
     </div>
     <div class="pagination-row" style="margin-top:8px">${gotoHtml}</div>`;
-
   els.resultsPagination.querySelectorAll("[data-pg]").forEach(btn => {
     const pg = parseInt(btn.dataset.pg);
     if (isNaN(pg) || btn.disabled) return;
@@ -1560,6 +1506,7 @@ async function loadHome() {
   renderStaticHero();
   els.homeSections.innerHTML = skeletonGrid(12);
   try {
+    // cache:no-store garante que novos episódios e lançamentos apareçam imediatamente
     const data     = await apiGet("/api/catalog/home");
     state.home     = data;
     setSubtitle("Anime Streaming");
@@ -1599,14 +1546,29 @@ async function loadSectionResults(sectionKey, page = 1) {
   });
   try {
     const data  = await apiGet(`/api/catalog/list?section=${encodeURIComponent(sectionKey)}&page=${page}`);
-    const items = data?.items || [];
+    // Filtra animes sem episódios
+    const allItems = data?.items || [];
+    const items = allItems.filter(i => _animeHasEpisodes(i));
     state.searchResults = items;
-    state.resultsPage   = Number(data?.page        || page);
-    state.totalPages    = Number(data?.total_pages  || 1);
+    state.resultsPage   = Number(data?.page       || page);
+    state.totalPages    = Number(data?.total_pages || 1);
     els.resultsTitle.textContent    = data?.title || "Seção";
-    els.resultsSubtitle.textContent = `${data?.total_items || items.length} título(s) · Pág. ${state.resultsPage}/${state.totalPages}`;
+    els.resultsSubtitle.textContent = `${items.length} título(s) · Pág. ${state.resultsPage}/${state.totalPages}`;
+    // Para seções de lançamentos, ordena por episódio mais recente
+    const key = sectionKey.toLowerCase();
+    const isEpSection = key.includes("ultim") || key.includes("lançamento") ||
+      key.includes("lancamento") || key.includes("recente");
+    if (isEpSection) {
+      items.sort((a, b) => {
+        const ea = parseFloat(String(a.episode || a.latest_episode || 0)) || 0;
+        const eb = parseFloat(String(b.episode || b.latest_episode || 0)) || 0;
+        return eb - ea;
+      });
+    }
     els.resultsGrid.innerHTML = items.length
-      ? `<div class="card-grid">${items.map(buildCard).join("")}</div>`
+      ? (isEpSection
+          ? `<div class="latest-ep-list">${items.map(buildLatestEpItem).join("")}</div>`
+          : `<div class="card-grid">${items.map(buildCard).join("")}</div>`)
       : `<div class="state-box"><div class="state-box-icon">📭</div><div class="state-box-title">Nenhum anime</div></div>`;
     renderPagination(state.resultsPage, state.totalPages, p => loadSectionResults(sectionKey, p));
   } catch(err) {
@@ -1625,34 +1587,46 @@ async function loadSectionResults(sectionKey, page = 1) {
 /* ═══════════════════════════════════════════════════════════════════════════
    BUSCA CORRIGIDA
    
-   BUGS corrigidos:
-   1. Busca sempre retornava "não encontrado"
-      → Problema: endpoint /api/search estava retornando items em campos
-        diferentes (results, data, animes, list, etc.)
-      → Solução: normalizar a resposta tentando múltiplos campos
-   
-   2. Busca inline não funcionava em alguns casos
-      → Adicionado trim() e verificação mínima de 2 chars (era 3)
-   
-   3. Resultados vazios mesmo com dados
-      → A API pode retornar { results: [...] } ou { items: [...] } ou array direto
-        Normalizado para sempre usar items
+   1. Normaliza resposta da API: tenta items, results, data, animes, list, etc.
+   2. Fallback client-side: se API retornar vazio, filtra do cache local (state.home)
+   3. Normaliza strings (sem acento, sem case) antes de comparar
+   4. Debounce reduzido para 2 chars (era 3), 500ms
+   5. Mostra sugestões mesmo com "nada encontrado" da API
 ═══════════════════════════════════════════════════════════════════════════ */
 function _normalizeSearchResponse(data) {
-  // Tenta extrair items de múltiplas estruturas de resposta possíveis
-  if (Array.isArray(data)) return { items: data, count: data.length, page: 1, total_pages: 1 };
-  if (Array.isArray(data?.items))   return data;
-  if (Array.isArray(data?.results)) return { ...data, items: data.results };
-  if (Array.isArray(data?.data))    return { ...data, items: data.data };
-  if (Array.isArray(data?.animes))  return { ...data, items: data.animes };
-  if (Array.isArray(data?.list))    return { ...data, items: data.list };
-  // Tenta encontrar qualquer array na resposta
+  if (Array.isArray(data))              return { items: data, count: data.length, page: 1, total_pages: 1 };
+  if (Array.isArray(data?.items))       return data;
+  if (Array.isArray(data?.results))     return { ...data, items: data.results };
+  if (Array.isArray(data?.data))        return { ...data, items: data.data };
+  if (Array.isArray(data?.animes))      return { ...data, items: data.animes };
+  if (Array.isArray(data?.list))        return { ...data, items: data.list };
+  if (Array.isArray(data?.anime_list))  return { ...data, items: data.anime_list };
+  // Tenta encontrar qualquer array com objetos que pareçam animes
   for (const key of Object.keys(data || {})) {
-    if (Array.isArray(data[key]) && data[key].length > 0 && data[key][0]?.id) {
+    if (Array.isArray(data[key]) && data[key].length > 0 &&
+        (data[key][0]?.id || data[key][0]?.title)) {
       return { ...data, items: data[key] };
     }
   }
   return { items: [], count: 0, page: 1, total_pages: 1 };
+}
+
+/* Busca client-side como fallback — filtra catálogo em cache pela query */
+function _clientSideSearch(query) {
+  const q = normalizeStr(query);
+  if (!state.home?.sections) return [];
+  const all = [];
+  for (const sec of state.home.sections) {
+    for (const item of (sec.items || [])) {
+      if (!all.find(x => x.id === item.id)) all.push(item);
+    }
+  }
+  return all.filter(item => {
+    const title  = normalizeStr(item.title || "");
+    const genres = (item.genres || []).map(normalizeStr).join(" ");
+    const tags   = normalizeStr(item.tags || "");
+    return title.includes(q) || genres.includes(q) || tags.includes(q);
+  });
 }
 
 async function performSearch(query, page = 1) {
@@ -1666,24 +1640,68 @@ async function performSearch(query, page = 1) {
   document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
   try {
     const rawData = await apiGet(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
-    const data    = _normalizeSearchResponse(rawData);
-    const items   = data?.items || [];
+    let data      = _normalizeSearchResponse(rawData);
+    let items     = (data?.items || []).filter(i => _animeHasEpisodes(i));
+
+    // Fallback: se API retornou vazio, busca no cache local
+    if (!items.length && state.home) {
+      const local = _clientSideSearch(q);
+      if (local.length) {
+        items = local;
+        data  = { items: local, count: local.length, page: 1, total_pages: 1 };
+        showToast("Resultados do catálogo local (API sem retorno)");
+      }
+    }
+
+    // Ordena por relevância: título que começa com a query vem primeiro
+    const qNorm = normalizeStr(q);
+    items.sort((a, b) => {
+      const ta = normalizeStr(a.title || "");
+      const tb = normalizeStr(b.title || "");
+      const aStarts = ta.startsWith(qNorm) ? 0 : 1;
+      const bStarts = tb.startsWith(qNorm) ? 0 : 1;
+      return aStarts - bStarts;
+    });
+
     state.searchResults = items;
     state.resultsPage   = Number(data?.page       || page);
     state.totalPages    = Number(data?.total_pages || 1);
     els.resultsTitle.textContent    = `"${q}"`;
-    els.resultsSubtitle.textContent = `${data?.count ?? items.length} resultado(s)`;
-    els.resultsGrid.innerHTML = items.length
-      ? `<div class="card-grid">${items.map(buildCard).join("")}</div>`
-      : `<div class="state-box">
-          <div class="state-box-icon">🔍</div>
-          <div class="state-box-title">Nada encontrado</div>
-          <div class="state-box-text">Nenhum anime para "${esc(q)}".</div>
-          <div style="font-size:12px;color:var(--text-3);margin-top:8px;">Tente variações do nome ou palavras-chave diferentes.</div>
-        </div>`;
+    els.resultsSubtitle.textContent = `${items.length} resultado(s)`;
+
+    if (items.length) {
+      els.resultsGrid.innerHTML = `<div class="card-grid">${items.map(buildCard).join("")}</div>`;
+    } else {
+      // "Nada encontrado" com sugestões inteligentes do catálogo
+      const suggestions = _clientSideSearch(q.slice(0, Math.max(2, q.length - 2))).slice(0, 4);
+      const suggestHtml = suggestions.length
+        ? `<div style="margin-top:16px">
+            <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">Você quis dizer?</div>
+            <div class="card-grid">${suggestions.map(buildCard).join("")}</div>
+          </div>` : "";
+      els.resultsGrid.innerHTML = `<div class="state-box">
+        <div class="state-box-icon">🔍</div>
+        <div class="state-box-title">Nada encontrado</div>
+        <div class="state-box-text">Nenhum anime para "${esc(q)}".</div>
+        <div style="font-size:12px;color:var(--text-3);margin-top:8px;">
+          Tente variações do nome, sem acentos, ou palavras-chave diferentes.
+        </div>
+        ${suggestHtml}
+      </div>`;
+    }
     renderPagination(state.resultsPage, state.totalPages, p => performSearch(q, p));
   } catch(err) {
     console.error("[search]", err);
+    // Tenta busca local mesmo com erro de API
+    const local = _clientSideSearch(q);
+    if (local.length) {
+      state.searchResults = local;
+      els.resultsTitle.textContent    = `"${q}" (offline)`;
+      els.resultsSubtitle.textContent = `${local.length} resultado(s) do catálogo local`;
+      els.resultsGrid.innerHTML = `<div class="card-grid">${local.map(buildCard).join("")}</div>`;
+      hideLoading();
+      return;
+    }
     els.resultsTitle.textContent    = "Erro na busca";
     els.resultsSubtitle.textContent = err.message || "";
     els.resultsGrid.innerHTML = `<div class="state-box error">
@@ -1697,7 +1715,6 @@ async function performSearch(query, page = 1) {
 
 function getFirstEpisodeNumber(episodes) {
   if (!Array.isArray(episodes) || !episodes.length) return "";
-  // Ordenar para pegar o primeiro (menor número)
   const sorted = _sortEpisodes(episodes);
   for (const ep of sorted) {
     const n = String(_parseEpNumber(ep) ?? ep.slug ?? "").trim();
@@ -1707,32 +1724,27 @@ function getFirstEpisodeNumber(episodes) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   openAnime CORRIGIDO
-   
-   BUGS corrigidos:
-   1. Título do anime aparecia como "Niwatori Fighter - Episódio 1"
-      → A API de detalhes do anime pode retornar o title contaminado
-        com o nome do episódio em algumas versões.
-      → Solução: sanitizar o título removendo sufixos "- Episódio N" e similares
-   
-   2. Contagem de episódios inconsistente
-      → state.anime.episodes (metadata) pode divergir da lista real
-      → Agora renderEpisodeButtons recebe AMBAS as informações
+   _sanitizeAnimeTitle — remove sufixo "- Episódio N" contaminado da API
 ═══════════════════════════════════════════════════════════════════════════ */
-function _sanitizeAnimeTitle(title, episodes) {
+function _sanitizeAnimeTitle(title) {
   if (!title) return title;
-  // Remove sufixos comuns que aparecem quando a API mescla título com episódio
   const patterns = [
-    /\s*[-–]\s*Epis[oó]dio\s+\d+.*$/i,
-    /\s*[-–]\s*Episode\s+\d+.*$/i,
-    /\s*[-–]\s*Ep\.?\s*\d+.*$/i,
-    /\s*\|\s*Epis[oó]dio\s+\d+.*$/i,
+    /\s*[-–—]\s*Epis[oó]dio\s+[\d\.]+.*$/i,
+    /\s*[-–—]\s*Episode\s+[\d\.]+.*$/i,
+    /\s*[-–—]\s*Ep\.?\s*[\d\.]+.*$/i,
+    /\s*\|\s*Epis[oó]dio\s+[\d\.]+.*$/i,
+    /\s*[-–—]\s*Capitulo\s+[\d\.]+.*$/i,
   ];
   let clean = title;
   for (const p of patterns) { clean = clean.replace(p, "").trim(); }
   return clean;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   openAnime — abre detalhes do anime
+   Agora NÃO redireciona para o episódio; apenas mostra os detalhes.
+   O redirecionamento direto ao episódio é feito por openEpisode.
+═══════════════════════════════════════════════════════════════════════════ */
 async function openAnime(animeId, options = {}) {
   if (!animeId) return;
   const push = options.pushHistory !== false;
@@ -1743,27 +1755,24 @@ async function openAnime(animeId, options = {}) {
     const episodes = Array.isArray(data?.episodes) ? data.episodes : [];
     if (!item) throw new Error("Anime não encontrado");
 
-    // ── CORREÇÃO: sanitizar título ──────────────────────────────────────────
-    const cleanTitle = _sanitizeAnimeTitle(item.title, episodes);
-    item.title = cleanTitle;
+    item.title = _sanitizeAnimeTitle(item.title);
 
-    state.anime         = item;
+    state.anime          = item;
     state.currentAnimeId = animeId;
     state.animeEpisodes  = episodes;
 
     const isDub = item.is_dubbed || item.prefix === "DUB";
-    els.animeCover.src       = imgSrc(item.banner_url || item.cover_url, cleanTitle);
-    els.animeCover.alt       = cleanTitle || "Anime";
+    els.animeCover.src       = imgSrc(item.banner_url || item.cover_url, item.title);
+    els.animeCover.alt       = item.title || "Anime";
     els.animePrefix.textContent = isDub ? "🎙️ DUBLADO" : "📝 LEGENDADO";
     els.animePrefix.className   = `detail-kicker ${isDub ? "dub" : "leg"}`;
-    els.animeTitle.textContent  = cleanTitle || "Sem título";
+    els.animeTitle.textContent  = item.title || "Sem título";
     els.animeMeta.innerHTML     = renderAnimeMeta(item);
     els.animeDesc.textContent   = item.description || "Sem descrição disponível.";
     els.animeDesc.className     = "desc-text coll";
     els.descToggle.textContent  = "Ver mais ▾";
-    els.animeGenres.innerHTML   = (item.genres || [])
-      .map(g => `<span class="genre-tag" data-genre-search="${esc(g)}">${esc(g)}</span>`)
-      .join("");
+    // Tags com "Ver mais"
+    renderGenreTags(item.genres || []);
     renderEpisodeButtons(episodes);
     els.openFirstEpisodeBtn.disabled = !getFirstEpisodeNumber(episodes);
     els.goToPlayerBtn.disabled       = !state.currentEpisode;
@@ -1775,16 +1784,11 @@ async function openAnime(animeId, options = {}) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   openEpisode CORRIGIDO
+   openEpisode — CORRIGIDO: vai DIRETO ao episódio
    
-   BUGS corrigidos:
-   1. Título no player mostrava "Niwatori Fighter - Episódio 1" em vez do título limpo
-      → Usa state.anime.title (já sanitizado) como fonte primária
-   
-   2. Deep link do /start abre anime geral antes do episódio
-      → openEpisode agora primeiro verifica se anime já está carregado
-        antes de fazer nova requisição — evita double-load
-      → Boot direto para episódio via URL params sem passar por home
+   Não redireciona pela página do anime antes.
+   Só carrega dados do anime se ainda não estiver em cache.
+   Boot via URL vai direto aqui sem intermediário.
 ═══════════════════════════════════════════════════════════════════════════ */
 async function openEpisode(animeId, episode, quality = "HD", options = {}) {
   if (!animeId || !episode) { showToast("Anime ou episódio inválido."); return; }
@@ -1795,9 +1799,20 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
   const push = options.pushHistory !== false;
   showLoading("Abrindo episódio", `Carregando EP ${episode} em ${q}...`);
   try {
-    // Só carrega o anime se não estiver carregado ou for diferente
+    // Carrega anime em background APENAS se necessário (sem mudar de página)
     if (!state.anime || state.currentAnimeId !== animeId) {
-      await openAnime(animeId, { pushHistory: false });
+      try {
+        const animeData = await apiGet(`/api/anime/${encodeURIComponent(animeId)}`);
+        if (animeData?.item) {
+          animeData.item.title = _sanitizeAnimeTitle(animeData.item.title);
+          state.anime          = animeData.item;
+          state.currentAnimeId = animeId;
+          state.animeEpisodes  = Array.isArray(animeData.episodes) ? animeData.episodes : [];
+        }
+      } catch(e) {
+        console.warn("[openEpisode] anime pre-load failed:", e.message);
+        // Continua mesmo sem dados do anime — tenta abrir o episódio mesmo assim
+      }
     }
     if (requestId !== state.openEpisodeRequestId) return;
 
@@ -1814,15 +1829,17 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
     state.currentEpisodeItem = item;
     state.attempt            = 0;
 
+    // Se o título do episódio veio contaminado, sanitiza
+    const animeTitle = _sanitizeAnimeTitle(state.anime?.title || item.anime_title || "Anime");
+    if (state.anime) state.anime.title = animeTitle;
+
     saveWatchProgress({
-      animeId, animeTitle: state.anime?.title || "Anime",
+      animeId, animeTitle,
       episode, watchedSeconds: 0, durationSeconds: 0,
       cover: state.anime?.cover_url || state.anime?.banner_url || item.thumb || "",
     });
     renderContinueWatching();
 
-    // Título limpo do anime (usa state.anime já sanitizado)
-    const animeTitle = state.anime?.title || "Anime";
     els.playerPageSubtitle.textContent = `${animeTitle} • EP ${episode}`;
     els.playerTitle.textContent        = animeTitle;
     els.playerMeta.textContent = [
@@ -1855,6 +1872,7 @@ async function openEpisode(animeId, episode, quality = "HD", options = {}) {
 
     renderEpisodeButtons(state.animeEpisodes);
     updateUrlParams({ anime: animeId, ep: episode, q: state.currentQuality });
+    // Vai DIRETO para o player — sem passar pela página do anime
     setPage("player", push);
   } catch(err) {
     console.error("[openEpisode]", err);
@@ -1879,54 +1897,30 @@ function updateUrlParams({ anime, ep, q }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BOOT CORRIGIDO — Deep link direto
-
-   PROBLEMA ORIGINAL:
-   1. Carregava home primeiro, depois redirecionava → 2 requisições, UX ruim
-   2. Em alguns dispositivos o redirecionamento falhava
-   3. /start com ep_ redirecionava para página do anime antes do player
-
-   SOLUÇÃO:
-   1. bootFromUrl() é chamado ANTES de qualquer outro carregamento
-   2. Se há ?anime=X&ep=Y nos params → vai DIRETO para openEpisode
-   3. Se há só ?anime=X → vai direto para openAnime
-   4. Só carrega home se não há params
-   5. Home é carregado em background (não bloqueia deep link)
+   bootFromUrl — CORRIGIDO: deep link vai DIRETO ao episódio
+   
+   ?anime=X&ep=Y → openEpisode direto (sem home, sem anime page intermediária)
+   ?anime=X      → openAnime direto
+   (nada)        → home
 ═══════════════════════════════════════════════════════════════════════════ */
 async function bootFromUrl() {
   if (state.autoBootDone) return;
   state.autoBootDone = true;
-
   const { anime, ep, q } = getQueryParams();
-
-  // Deep link direto para episódio — SEM passar por home
   if (anime && ep) {
     try {
       await openEpisode(anime, ep, q, { pushHistory: false, force: true });
       return;
     } catch(e) {
-      console.warn("[boot] failed to open episode, falling back to anime", e);
-      // Tenta abrir só o anime como fallback
-      try {
-        await openAnime(anime, { pushHistory: false });
-        return;
-      } catch(e2) {
-        console.warn("[boot] failed to open anime, going home", e2);
-      }
+      console.warn("[boot] episode failed, trying anime:", e);
+      try { await openAnime(anime, { pushHistory: false }); return; }
+      catch(e2) { console.warn("[boot] anime also failed, going home:", e2); }
     }
   }
-
-  // Deep link para anime
   if (anime && !ep) {
-    try {
-      await openAnime(anime, { pushHistory: false });
-      return;
-    } catch(e) {
-      console.warn("[boot] failed to open anime from URL, going home", e);
-    }
+    try { await openAnime(anime, { pushHistory: false }); return; }
+    catch(e) { console.warn("[boot] anime from URL failed, going home:", e); }
   }
-
-  // Sem deep link — carrega home normalmente
   setPage("home", false);
   await loadHome();
 }
@@ -1951,9 +1945,32 @@ document.addEventListener("click", async e => {
     await openEpisode(cwCard.dataset.resumeAnime, cwCard.dataset.resumeEp, state.currentQuality || "HD");
     return;
   }
-  // Anime card
+  // Anime card — CORRIGIDO: se tem data-direct-ep (últimos episódios), vai direto ao episódio
   const card = e.target.closest(".anime-card[data-anime-id]");
-  if (card) { await openAnime(card.dataset.animeId); return; }
+  if (card) {
+    const animeId  = card.dataset.animeId;
+    const directEp = card.dataset.directEp; // presente em cards de "últimos episódios"
+    if (directEp) {
+      // Clique em card da aba "Últimos Episódios" → vai direto ao episódio
+      await openEpisode(animeId, directEp, state.currentQuality || "HD");
+    } else {
+      // Clique em card normal → abre página do anime
+      await openAnime(animeId);
+    }
+    return;
+  }
+  // latest-ep-item — clique vai DIRETO ao episódio
+  const latestItem = e.target.closest(".latest-ep-item[data-anime-id]");
+  if (latestItem) {
+    const animeId = latestItem.dataset.animeId;
+    const epNum   = latestItem.dataset.directEp;
+    if (animeId && epNum) {
+      await openEpisode(animeId, epNum, state.currentQuality || "HD");
+    } else if (animeId) {
+      await openAnime(animeId);
+    }
+    return;
+  }
   // Section "Ver mais"
   const secBtn = e.target.closest("[data-open-section]");
   if (secBtn) { await loadSectionResults(secBtn.dataset.openSection); return; }
@@ -1980,7 +1997,6 @@ els.searchInput.addEventListener("input", () => {
   const val = els.searchInput.value.trim();
   els.searchClear.style.display = val ? "block" : "none";
   clearTimeout(sdeb);
-  // Debounce: 2+ chars (era 3), 500ms (era 600ms)
   if (val.length >= 2) sdeb = setTimeout(() => performSearch(val), 500);
 });
 els.searchClear.addEventListener("click", () => {
@@ -1992,7 +2008,6 @@ els.searchClear.addEventListener("click", () => {
 // ── Navigation buttons ────────────────────────────────────────────────────────
 els.resultsBackBtn.addEventListener("click", () => goBack());
 els.backBtn.addEventListener("click",        () => goBack());
-
 els.homeBtn.addEventListener("click", async () => {
   if (state.cssFsActive) exitCssFullscreen();
   exitCinemaMode();
@@ -2001,7 +2016,6 @@ els.homeBtn.addEventListener("click", async () => {
   await loadHome();
   updateUrlParams({ anime: "", ep: "", q: "" });
 });
-
 els.refreshBtn.addEventListener("click", async () => {
   const p = state.currentPage;
   if (p === "home")   { await loadHome(); return; }
@@ -2016,31 +2030,20 @@ els.refreshBtn.addEventListener("click", async () => {
     await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false, force: true });
   }
 });
-
 els.backToHomeFromAnimeBtn.addEventListener("click", async () => {
-  setPage("home");
-  await loadHome();
-  updateUrlParams({ anime: "", ep: "", q: "" });
+  setPage("home"); await loadHome(); updateUrlParams({ anime: "", ep: "", q: "" });
 });
-els.backToAnimeBtn.addEventListener("click", () => {
-  exitCinemaMode();
-  setPage("anime");
-});
+els.backToAnimeBtn.addEventListener("click", () => { exitCinemaMode(); setPage("anime"); });
 els.backToHomeFromPlayerBtn.addEventListener("click", async () => {
   if (state.cssFsActive) exitCssFullscreen();
-  exitCinemaMode();
-  clearPlayerState();
-  setPage("home");
-  await loadHome();
-  updateUrlParams({ anime: "", ep: "", q: "" });
+  exitCinemaMode(); clearPlayerState();
+  setPage("home"); await loadHome(); updateUrlParams({ anime: "", ep: "", q: "" });
 });
-
 els.openFirstEpisodeBtn.addEventListener("click", async () => {
   const ep = getFirstEpisodeNumber(state.animeEpisodes);
   if (!ep) { showToast("Sem episódios disponíveis."); return; }
   await openEpisode(state.currentAnimeId, ep, state.currentQuality || "HD");
 });
-
 els.goToPlayerBtn.addEventListener("click", async () => {
   if (!state.currentEpisode) {
     const ep = getFirstEpisodeNumber(state.animeEpisodes);
@@ -2050,7 +2053,6 @@ els.goToPlayerBtn.addEventListener("click", async () => {
   }
   setPage("player");
 });
-
 els.prevEpisodeBtn.addEventListener("click", async () => {
   const ep = els.prevEpisodeBtn.dataset.episode;
   if (ep) await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false, force: true });
@@ -2059,26 +2061,20 @@ els.nextEpisodeBtn.addEventListener("click", async () => {
   const ep = els.nextEpisodeBtn.dataset.episode;
   if (ep) await openEpisode(state.currentAnimeId, ep, state.currentQuality, { pushHistory: false, force: true });
 });
-
 els.episodeListBtn.addEventListener("click", () => {
-  exitCinemaMode();
-  setPage("anime");
+  exitCinemaMode(); setPage("anime");
   setTimeout(() => $("episodesGrid")?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
 });
-
 els.openInBrowserBtn.addEventListener("click", () => {
   const url = els.openInBrowserBtn.dataset.url;
   if (url) window.open(url, "_blank", "noopener,noreferrer");
 });
-
 els.retryPlayerBtn.addEventListener("click", async () => {
   if (!state.currentAnimeId || !state.currentEpisode) return;
   state.attempt = 0;
   await openEpisode(state.currentAnimeId, state.currentEpisode, state.currentQuality, { pushHistory: false, force: true });
 });
-
 els.fullscreenBtn.addEventListener("click", requestFullscreen);
-
 window.addEventListener("popstate", () => goBack());
 
 // ── Init ──────────────────────────────────────────────────────────────────────
