@@ -298,8 +298,8 @@ async def traceme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["trace_waiting_photo"] = True
 
     await message.reply_text(
-        "🔎 <b>Trace.moe ativado</b>\n\n"
-        "Agora me envie <b>uma foto da cena</b>.\n"
+        "🔎 <b>Me envie uma foto do anime</b>\n\n"
+        "Agora me envie, <b>pode ser print, frame ou cena.</b>.\n"
         "Eu vou tentar achar o anime e, se ele existir no bot, já vou te mandar o botão pra abrir.",
         parse_mode="HTML",
     )
