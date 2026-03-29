@@ -6,6 +6,7 @@ from services.gemini_ai import generate_anime_reply
 from services.anime_filter import is_anime_related
 from services.ai_group_state import can_reply, mark_reply, should_random_reply
 
+
 async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     chat = update.effective_chat
@@ -50,7 +51,6 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     answer = answer[:500]
-
     await message.reply_text(answer)
 
     if auto_mode:
