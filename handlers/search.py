@@ -3,12 +3,12 @@ import html
 import re
 import secrets
 import time
-from urllib.parse import quote_plus
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+from services.animefire_client import search_anime
 from services.metrics import log_event, mark_user_seen
 from utils.gatekeeper import ensure_channel_membership
 
@@ -19,7 +19,6 @@ SEARCH_INFLIGHT_TTL = 12.0
 SEARCH_TIMEOUT = 20.0
 
 SEARCH_BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBaL-UMWnDPUdoNCaz4ZUFvzeOHSVXh0oRAALTC2sbdnEYRrjsVpeCeT08AQADAgADeQADOgQ/photo.jpg"
-MINIAPP_URL = "https://jerusalem-editorials-screensavers-for.trycloudflare.com/miniapp/index.html"
 
 _SEARCH_USER_LOCKS = {}
 _SEARCH_INFLIGHT = {}
@@ -101,11 +100,6 @@ def _clean_button_title(title: str) -> str:
     title = re.sub(r"\s{2,}", " ", title).strip(" -–|•")
 
     return title or "Sem título"
-
-
-def _build_miniapp_search_url(query: str) -> str:
-    base = MINIAPP_URL.rstrip("/")
-    return f"{base}/?search={quote_plus(query)}&page=1"
 
 
 def _build_search_button_title(item: dict) -> str:
@@ -301,29 +295,46 @@ async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         _set_inflight(user.id, query)
 
+        loading_msg = await message.reply_text(
+            "🔎 <b>Buscando animes...</b>\n"
+            "Aguarde um instante.",
+            parse_mode="HTML",
+        )
+
         try:
+            results = await asyncio.wait_for(search_anime(query), timeout=SEARCH_TIMEOUT)
+
             log_event(
                 event_type="search",
                 user_id=user.id,
                 username=(user.username or user.first_name or ""),
                 query_text=query,
-                extra="miniapp_handoff",
+                result_count=len(results),
             )
 
-            miniapp_url = _build_miniapp_search_url(query)
-            text = (
-                "🔎 <b>Busca pronta no MiniApp</b>\n\n"
-                f"🎬 <b>Pesquisa:</b> {html.escape(query)}\n\n"
-                "Toque no botão abaixo para abrir os resultados direto no MiniApp."
-            )
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "🔎 Abrir busca no MiniApp",
-                        web_app=WebAppInfo(url=miniapp_url),
-                    )
-                ]
-            ])
+            if not results:
+                log_event(
+                    event_type="search_no_result",
+                    user_id=user.id,
+                    username=(user.username or user.first_name or ""),
+                    query_text=query,
+                    result_count=0,
+                )
+
+                await _safe_edit_loading(
+                    loading_msg,
+                    "❌ <b>Nenhum anime encontrado.</b>\n\n"
+                    "Tente pesquisar com outro nome, nome alternativo ou uma variação do título.",
+                )
+                return
+
+            token = _store_search_session(context, query, results)
+
+            page = 1
+            total = len(results)
+
+            text = _build_search_text(query, page, total)
+            keyboard = _build_results_keyboard(results, page, total, token)
 
             sent = False
 
@@ -336,31 +347,48 @@ async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 sent = True
             except Exception as e:
-                print("ERRO AO ENVIAR BANNER DA BUSCA MINIAPP:", repr(e))
+                print("ERRO AO ENVIAR BANNER DA BUSCA:", repr(e))
 
-            if not sent:
-                await message.reply_text(
+            if sent:
+                await _safe_delete_message(loading_msg)
+            else:
+                await _safe_edit_loading(
+                    loading_msg,
                     text,
-                    parse_mode="HTML",
-                    reply_markup=keyboard,
                 )
+                try:
+                    await loading_msg.edit_reply_markup(reply_markup=keyboard)
+                except Exception:
+                    pass
 
         except asyncio.TimeoutError:
             print(f"ERRO NA BUSCA: Timeout query={query!r}")
 
-            await message.reply_text(
+            edited = await _safe_edit_loading(
+                loading_msg,
                 "⏳ <b>A busca demorou demais.</b>\n\n"
                 "Tente novamente em instantes.",
-                parse_mode="HTML",
             )
+            if not edited:
+                await message.reply_text(
+                    "⏳ <b>A busca demorou demais.</b>\n\n"
+                    "Tente novamente em instantes.",
+                    parse_mode="HTML",
+                )
 
         except Exception as e:
             print("ERRO NA BUSCA:", repr(e))
 
-            await message.reply_text(
+            edited = await _safe_edit_loading(
+                loading_msg,
                 "❌ <b>Erro ao buscar os animes.</b>\n\n"
                 "Tente novamente em instantes.",
-                parse_mode="HTML",
             )
+            if not edited:
+                await message.reply_text(
+                    "❌ <b>Erro ao buscar os animes.</b>\n\n"
+                    "Tente novamente em instantes.",
+                    parse_mode="HTML",
+                )
         finally:
             _clear_inflight(user.id, query)
