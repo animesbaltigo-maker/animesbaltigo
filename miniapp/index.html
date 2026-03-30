@@ -745,8 +745,9 @@ function loadVid(raw) {
   startStall();
 }
 function loadIfr(url) { resetVid(); hideVidOv(); E.vidPlayer.style.display = "none"; E.ifrPlayer.style.display = "block"; E.ifrPlayer.src = url; S.vidReady = true; }
-function isDirect(u) { const l = String(u || "").toLowerCase(); return l.includes(".m3u8") || l.includes(".mp4") || l.includes(".webm") || l.includes("videoplayback"); }
-function isIfrLike(u) { return /blogger\.com\/video\.g|youtube\.com\/embed|player|embed/i.test(String(u || "")); }
+function isBloggerUrl(u) { return /blogger\.com\/video\.g/i.test(String(u || "")); }
+function isDirect(u) { const l = String(u || "").toLowerCase(); return l.includes(".m3u8") || l.includes(".mp4") || l.includes(".webm") || l.includes("videoplayback") || l.includes("googlevideo.com"); }
+function isIfrLike(u) { if (isBloggerUrl(u)) return false; return /youtube\.com\/embed|player|embed/i.test(String(u || "")); }
 
 // ── Fullscreen ────────────────────────────────────────────────────────────────
 function enterCssFs() {
@@ -816,9 +817,11 @@ async function escalate() {
       const d = await fetchEpTo(aid, ep, q, true);
       const u = pickVidUrl(d?.item);
       if (!u) throw new Error("no vid");
-      S.epItem = d.item;
-      S.vidUrl = u;
-      (isIfrLike(u) || !isDirect(u)) ? loadIfr(u) : (() => { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); })();
+      S.epItem = d.item; S.vidUrl = u;
+      if (isBloggerUrl(u)) { resetVid(); showBloggerOverlay(u); }
+      else if (isDirect(u)) { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); }
+      else if (isIfrLike(u)) { loadIfr(u); }
+      else { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); }
     } catch { S.attempt++; await escalate(); }
     return;
   }
@@ -830,11 +833,12 @@ async function escalate() {
       const d = await fetchEpTo(aid, ep, alt, true);
       const u = pickVidUrl(d?.item);
       if (!u) throw new Error("no vid");
-      S.qual = alt;
-      S.epItem = d.item;
-      S.vidUrl = u;
+      S.qual = alt; S.epItem = d.item; S.vidUrl = u;
       renderQBtns(d.item);
-      (isIfrLike(u) || !isDirect(u)) ? loadIfr(u) : (() => { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); })();
+      if (isBloggerUrl(u)) { resetVid(); showBloggerOverlay(u); }
+      else if (isDirect(u)) { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); }
+      else if (isIfrLike(u)) { loadIfr(u); }
+      else { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); }
     } catch { showFinalErr(); }
     return;
   }
@@ -851,6 +855,19 @@ async function fetchEpTo(aid, ep, q, refresh = false) {
   } finally { clearTimeout(t); }
 }
 function showFinalErr() { clrStall(); showVidOv("i:⚠️", "Vídeo indisponível", "Tente recarregar ou troque a qualidade"); E.pNote.textContent = "Não foi possível carregar. Recarregue ou troque a qualidade."; toast("Vídeo indisponível."); }
+function showBloggerOverlay(bloggerUrl) {
+  clrStall();
+  E.vidOvIcon.innerHTML = '<div class="ov-icon">🎬</div>';
+  E.vidOvText.textContent = "Player externo necessário";
+  E.vidOvSub.textContent = "Este episódio usa o Blogger — toque para abrir";
+  E.vidOv.classList.add("on");
+  if (bloggerUrl) {
+    E.openBrowserBtn.disabled = false;
+    E.openBrowserBtn.dataset.url = bloggerUrl;
+    E.pNote.textContent = "Use 'Abrir em nova guia' para assistir este episódio.";
+  }
+  toast("Abra em nova guia para assistir.");
+}
 
 // ── Video events ──────────────────────────────────────────────────────────────
 function bindVidEvts() {
@@ -921,23 +938,18 @@ function suggChips(ss) {
   return `<div style="margin-top:12px"><div style="font-size:11px;color:var(--text3);margin-bottom:7px">Talvez você quis dizer:</div><div class="chips">${ss.map(s => `<button class="chip" data-ss="${esc(s)}">${esc(s)}</button>`).join("")}</div></div>`;
 }
 
-// FIX: Robust normalization — handles all known API response shapes including
-// nested objects, flattened arrays, and non-standard key names
 function normCatalog(data) {
   if (!data) return { items: [], page: 1, total_pages: 1, total_items: 0 };
   if (Array.isArray(data)) return { items: data, page: 1, total_pages: 1, total_items: data.length };
-  // Standard shapes
   for (const key of ["items","results","data","animes","list","anime","content","videos"]) {
     if (Array.isArray(data[key]) && data[key].length > 0) {
       return { ...data, items: data[key] };
     }
   }
-  // Deeply nested: { data: { items: [] } }
   if (data.data && typeof data.data === "object" && !Array.isArray(data.data)) {
     const inner = normCatalog(data.data);
     if (inner.items.length > 0) return { ...data, ...inner };
   }
-  // Last resort: find first array with anime-like objects
   for (const key of Object.keys(data)) {
     const val = data[key];
     if (Array.isArray(val) && val.length > 0 && val[0] && (val[0].id || val[0].title || val[0].anime_id)) {
@@ -953,7 +965,6 @@ function normSearch(data) {
   for (const key of ["items","results","data","animes","list","anime","content"]) {
     if (Array.isArray(data[key])) return { ...data, items: data[key] };
   }
-  // Nested
   if (data.data && typeof data.data === "object" && !Array.isArray(data.data)) {
     const inner = normSearch(data.data);
     if (inner.items.length > 0) return { ...data, ...inner };
@@ -967,12 +978,28 @@ function normSearch(data) {
   return { items: [], count: 0, page: 1, total_pages: 1 };
 }
 
+// pickVidUrl: prioriza URLs diretas (googlevideo, mp4, m3u8); nunca retorna
+// Blogger como preferida — Blogger vai para overlay separado.
 function pickVidUrl(item) {
   if (!item || typeof item !== "object") return "";
-  const cands = [item.video_iframe, item.iframe, item.iframe_url, item.embed, item.embed_url,
-    item.player, item.player_url, item.stream_url, item.stream, item.video, item.url, item.src]
-    .filter(Boolean).map(v => String(v).trim()).filter(Boolean);
-  return cands.find(v => /blogger\.com\/video\.g|googleusercontent|youtube\.com\/embed|player|embed/i.test(v)) || cands[0] || "";
+  // 1. stream_url já resolvida pelo backend (googlevideo, mp4, m3u8)
+  if (item.stream_url && !isBloggerUrl(item.stream_url)) return String(item.stream_url).trim();
+  // 2. Diretos: googlevideo, mp4, m3u8 — excluindo Blogger
+  const directs = [item.video, item.url, item.src, item.stream]
+    .filter(Boolean).map(v => String(v).trim())
+    .filter(v => isDirect(v) && !isBloggerUrl(v));
+  if (directs.length) return directs[0];
+  // 3. Embeds válidos que NÃO são Blogger
+  const embeds = [item.video_iframe, item.iframe, item.iframe_url, item.embed, item.embed_url,
+    item.player, item.player_url, item.video, item.url, item.src]
+    .filter(Boolean).map(v => String(v).trim())
+    .filter(v => v && !isBloggerUrl(v));
+  if (embeds.length) return embeds[0];
+  // 4. Último recurso: URL do Blogger (tratada com overlay)
+  const blogger = [item.stream_url, item.video_iframe, item.iframe, item.video, item.url]
+    .filter(Boolean).map(v => String(v).trim())
+    .find(v => isBloggerUrl(v));
+  return blogger || "";
 }
 
 function getEpTotal(eps = []) {
@@ -1313,17 +1340,6 @@ async function loadHome() {
   }
 }
 
-// FIX: Section loading completely rewritten.
-// Problems found:
-// 1. Variants were tried sequentially with individual try/catch inside a for loop,
-//    but if the primary endpoint returned a non-empty but wrong structure, variants were skipped.
-// 2. normCatalog was not robust enough to handle all response shapes.
-// 3. The endpoint key mapping was incomplete — many sections had no known variants.
-// 4. Empty check used data?.items?.length but normCatalog could return {items:[]} even
-//    when the real data was in another key.
-// Now: tries multiple endpoint strategies in parallel, picks first successful non-empty result.
-
-// Section key → possible API slugs (ordered by likelihood)
 const SECTION_SLUGS = {
   recentes:       ["recentes","recent","latest","novos","new"],
   em_lancamento:  ["em_lancamento","em-lancamento","lancamentos","lançamentos","lancamento","lançamento","releasing","airing","simulcast"],
@@ -1341,7 +1357,6 @@ const SECTION_SLUGS = {
 };
 
 async function tryFetchSection(slug, page) {
-  // Try /api/catalog/list first, then /api/catalog/section, then /api/catalog/genre
   const endpoints = [
     `/api/catalog/list?section=${encodeURIComponent(slug)}&page=${page}`,
     `/api/catalog/section/${encodeURIComponent(slug)}?page=${page}`,
@@ -1375,7 +1390,6 @@ async function loadSection(key, page = 1) {
     const slugs = SECTION_SLUGS[key] || [key];
     let found = null;
 
-    // Try slugs sequentially — stop at first non-empty result
     for (const slug of slugs) {
       found = await tryFetchSection(slug, page);
       if (found) break;
@@ -1423,7 +1437,6 @@ async function doSearch(q, page = 1) {
   E.resGrid.innerHTML = skGrid(8);
   E.resPag.innerHTML = "";
   try {
-    // Try multiple search endpoints
     let raw = null;
     const searchEndpoints = [
       `/api/search?q=${encodeURIComponent(sq)}&page=${page}`,
@@ -1516,16 +1529,28 @@ async function openEp(aid, ep, qual = "HD", opts = {}) {
     E.pMeta.textContent = [`EP ${ep}`, S.qual, dt ? `de ${dt}` : "", item.is_dubbed ? "Dublado" : "Legendado"].filter(Boolean).join(" · ");
     E.pDesc.textContent = item.description || S.anime?.description || "";
     const vu = pickVidUrl(item);
-    E.pNote.textContent = vu ? (isIfrLike(vu) ? "Player incorporado ativo." : "Reconecta automaticamente.") : "Esse episódio não retornou URL de vídeo.";
+    E.pNote.textContent = vu
+      ? (isBloggerUrl(vu) ? "Use 'Abrir em nova guia' para este episódio." : isIfrLike(vu) ? "Player incorporado ativo." : "Reconecta automaticamente.")
+      : "Esse episódio não retornou URL de vídeo.";
     renderQBtns(item);
     E.prevEpBtn.disabled = !item.prev_episode;
     E.nextEpBtn.disabled = !item.next_episode;
     E.prevEpBtn.dataset.episode = item.prev_episode || "";
     E.nextEpBtn.dataset.episode = item.next_episode || "";
     if (vu) {
-      (isIfrLike(vu) || !isDirect(vu)) ? loadIfr(vu) : loadVid(vu);
       E.openBrowserBtn.disabled = false;
       E.openBrowserBtn.dataset.url = vu;
+      if (isBloggerUrl(vu)) {
+        // Blogger bloqueia iframe (X-Frame-Options: SAMEORIGIN) — overlay direto
+        resetVid();
+        showBloggerOverlay(vu);
+      } else if (isDirect(vu)) {
+        loadVid(vu);
+      } else if (isIfrLike(vu)) {
+        loadIfr(vu);
+      } else {
+        loadVid(vu);
+      }
     } else {
       clrPlayer();
       showVidOv("i:⚠️", "Sem vídeo", "Episódio sem URL de vídeo");
