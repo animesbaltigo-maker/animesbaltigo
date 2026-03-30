@@ -718,11 +718,11 @@ function proxyUrl(raw, bust = 0) {
   return p.toString();
 }
 
-// ── Stall timer ───────────────────────────────────────────────────────────────
+// ── Stall timer ──────────────────────────────────────────────────────────────
 function clrStall() { if (S.stallTimer) { clearTimeout(S.stallTimer); S.stallTimer = null; } }
 function startStall() { clrStall(); S.stallTimer = setTimeout(() => { if (!S.vidReady) escalate(); }, STALL_MS); }
 
-// ── Player ────────────────────────────────────────────────────────────────────
+// ── Player ───────────────────────────────────────────────────────────────────
 function resetVid() {
   clrStall();
   S.vidReady = false;
