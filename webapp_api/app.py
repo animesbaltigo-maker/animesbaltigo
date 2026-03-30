@@ -23,6 +23,7 @@ from services.animefire_client import (
     get_anime_details,
     get_episode_player,
     get_episodes,
+    invalidate_episode_caches,
     search_anime,
 )
 from services.recent_episodes_client import get_recent_episodes
@@ -988,6 +989,7 @@ async def api_episode(
     # Allow the frontend to force a fresh link fetch when the cached one has expired.
     if refresh:
         _invalidate_key(cache_key)
+        invalidate_episode_caches(anime_id, episode)
 
     async def factory():
         item = await get_episode_player(anime_id, episode, quality)
