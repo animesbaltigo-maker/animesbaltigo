@@ -718,9 +718,31 @@ function proxyUrl(raw, bust = 0) {
   return p.toString();
 }
 
+function withBust(url, key = Date.now()) {
+  try {
+    const u = new URL(url);
+    u.searchParams.set("_t", String(key));
+    return u.toString();
+  } catch {
+    const sep = String(url).includes("?") ? "&" : "?";
+    return `${url}${sep}_t=${encodeURIComponent(String(key))}`;
+  }
+}
+
 // ── Stall timer ──────────────────────────────────────────────────────────────
-function clrStall() { if (S.stallTimer) { clearTimeout(S.stallTimer); S.stallTimer = null; } }
-function startStall() { clrStall(); S.stallTimer = setTimeout(() => { if (!S.vidReady) escalate(); }, STALL_MS); }
+function clrStall() {
+  if (S.stallTimer) {
+    clearTimeout(S.stallTimer);
+    S.stallTimer = null;
+  }
+}
+
+function startStall() {
+  clrStall();
+  S.stallTimer = setTimeout(() => {
+    if (!S.vidReady) escalate();
+  }, STALL_MS);
+}
 
 // ── Player ───────────────────────────────────────────────────────────────────
 function resetVid() {
@@ -730,24 +752,62 @@ function resetVid() {
   E.vidPlayer.removeAttribute("src");
   E.vidPlayer.load();
   E.vidPlayer.style.display = "block";
+  E.ifrPlayer.onload = null;
+  E.ifrPlayer.onerror = null;
   E.ifrPlayer.src = "about:blank";
   E.ifrPlayer.style.display = "none";
 }
-function clrPlayer() { resetVid(); hideVidOv(); S.vidUrl = ""; S.epItem = null; S.attempt = 0; }
+
+function clrPlayer() {
+  resetVid();
+  hideVidOv();
+  S.vidUrl = "";
+  S.epItem = null;
+  S.attempt = 0;
+}
+
 function loadVid(raw) {
   S.vidUrl = raw;
   S.vidReady = false;
   resetVid();
   showVidOv("loading", "Carregando vídeo...", "Conectando");
+  E.openBrowserBtn.disabled = !raw;
+  E.openBrowserBtn.dataset.url = raw || "";
   E.vidPlayer.dataset.raw = raw;
   E.vidPlayer.src = proxyUrl(raw, Date.now());
   E.vidPlayer.load();
   startStall();
 }
-function loadIfr(url) { resetVid(); hideVidOv(); E.vidPlayer.style.display = "none"; E.ifrPlayer.style.display = "block"; E.ifrPlayer.src = url; S.vidReady = true; }
+
+function loadIfr(url) {
+  S.vidUrl = url;
+  S.vidReady = false;
+  resetVid();
+  showVidOv("loading", "Abrindo player incorporado...", "Preparando embed");
+  E.openBrowserBtn.disabled = !url;
+  E.openBrowserBtn.dataset.url = url || "";
+  E.vidPlayer.style.display = "none";
+  E.ifrPlayer.style.display = "block";
+  E.ifrPlayer.onload = () => {
+    S.vidReady = true;
+    clrStall();
+    hideVidOv();
+    S.attempt = 0;
+    E.pNote.textContent = "Player incorporado ativo.";
+  };
+  E.ifrPlayer.onerror = () => {
+    showFinalErr();
+  };
+  E.ifrPlayer.src = withBust(url);
+  startStall();
+}
+
 function isBloggerUrl(u) { return /blogger\.com\/video\.g/i.test(String(u || "")); }
-function isDirect(u) { const l = String(u || "").toLowerCase(); return l.includes(".m3u8") || l.includes(".mp4") || l.includes(".webm") || l.includes("videoplayback") || l.includes("googlevideo.com"); }
-function isIfrLike(u) { if (isBloggerUrl(u)) return false; return /youtube\.com\/embed|player|embed/i.test(String(u || "")); }
+function isDirect(u) {
+  const l = String(u || "").toLowerCase();
+  return l.includes(".m3u8") || l.includes(".mp4") || l.includes(".webm") || l.includes("videoplayback") || l.includes("googlevideo.com");
+}
+function isIfrLike(u) { return /blogger\.com\/video\.g|youtube\.com\/embed|player|embed|iframe/i.test(String(u || "")); }
 
 // ── Fullscreen ────────────────────────────────────────────────────────────────
 function enterCssFs() {
@@ -798,18 +858,17 @@ async function escalate() {
   clrStall();
   S.attempt++;
   const { animeId: aid, ep, qual: q } = S;
+
   if (S.attempt === 1) {
     const raw = S.vidUrl;
     if (!raw) { showFinalErr(); return; }
     toast("Reconectando...");
-    showVidOv("loading", "Reconectando...", `Tentativa ${S.attempt + 1}/${MAX_ATT}`);
-    resetVid();
-    E.vidPlayer.dataset.raw = raw;
-    E.vidPlayer.src = proxyUrl(raw, Date.now());
-    E.vidPlayer.load();
-    startStall();
+    showVidOv("loading", (isBloggerUrl(raw) || isIfrLike(raw)) && !isDirect(raw) ? "Reabrindo player incorporado..." : "Reconectando...", `Tentativa ${S.attempt + 1}/${MAX_ATT}`);
+    if ((isBloggerUrl(raw) || isIfrLike(raw)) && !isDirect(raw)) loadIfr(raw);
+    else loadVid(raw);
     return;
   }
+
   if (S.attempt === 2) {
     toast("Buscando link atualizado...");
     showVidOv("loading", "Atualizando link...", "Expirando");
@@ -817,14 +876,17 @@ async function escalate() {
       const d = await fetchEpTo(aid, ep, q, true);
       const u = pickVidUrl(d?.item);
       if (!u) throw new Error("no vid");
-      S.epItem = d.item; S.vidUrl = u;
-      if (isBloggerUrl(u)) { resetVid(); showBloggerOverlay(u); }
-      else if (isDirect(u)) { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); }
-      else if (isIfrLike(u)) { loadIfr(u); }
-      else { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); }
-    } catch { S.attempt++; await escalate(); }
+      S.epItem = d.item;
+      S.vidUrl = u;
+      if ((isBloggerUrl(u) || isIfrLike(u)) && !isDirect(u)) loadIfr(u);
+      else loadVid(u);
+    } catch {
+      S.attempt++;
+      await escalate();
+    }
     return;
   }
+
   if (S.attempt === 3) {
     const alt = oppQ(q);
     toast(`Tentando ${alt}...`);
@@ -833,17 +895,21 @@ async function escalate() {
       const d = await fetchEpTo(aid, ep, alt, true);
       const u = pickVidUrl(d?.item);
       if (!u) throw new Error("no vid");
-      S.qual = alt; S.epItem = d.item; S.vidUrl = u;
+      S.qual = alt;
+      S.epItem = d.item;
+      S.vidUrl = u;
       renderQBtns(d.item);
-      if (isBloggerUrl(u)) { resetVid(); showBloggerOverlay(u); }
-      else if (isDirect(u)) { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); }
-      else if (isIfrLike(u)) { loadIfr(u); }
-      else { resetVid(); E.vidPlayer.dataset.raw = u; E.vidPlayer.src = proxyUrl(u, Date.now()); E.vidPlayer.load(); startStall(); }
-    } catch { showFinalErr(); }
+      if ((isBloggerUrl(u) || isIfrLike(u)) && !isDirect(u)) loadIfr(u);
+      else loadVid(u);
+    } catch {
+      showFinalErr();
+    }
     return;
   }
+
   showFinalErr();
 }
+
 async function fetchEpTo(aid, ep, q, refresh = false) {
   const path = `/api/anime/${encodeURIComponent(aid)}/episode/${encodeURIComponent(ep)}?quality=${encodeURIComponent(q)}${refresh ? "&refresh=1" : ""}`;
   const ctrl = new AbortController();
@@ -854,19 +920,20 @@ async function fetchEpTo(aid, ep, q, refresh = false) {
     return await r.json();
   } finally { clearTimeout(t); }
 }
-function showFinalErr() { clrStall(); showVidOv("i:⚠️", "Vídeo indisponível", "Tente recarregar ou troque a qualidade"); E.pNote.textContent = "Não foi possível carregar. Recarregue ou troque a qualidade."; toast("Vídeo indisponível."); }
-function showBloggerOverlay(bloggerUrl) {
+
+function showFinalErr() {
   clrStall();
-  E.vidOvIcon.innerHTML = '<div class="ov-icon">🎬</div>';
-  E.vidOvText.textContent = "Player externo necessário";
-  E.vidOvSub.textContent = "Este episódio usa o Blogger — toque para abrir";
-  E.vidOv.classList.add("on");
+  showVidOv("i:⚠️", "Vídeo indisponível", "Tente recarregar ou troque a qualidade");
+  E.pNote.textContent = "Não foi possível carregar. Recarregue ou troque a qualidade.";
+  toast("Vídeo indisponível.");
+}
+
+function showBloggerOverlay(bloggerUrl) {
   if (bloggerUrl) {
-    E.openBrowserBtn.disabled = false;
-    E.openBrowserBtn.dataset.url = bloggerUrl;
-    E.pNote.textContent = "Use 'Abrir em nova guia' para assistir este episódio.";
+    loadIfr(bloggerUrl);
+    return;
   }
-  toast("Abra em nova guia para assistir.");
+  showFinalErr();
 }
 
 // ── Video events ──────────────────────────────────────────────────────────────
@@ -978,28 +1045,25 @@ function normSearch(data) {
   return { items: [], count: 0, page: 1, total_pages: 1 };
 }
 
-// pickVidUrl: prioriza URLs diretas (googlevideo, mp4, m3u8); nunca retorna
-// Blogger como preferida — Blogger vai para overlay separado.
+// pickVidUrl: prioriza URLs diretas e cai para embeds, incluindo Blogger.
 function pickVidUrl(item) {
   if (!item || typeof item !== "object") return "";
-  // 1. stream_url já resolvida pelo backend (googlevideo, mp4, m3u8)
-  if (item.stream_url && !isBloggerUrl(item.stream_url)) return String(item.stream_url).trim();
-  // 2. Diretos: googlevideo, mp4, m3u8 — excluindo Blogger
-  const directs = [item.video, item.url, item.src, item.stream]
-    .filter(Boolean).map(v => String(v).trim())
-    .filter(v => isDirect(v) && !isBloggerUrl(v));
-  if (directs.length) return directs[0];
-  // 3. Embeds válidos que NÃO são Blogger
-  const embeds = [item.video_iframe, item.iframe, item.iframe_url, item.embed, item.embed_url,
-    item.player, item.player_url, item.video, item.url, item.src]
-    .filter(Boolean).map(v => String(v).trim())
-    .filter(v => v && !isBloggerUrl(v));
-  if (embeds.length) return embeds[0];
-  // 4. Último recurso: URL do Blogger (tratada com overlay)
-  const blogger = [item.stream_url, item.video_iframe, item.iframe, item.video, item.url]
-    .filter(Boolean).map(v => String(v).trim())
-    .find(v => isBloggerUrl(v));
-  return blogger || "";
+
+  const directCandidates = [
+    item.stream_url, item.video_url, item.video, item.url, item.src,
+    item.stream, item.file, item.mp4, item.m3u8
+  ].filter(Boolean).map(v => String(v).trim()).filter(Boolean);
+
+  const preferredDirect = directCandidates.find(isDirect);
+  if (preferredDirect) return preferredDirect;
+
+  const embedCandidates = [
+    item.video_iframe, item.iframe, item.iframe_url, item.embed, item.embed_url,
+    item.player, item.player_url, item.stream_url, item.video, item.url, item.src
+  ].filter(Boolean).map(v => String(v).trim()).filter(Boolean);
+
+  const preferredEmbed = embedCandidates.find(v => isBloggerUrl(v) || isIfrLike(v));
+  return preferredEmbed || directCandidates[0] || embedCandidates[0] || "";
 }
 
 function getEpTotal(eps = []) {
@@ -1530,7 +1594,7 @@ async function openEp(aid, ep, qual = "HD", opts = {}) {
     E.pDesc.textContent = item.description || S.anime?.description || "";
     const vu = pickVidUrl(item);
     E.pNote.textContent = vu
-      ? (isBloggerUrl(vu) ? "Use 'Abrir em nova guia' para este episódio." : isIfrLike(vu) ? "Player incorporado ativo." : "Reconecta automaticamente.")
+      ? (((isBloggerUrl(vu) || isIfrLike(vu)) && !isDirect(vu)) ? "Player incorporado ativo." : "Reconecta automaticamente.")
       : "Esse episódio não retornou URL de vídeo.";
     renderQBtns(item);
     E.prevEpBtn.disabled = !item.prev_episode;
@@ -1540,13 +1604,7 @@ async function openEp(aid, ep, qual = "HD", opts = {}) {
     if (vu) {
       E.openBrowserBtn.disabled = false;
       E.openBrowserBtn.dataset.url = vu;
-      if (isBloggerUrl(vu)) {
-        // Blogger bloqueia iframe (X-Frame-Options: SAMEORIGIN) — overlay direto
-        resetVid();
-        showBloggerOverlay(vu);
-      } else if (isDirect(vu)) {
-        loadVid(vu);
-      } else if (isIfrLike(vu)) {
+      if ((isBloggerUrl(vu) || isIfrLike(vu)) && !isDirect(vu)) {
         loadIfr(vu);
       } else {
         loadVid(vu);
