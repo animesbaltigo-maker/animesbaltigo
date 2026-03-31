@@ -30,7 +30,7 @@ def _clean_anime_title(title: str) -> str:
 
 
 BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBZ987imm1UGdjCzV5n7FN2F6Ayew0umj2AAJkC2sbJAWhRWilm7WSjeD5AQADAgADeQADOgQ/photo.jpg"
-MINIAPP_URL = "https://jerusalem-editorials-screensavers-for.trycloudflare.com/miniapp/index.html"
+MINIAPP_URL = "https://alberta-utah-living-home.trycloudflare.com/miniapp/index.html"
 
 START_COOLDOWN = 1.2
 START_DEEP_LINK_TTL = 8.0
