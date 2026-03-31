@@ -37,7 +37,7 @@ RECOMMEND_CACHE_TTL = 60 * 5
 GLOBAL_FETCH_SEMAPHORE = asyncio.Semaphore(40)
 
 SEARCH_BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBaL-UMWnDPUdoNCaz4ZUFvzeOHSVXh0oRAALTC2sbdnEYRrjsVpeCeT08AQADAgADeQADOgQ/photo.jpg"
-MINIAPP_URL = "https://vienna-parental-wet-gender.trycloudflare.com/app"
+MINIAPP_URL = "https://rough-double-remarkable-north.trycloudflare.com/app"
 
 GENRE_PT_MAP = {
     "Action": "Ação",
