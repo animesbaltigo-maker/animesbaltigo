@@ -1,823 +1,1267 @@
-# webapp_api/app.py
-
-```python
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
+import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
+from decimal import Decimal, InvalidOperation
+from urllib.parse import urljoin
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+import httpx
+from bs4 import BeautifulSoup
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from config import BASE_DIR, DATA_DIR, HOME_SECTION_LIMIT, PREFERRED_CHAPTER_LANG
-from services.catalog_client import (
-    flatten_chapters,
-    get_chapter_reader_payload,
-    get_home_payload,
-    get_recent_chapters,
-    get_title_bundle,
-    get_title_search,
-    search_titles,
+from core.http_client import get_http_client
+from services.animefire_client import (
+    get_anime_details,
+    get_episode_player,
+    get_episodes,
+    invalidate_episode_caches,
+    search_anime,
 )
-from services.media_pipeline import resolve_telegraph_asset_path
-from services.metrics import get_last_read_entry, mark_chapter_read
+from services.recent_episodes_client import get_recent_episodes
 
+BASE_URL = "https://animefire.io"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Referer": BASE_URL,
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+}
+
+HOME_SECTION_LIMIT = 12
+GRID_PAGE_LIMIT = 24
+
+SECTION_TTL = 60 * 15
+RECENT_TTL = 60
+SEARCH_TTL = 60 * 10
+ANIME_TTL = 60 * 60 * 2
+HERO_TTL = 60 * 10
+PROGRESS_TTL = 60 * 60 * 24 * 30
+MAX_EPISODES_FETCH = 1200
+
+# Episode TTL is intentionally short because video links expire.
+# With ?refresh=1 the cache is bypassed entirely.
+EPISODE_TTL = 60 * 4
+
+# ── Proxy tunables ────────────────────────────────────────────────────────────
+PROXY_TIMEOUT = httpx.Timeout(connect=8.0, read=60.0, write=60.0, pool=10.0)
+PROXY_MAX_RETRIES = 3
+PROXY_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks for fast streaming
+PROXY_KEEPALIVE_EXPIRY = 30     # seconds to keep idle connections alive
+PROXY_MAX_CONNECTIONS = 100
+PROXY_MAX_KEEPALIVE = 20
+
+SECTIONS: dict[str, dict[str, str]] = {
+    "recentes": {"title": "Últimos Episódios", "kind": "recent"},
+    "em_lancamento": {"title": "Em lançamento", "slug": "em-lancamento"},
+    "atualizados": {"title": "Atualizados", "slug": "animes-atualizados"},
+    "top": {"title": "Top Animes", "slug": "top-animes"},
+    "legendados": {"title": "Legendados", "slug": "lista-de-animes-legendados"},
+    "dublados": {"title": "Dublados", "slug": "lista-de-animes-dublados"},
+    "acao": {"title": "Ação", "slug": "genero/acao"},
+    "aventura": {"title": "Aventura", "slug": "genero/aventura"},
+    "comedia": {"title": "Comédia", "slug": "genero/comedia"},
+    "drama": {"title": "Drama", "slug": "genero/drama"},
+    "fantasia": {"title": "Fantasia", "slug": "genero/fantasia"},
+    "romance": {"title": "Romance", "slug": "genero/romance"},
+    "sobrenatural": {"title": "Sobrenatural", "slug": "genero/sobrenatural"},
+    "suspense": {"title": "Suspense", "slug": "genero/suspense"},
+}
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 MINIAPP_DIR = BASE_DIR / "miniapp"
-PROGRESS_PATH = Path(DATA_DIR) / "miniapp_progress.json"
 
 app = FastAPI(
-    title="Mangas Baltigo API",
-    description="API otimizada do miniapp de mangás",
-    version="2.0.0",
+    title="QG BALTIGO API",
+    description="API do miniapp do bot com catálogo, episódios e proxy de vídeo",
+    version="4.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
 )
+
+_CACHE: dict[str, dict[str, Any]] = {}
+_LOCKS: dict[str, asyncio.Lock] = {}
+_PROGRESS: dict[str, dict[str, Any]] = {}
+_EVENT_STATE: dict[str, Any] = {"seq": 0, "last": {"type": "boot", "scope": "all", "ts": int(time.time())}}
+
+# ── Global persistent proxy client ───────────────────────────────────────────
+# One client for the entire process lifetime; uses connection pooling and
+# keep-alive so every proxy request re-uses an already-open TCP connection
+# instead of paying the full TLS handshake cost every time.
+_PROXY_CLIENT: httpx.AsyncClient | None = None
+
+
+def _get_proxy_limits() -> httpx.Limits:
+    return httpx.Limits(
+        max_connections=PROXY_MAX_CONNECTIONS,
+        max_keepalive_connections=PROXY_MAX_KEEPALIVE,
+        keepalive_expiry=PROXY_KEEPALIVE_EXPIRY,
+    )
 
 
 class ProgressPayload(BaseModel):
-    user_id: str = Field(min_length=1)
-    title_id: str = Field(min_length=1)
-    title_name: str = ""
-    chapter_id: str = Field(min_length=1)
-    chapter_number: str = ""
-    chapter_url: str = ""
-    page_index: int = 0
-    total_pages: int = 0
+    user_id: str
+    anime_id: str
+    episode: str
+    watched_seconds: int = 0
+    duration_seconds: int = 0
+    title: str = ""
+    cover_url: str = ""
+    completed: bool = False
 
 
-_CACHE: dict[str, dict[str, Any]] = {}
-_CACHE_LOCK = asyncio.Lock()
-_RECENT_TTL = 20
-_HOME_TTL = 25
-_TITLE_TTL = 90
-_CHAPTER_TTL = 90
-_SECTIONS_TTL = 25
-_SEARCH_TTL = 20
+async def get_proxy_client() -> httpx.AsyncClient:
+    global _PROXY_CLIENT
+    if _PROXY_CLIENT is None or _PROXY_CLIENT.is_closed:
+        _PROXY_CLIENT = httpx.AsyncClient(
+            timeout=PROXY_TIMEOUT,
+            follow_redirects=True,
+            limits=_get_proxy_limits(),
+            http2=False,  # many CDNs behave better with HTTP/1.1
+        )
+    return _PROXY_CLIENT
 
 
-def _now() -> float:
-    return time.time()
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+def _clean(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip()
 
 
-def _cache_key(namespace: str, **kwargs: Any) -> str:
-    raw = json.dumps({"ns": namespace, **kwargs}, ensure_ascii=False, sort_keys=True, default=str)
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+def _normalize_text(value: str) -> str:
+    value = unicodedata.normalize("NFKD", _clean(value).lower())
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = re.sub(r"[^a-z0-9\s-]", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
 
 
-async def _cache_get(namespace: str, ttl: int, **kwargs: Any) -> Any | None:
-    key = _cache_key(namespace, **kwargs)
-    async with _CACHE_LOCK:
-        entry = _CACHE.get(key)
-        if not entry:
-            return None
-        if entry["expires_at"] < _now():
-            _CACHE.pop(key, None)
-            return None
-        return entry["value"]
+def _tokenize(value: str) -> list[str]:
+    return [token for token in _normalize_text(value).split(" ") if token]
 
 
-async def _cache_set(namespace: str, value: Any, ttl: int, **kwargs: Any) -> Any:
-    key = _cache_key(namespace, **kwargs)
-    async with _CACHE_LOCK:
-        _CACHE[key] = {
-            "value": value,
-            "expires_at": _now() + ttl,
-        }
-    return value
-
-
-async def _cached(namespace: str, ttl: int, producer, **kwargs: Any) -> Any:
-    cached = await _cache_get(namespace, ttl, **kwargs)
-    if cached is not None:
-        return cached
-    value = await producer()
-    return await _cache_set(namespace, value, ttl, **kwargs)
-
-
-async def _stale_while_revalidate(namespace: str, ttl: int, stale_ttl: int, producer, **kwargs: Any) -> Any:
-    key = _cache_key(namespace, **kwargs)
-    async with _CACHE_LOCK:
-        entry = _CACHE.get(key)
-        if entry and entry["soft_expires_at"] >= _now():
-            return entry["value"]
-        if entry and entry["hard_expires_at"] >= _now():
-            if not entry.get("refreshing"):
-                entry["refreshing"] = True
-                asyncio.create_task(_refresh_cache_entry(key, producer, ttl, stale_ttl))
-            return entry["value"]
-
-    value = await producer()
-    async with _CACHE_LOCK:
-        _CACHE[key] = {
-            "value": value,
-            "soft_expires_at": _now() + ttl,
-            "hard_expires_at": _now() + stale_ttl,
-            "refreshing": False,
-        }
-    return value
-
-
-async def _refresh_cache_entry(key: str, producer, ttl: int, stale_ttl: int) -> None:
-    try:
-        value = await producer()
-        async with _CACHE_LOCK:
-            _CACHE[key] = {
-                "value": value,
-                "soft_expires_at": _now() + ttl,
-                "hard_expires_at": _now() + stale_ttl,
-                "refreshing": False,
-            }
-    except Exception:
-        async with _CACHE_LOCK:
-            if key in _CACHE:
-                _CACHE[key]["refreshing"] = False
-
-
-async def _invalidate_prefix(namespace: str) -> None:
-    async with _CACHE_LOCK:
-        for key in list(_CACHE.keys()):
-            # chave sha1 nao permite prefixo real; limpamos tudo que for cache do app
-            _CACHE.pop(key, None)
-
-
-def _load_progress() -> dict[str, dict[str, Any]]:
-    if not PROGRESS_PATH.exists():
-        return {}
-    try:
-        return json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_progress(data: dict[str, dict[str, Any]]) -> None:
-    PROGRESS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROGRESS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _progress_key(user_id: str, title_id: str) -> str:
-    return f"{user_id}:{title_id}"
-
-
-def _public_last_read(entry: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not entry:
-        return None
-    return {
-        "title_id": entry.get("title_id") or "",
-        "title_name": entry.get("title_name") or "",
-        "chapter_id": entry.get("chapter_id") or "",
-        "chapter_number": entry.get("chapter_number") or "",
-        "updated_at": entry.get("updated_at") or "",
-        "page_index": int(entry.get("page_index") or 0),
-        "total_pages": int(entry.get("total_pages") or 0),
-    }
-
-
-def _public_chapter(item: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not item:
-        return None
-    return {
-        "chapter_id": item.get("chapter_id") or "",
-        "chapter_number": item.get("chapter_number") or "",
-        "chapter_language": item.get("chapter_language") or "",
-        "chapter_volume": item.get("chapter_volume") or "",
-        "group_name": item.get("group_name") or "",
-        "updated_at": item.get("updated_at") or "",
-    }
-
-
-def _has_real_chapter(item: dict[str, Any]) -> bool:
-    return bool((item.get("chapter_id") or "").strip())
-
-
-def _public_title_item(item: dict[str, Any]) -> dict[str, Any]:
-    latest_value = item.get("latest_chapter")
-    if isinstance(latest_value, dict):
-        latest_value = latest_value.get("chapter_number") or latest_value.get("chapter_id") or ""
-
-    return {
-        "title_id": item.get("title_id") or "",
-        "chapter_id": item.get("chapter_id") or "",
-        "title": item.get("display_title") or item.get("title") or "",
-        "cover_url": item.get("cover_url") or "",
-        "background_url": item.get("background_url") or item.get("cover_url") or "",
-        "status": item.get("status") or "",
-        "rating": item.get("rating") or "",
-        "updated_at": item.get("updated_at") or "",
-        "latest_chapter": latest_value or "",
-        "chapter_number": item.get("chapter_number") or latest_value or "",
-        "adult": bool(item.get("adult")),
-    }
-
-
-def _sorted_filtered_chapters(bundle: dict[str, Any], lang: str) -> list[dict[str, Any]]:
-    chapters = flatten_chapters({"chapters": bundle.get("chapters") or []}, lang)
-    clean = [c for c in chapters if _has_real_chapter(c)]
-
-    def chapter_sort(item: dict[str, Any]) -> tuple[float, str]:
-        raw = str(item.get("chapter_number") or "").strip()
-        try:
-            return (float(raw), item.get("updated_at") or "")
-        except Exception:
-            return (-1.0, item.get("updated_at") or "")
-
-    clean.sort(key=chapter_sort, reverse=True)
-    return clean
-
-
-def _public_title_bundle(bundle: dict[str, Any], lang: str) -> dict[str, Any]:
-    chapters = _sorted_filtered_chapters(bundle, lang)
-    latest = next((item for item in chapters if item.get("chapter_id")), None)
-
-    return {
-        "title_id": bundle.get("title_id") or "",
-        "title": bundle.get("display_title") or bundle.get("title") or "",
-        "preferred_title": bundle.get("preferred_title") or "",
-        "alt_titles": bundle.get("alt_titles") or [],
-        "description": bundle.get("description") or bundle.get("anilist_description") or "",
-        "cover_url": bundle.get("cover_url") or "",
-        "background_url": bundle.get("background_url") or bundle.get("cover_url") or "",
-        "banner_url": bundle.get("banner_url") or bundle.get("background_url") or bundle.get("cover_url") or "",
-        "cover_color": bundle.get("cover_color") or "",
-        "status": bundle.get("status") or bundle.get("anilist_status") or "",
-        "rating": bundle.get("rating") or "",
-        "genres": bundle.get("genres") or [],
-        "authors": bundle.get("authors") or [],
-        "published": bundle.get("published") or "",
-        "languages": bundle.get("languages") or [],
-        "total_chapters": len(chapters),
-        "anilist_url": bundle.get("anilist_url") or "",
-        "anilist_score": bundle.get("anilist_score") or 0,
-        "anilist_format": bundle.get("anilist_format") or "",
-        "anilist_status": bundle.get("anilist_status") or "",
-        "anilist_chapters": bundle.get("anilist_chapters") or 0,
-        "anilist_volumes": bundle.get("anilist_volumes") or 0,
-        "adult": bool(bundle.get("adult")),
-        "chapters": [_public_chapter(item) for item in chapters],
-        "latest_chapter": _public_chapter(latest or bundle.get("latest_chapter")),
-    }
-
-
-def _public_reader_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    images = [img for img in (payload.get("images") or []) if str(img or "").strip()]
-    return {
-        "title_id": payload.get("title_id") or "",
-        "title": payload.get("title") or "",
-        "chapter_id": payload.get("chapter_id") or "",
-        "chapter_number": payload.get("chapter_number") or "",
-        "chapter_language": payload.get("chapter_language") or "",
-        "chapter_volume": payload.get("chapter_volume") or "",
-        "cover_url": payload.get("cover_url") or "",
-        "image_count": len(images),
-        "images": images,
-        "total_chapters": payload.get("total_chapters") or 0,
-        "previous_chapter": _public_chapter(payload.get("previous_chapter")),
-        "next_chapter": _public_chapter(payload.get("next_chapter")),
-    }
-
-
-def _normalize_query(text: str) -> str:
-    import unicodedata
-    import re
-
-    text = unicodedata.normalize("NFKD", (text or "").strip().lower())
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _search_score(query: str, item: dict[str, Any]) -> tuple[int, int, int]:
-    q = _normalize_query(query)
-    title = _normalize_query(item.get("title") or item.get("preferred_title") or item.get("display_title") or "")
-    tags = [_normalize_query(tag) for tag in (item.get("genres") or [])]
+def _score_text_match(query: str, *values: str) -> int:
+    q = _normalize_text(query)
     if not q:
-        return (0, 0, 0)
-    if title == q:
-        return (500, 0, -len(title))
-    if title.startswith(q):
-        return (400, 0, -len(title))
-    if q in title:
-        return (300, 0, -len(title))
-    if any(q in tag for tag in tags):
-        return (220, 0, -len(title))
-    overlap = len(set(q.split()) & set(title.split()))
-    return (100 + overlap * 10, 0, -len(title))
+        return 0
+    score = 0
+    q_tokens = _tokenize(q)
+    for raw in values:
+        value = _normalize_text(raw)
+        if not value:
+            continue
+        if value == q:
+            score = max(score, 200)
+        elif value.startswith(q):
+            score = max(score, 170)
+        elif q in value:
+            score = max(score, 140)
+        token_hits = sum(1 for token in q_tokens if token and token in value)
+        score = max(score, min(120, token_hits * 25))
+    return score
 
 
-async def _search_with_suggestions(query: str, limit: int) -> dict[str, Any]:
-    raw_results = await _cached(
-        "search",
-        _SEARCH_TTL,
-        lambda: search_titles(query, limit=max(20, limit * 3)),
-        query=query,
-        limit=max(20, limit * 3),
+def _suggestions(query: str, values: list[str], limit: int = 5) -> list[str]:
+    import difflib
+    q = _normalize_text(query)
+    pairs = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = _clean(value)
+        if not cleaned:
+            continue
+        norm = _normalize_text(cleaned)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        ratio = difflib.SequenceMatcher(None, q, norm).ratio()
+        if q and q in norm:
+            ratio += 0.25
+        pairs.append((ratio, cleaned))
+    pairs.sort(key=lambda item: (-item[0], item[1].lower()))
+    return [value for ratio, value in pairs if ratio >= 0.35][:limit]
+
+
+def _emit_event(kind: str, scope: str = "all") -> None:
+    _EVENT_STATE["seq"] += 1
+    _EVENT_STATE["last"] = {
+        "id": _EVENT_STATE["seq"],
+        "type": kind,
+        "scope": scope,
+        "ts": int(time.time()),
+    }
+
+
+def _clean_description(text: str) -> str:
+    text = text or ""
+    junk_patterns = [
+        r"Oie.*?Clique Aqui",
+        r"Reportar Erro:.*",
+        r"Publicado Dia:.*",
+        r"Dê o máximo de detalhes.*",
+        r"se o vídeo não carregar.*",
+        r"quer ser notificado sempre que um episódio novo for lançado\?.*",
+        r"Clique aqui.*",
+        r"assista também.*",
+        r"veja também.*",
+    ]
+    for pattern in junk_patterns:
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
+    return _clean(text)
+
+
+def _clean_genres(genres: list[str] | None) -> list[str]:
+    if not genres:
+        return []
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    skip_prefixes = ("animes de ", "oie", "clique")
+    for genre in genres:
+        g = _clean(str(genre))
+        if not g:
+            continue
+        gl = g.lower()
+        if any(gl.startswith(prefix) for prefix in skip_prefixes):
+            continue
+        if g not in seen:
+            seen.add(g)
+            cleaned.append(g)
+    return cleaned
+
+
+def _clean_alt_titles(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        v = _clean_description(str(value))
+        if not v or len(v) > 120:
+            continue
+        if v not in seen:
+            seen.add(v)
+            cleaned.append(v)
+    return cleaned
+
+
+def _is_dubbed(anime_id: str, title: str) -> bool:
+    value_id = (anime_id or "").lower()
+    value_title = (title or "").lower()
+    return (
+        "dublado" in value_id
+        or "dublado" in value_title
+        or "(dub)" in value_title
     )
 
-    candidates = []
-    for item in raw_results:
-        if not item.get("title_id"):
+
+def _section_conf(section: str) -> dict[str, str] | None:
+    return SECTIONS.get((section or "").strip().lower())
+
+
+def _section_url(slug: str, page: int) -> str:
+    if page <= 1:
+        return f"{BASE_URL}/{slug}"
+    return f"{BASE_URL}/{slug}/{page}"
+
+
+def _cache_get(key: str, ttl: int) -> Any | None:
+    item = _CACHE.get(key)
+    if not item:
+        return None
+    if time.time() - item["ts"] > ttl:
+        _CACHE.pop(key, None)
+        return None
+    return item["data"]
+
+
+def _cache_set(key: str, data: Any) -> Any:
+    _CACHE[key] = {"ts": time.time(), "data": data}
+    return data
+
+
+async def _cached(key: str, ttl: int, factory) -> Any:
+    cached = _cache_get(key, ttl)
+    if cached is not None:
+        return cached
+
+    lock = _LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        cached = _cache_get(key, ttl)
+        if cached is not None:
+            return cached
+        data = await factory()
+        return _cache_set(key, data)
+
+
+def _invalidate_key(key: str) -> None:
+    _CACHE.pop(key, None)
+
+
+def _invalidate_prefix(prefix: str) -> None:
+    for key in list(_CACHE.keys()):
+        if key.startswith(prefix):
+            _CACHE.pop(key, None)
+
+
+async def _get(url: str) -> str:
+    client = await get_http_client()
+    response = await client.get(url, headers=HEADERS)
+    response.raise_for_status()
+    return response.text
+
+
+def _extract_slug_from_href(href: str) -> str:
+    href = (href or "").strip()
+    match = re.search(r"/animes/([^/?#]+?)(?:/)?(?:\?.*)?$", href)
+    return match.group(1).strip() if match else ""
+
+
+def _extract_last_page(page_html: str, slug: str) -> int:
+    soup = BeautifulSoup(page_html, "html.parser")
+    max_page = 1
+    for anchor in soup.select("a[href]"):
+        href = (anchor.get("href") or "").strip()
+        pattern = rf"/{re.escape(slug)}/(\d+)(?:/)?(?:\?.*)?$"
+        match = re.search(pattern, href)
+        if match:
+            max_page = max(max_page, int(match.group(1)))
+    return max_page
+
+
+def _extract_listing_cards(page_html: str) -> list[dict]:
+    soup = BeautifulSoup(page_html, "html.parser")
+    found: dict[str, dict] = {}
+    for anchor in soup.select("a[href*='/animes/']"):
+        href = (anchor.get("href") or "").strip()
+        anime_id = _extract_slug_from_href(href)
+        if not anime_id:
             continue
-        candidates.append(item)
 
-    ranked = sorted(candidates, key=lambda item: _search_score(query, item), reverse=True)
-    ranked = ranked[:limit]
+        title = ""
+        title_el = anchor.select_one(".animeTitle")
+        if title_el:
+            title = _clean(title_el.get_text(" ", strip=True))
 
-    if ranked:
-        return {
-            "query": query,
-            "results": [_public_title_item(item) for item in ranked],
-            "suggestions": [],
+        img = anchor.find("img")
+        cover = ""
+        if img:
+            cover = img.get("data-src") or img.get("src") or ""
+            title = title or _clean(img.get("alt") or "")
+
+        title = title or anime_id.replace("-", " ").title()
+        dubbed = _is_dubbed(anime_id, title)
+
+        found[anime_id] = {
+            "id": anime_id,
+            "title": title,
+            "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+            "prefix": "DUB" if dubbed else "LEG",
+            "is_dubbed": dubbed,
+            "cover_url": cover,
+            "banner_url": cover,
+            "description": "",
+            "genres": [],
+            "score": None,
+            "status": "",
+            "episodes": None,
+            "year": None,
+            "studio": "",
+            "url": urljoin(BASE_URL, href),
         }
+    return list(found.values())
 
-    home = await _home_payload(limit=max(10, limit))
-    pool = []
-    for key in ("featured", "popular", "recent_titles", "latest_titles"):
-        pool.extend(home.get(key) or [])
 
-    seen: set[str] = set()
-    dedup_pool = []
-    for item in pool:
-        title_id = item.get("title_id") or ""
-        if not title_id or title_id in seen:
-            continue
-        seen.add(title_id)
-        dedup_pool.append(item)
-
-    suggestions = sorted(dedup_pool, key=lambda item: _search_score(query, item), reverse=True)[:6]
+def _shape_details(data: dict, fallback_id: str = "") -> dict:
+    anime_id = data.get("id") or fallback_id
+    title = data.get("title") or anime_id.replace("-", " ").title()
+    dubbed = bool(data.get("is_dubbed")) or _is_dubbed(anime_id, title)
     return {
-        "query": query,
-        "results": [],
-        "suggestions": [_public_title_item(item) for item in suggestions if item.get("title_id")],
+        "id": anime_id,
+        "title": title,
+        "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+        "prefix": "DUB" if dubbed else "LEG",
+        "is_dubbed": dubbed,
+        "cover_url": (
+            data.get("cover_url")
+            or data.get("media_image_url")
+            or data.get("banner_url")
+            or ""
+        ),
+        "banner_url": (
+            data.get("banner_url")
+            or data.get("cover_url")
+            or data.get("media_image_url")
+            or ""
+        ),
+        "description": _clean_description(data.get("description") or ""),
+        "genres": _clean_genres(data.get("genres") or []),
+        "score": data.get("score"),
+        "status": data.get("status") or "",
+        "episodes": data.get("episodes"),
+        "year": data.get("season_year"),
+        "studio": _clean(data.get("studio") or ""),
+        "alt_titles": _clean_alt_titles(data.get("alt_titles") or []),
     }
 
 
-async def _home_payload(limit: int) -> dict[str, Any]:
-    async def producer() -> dict[str, Any]:
-        payload, recent_chapters = await asyncio.gather(
-            get_home_payload(limit=limit),
-            get_recent_chapters(limit=min(limit * 2, 24)),
+def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict) -> dict:
+    video = item.get("video") or ""
+    videos = item.get("videos") or {}
+    available_qualities = item.get("available_qualities") or []
+
+    if not available_qualities and isinstance(videos, dict):
+        available_qualities = list(videos.keys())
+
+    if not video and isinstance(videos, dict):
+        normalized_quality = (quality or "HD").upper()
+        video = (
+            videos.get(normalized_quality)
+            or videos.get("HD")
+            or videos.get("SD")
+            or ""
         )
 
-        featured = [_public_title_item(item) for item in (payload.get("featured") or []) if _has_real_chapter(item)]
-        popular = [_public_title_item(item) for item in (payload.get("popular") or []) if _has_real_chapter(item)]
-        recent_titles = [_public_title_item(item) for item in (payload.get("recent_titles") or []) if _has_real_chapter(item)]
-        latest_titles = [_public_title_item(item) for item in (payload.get("latest_titles") or []) if _has_real_chapter(item)]
+    return {
+        "anime_id": anime_id,
+        "episode": episode,
+        "video": video,
+        "videos": videos,
+        "quality": item.get("quality") or quality.upper(),
+        "available_qualities": available_qualities,
+        "title": item.get("title") or "",
+        "description": _clean_description(item.get("description") or ""),
+        "thumb": item.get("thumb") or item.get("image") or "",
+        "is_dubbed": bool(item.get("is_dubbed")),
+        "prev_episode": item.get("prev_episode"),
+        "next_episode": item.get("next_episode"),
+        "total_episodes": item.get("total_episodes"),
+    }
 
-        public_recent_chapters = []
-        seen_chapters: set[str] = set()
-        for item in recent_chapters:
-            chapter_id = item.get("chapter_id") or ""
-            if not chapter_id or chapter_id in seen_chapters:
+
+def _parse_episode_number(value: str | int | float | None) -> Decimal | None:
+    raw = str(value or "").strip().replace(",", ".")
+    match = re.search(r"\d+(?:\.\d+)?", raw)
+    if not match:
+        return None
+    try:
+        return Decimal(match.group(0))
+    except InvalidOperation:
+        return None
+
+
+def _episode_score(item: dict[str, Any]) -> int:
+    score = 0
+    if item.get("title"):
+        score += 2
+    if item.get("description"):
+        score += 1
+    if item.get("thumb") or item.get("image"):
+        score += 1
+    if item.get("video"):
+        score += 3
+    return score
+
+
+def _normalize_episode_item(ep: dict[str, Any]) -> dict[str, Any]:
+    value = dict(ep or {})
+    number = value.get("number") or value.get("episode") or value.get("ep") or value.get("slug") or ""
+    parsed = _parse_episode_number(number)
+    value["number"] = str(number).strip()
+    value["_sort_number"] = parsed if parsed is not None else Decimal("999999")
+    value["_sort_title"] = _clean(str(value.get("title") or value.get("number") or ""))
+    value["_score"] = _episode_score(value)
+    return value
+
+
+def _normalize_episodes(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if not items:
+        return []
+
+    dedup: dict[str, dict[str, Any]] = {}
+    for raw in items:
+        item = _normalize_episode_item(raw)
+        number = item.get("number") or item.get("_sort_title") or "sem-numero"
+        key = f"{number}|{item.get('url') or item.get('slug') or item.get('_sort_title')}"
+        previous = dedup.get(key)
+        if previous is None or item.get("_score", 0) >= previous.get("_score", 0):
+            dedup[key] = item
+
+    ordered = sorted(dedup.values(), key=lambda x: (x.get("_sort_number", Decimal("999999")), x.get("_sort_title", "")))
+    cleaned: list[dict[str, Any]] = []
+    total = len(ordered)
+    for index, item in enumerate(ordered):
+        item.pop("_score", None)
+        item.pop("_sort_title", None)
+        item.pop("_sort_number", None)
+        item["prev_episode"] = ordered[index - 1]["number"] if index > 0 else None
+        item["next_episode"] = ordered[index + 1]["number"] if index < total - 1 else None
+        item["total_episodes"] = total
+        cleaned.append(item)
+    return cleaned
+
+
+def _has_minimum_catalog_fields(item: dict[str, Any]) -> bool:
+    return bool(item.get("id") and item.get("title") and (item.get("cover_url") or item.get("banner_url")))
+
+
+def _truncate_description(text: str, size: int = 220) -> str:
+    value = _clean_description(text)
+    if len(value) <= size:
+        return value
+    return value[:size].rstrip() + "..."
+
+
+async def _has_episodes(anime_id: str) -> bool:
+    if not anime_id:
+        return False
+    async def factory():
+        try:
+            payload = await get_episodes(anime_id, 0, 2)
+            items = _normalize_episodes(payload.get("all_items") or payload.get("items") or [])
+            return bool(items)
+        except Exception:
+            return False
+    return await _cached(f"haseps:{anime_id}", 300, factory)
+
+
+async def _filter_items_with_episodes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not items:
+        return []
+    checks = await asyncio.gather(*[_has_episodes(item.get("id") or item.get("anime_id") or "") for item in items], return_exceptions=True)
+    filtered = []
+    for item, ok in zip(items, checks):
+        if ok is True:
+            filtered.append(item)
+    return filtered
+
+
+async def _enrich_search_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    anime_id = item.get("id") or ""
+    if not anime_id:
+        return None
+    try:
+        details = await get_anime_details(anime_id)
+    except Exception:
+        details = None
+    shaped = _shape_details(details or item, anime_id)
+    if not await _has_episodes(anime_id):
+        return None
+    return shaped
+
+
+async def _build_search_candidates() -> list[dict[str, Any]]:
+    section_ids: set[str] = set()
+    seed_items: list[dict[str, Any]] = []
+    for section in ("em_lancamento", "top", "dublados", "legendados", "acao", "aventura", "fantasia", "romance"):
+        try:
+            page = await _get_paginated_section_page(section, 1)
+        except Exception:
+            continue
+        for item in page.get("items") or []:
+            anime_id = item.get("id") or ""
+            if anime_id and anime_id not in section_ids:
+                section_ids.add(anime_id)
+                seed_items.append(item)
+    return seed_items
+
+
+async def _build_featured_payload() -> dict[str, Any] | None:
+    async def factory():
+        candidates = []
+        for section in ("em_lancamento", "top", "recentes"):
+            try:
+                page = await _get_paginated_section_page(section, 1)
+                candidates.extend(page.get("items") or [])
+            except Exception:
                 continue
-            seen_chapters.add(chapter_id)
-            public_recent_chapters.append(_public_title_item(item))
 
-        latest_titles.sort(key=lambda item: (item.get("updated_at") or "", item.get("latest_chapter") or ""), reverse=True)
-        public_recent_chapters.sort(key=lambda item: (item.get("updated_at") or "", item.get("chapter_number") or item.get("latest_chapter") or ""), reverse=True)
+        seen: set[str] = set()
+        for candidate in candidates:
+            anime_id = candidate.get("id")
+            if not anime_id or anime_id in seen:
+                continue
+            seen.add(anime_id)
+            try:
+                details = await get_anime_details(anime_id)
+                if not details:
+                    continue
+                shaped = _shape_details(details, anime_id)
+                episodes_payload = await get_episodes(anime_id, 0, 60)
+                episodes = _normalize_episodes(episodes_payload.get("all_items") or episodes_payload.get("items") or [])
+                if not episodes:
+                    continue
+                return {
+                    **shaped,
+                    "description_short": _truncate_description(shaped.get("description") or candidate.get("description") or ""),
+                    "first_episode": episodes[0].get("number") or "1",
+                }
+            except Exception:
+                continue
+        return None
+
+    return await _cached("home:featured", HERO_TTL, factory)
+
+
+# =============================================================================
+# PAGINATION / CATALOG
+# =============================================================================
+
+async def _get_recent_page(page: int) -> dict:
+    async def factory():
+        recent = await get_recent_episodes(limit=200)
+        items = []
+
+        for item in recent:
+            anime_id = item.get("anime_id")
+            episode = str(item.get("episode") or "").strip()
+            if not anime_id or not episode:
+                continue
+
+            title = item.get("title") or anime_id.replace("-", " ").title()
+            dubbed = _is_dubbed(anime_id, title)
+            cover = (
+                item.get("thumb")
+                or item.get("image")
+                or item.get("cover")
+                or item.get("cover_url")
+                or ""
+            )
+
+            if not cover:
+                try:
+                    details = await get_anime_details(anime_id)
+                    cover = (
+                        details.get("cover_url")
+                        or details.get("media_image_url")
+                        or details.get("banner_url")
+                        or ""
+                    )
+                except Exception:
+                    cover = ""
+
+            items.append({
+                "id": f"{anime_id}__ep__{episode}",
+                "anime_id": anime_id,
+                "title": title,
+                "display_title": f"[{'DUB' if dubbed else 'LEG'}] {title}",
+                "prefix": "DUB" if dubbed else "LEG",
+                "is_dubbed": dubbed,
+                "cover_url": cover,
+                "banner_url": cover,
+                "episode": episode,
+                "description": "",
+                "genres": [],
+                "score": None,
+                "status": "",
+                "episodes": None,
+                "year": None,
+                "studio": "",
+                "open_mode": "episode",
+            })
+
+        total = len(items)
+        total_pages = max(1, (total + GRID_PAGE_LIMIT - 1) // GRID_PAGE_LIMIT) if total else 1
+        current_page = min(max(1, page), total_pages)
+        start = (current_page - 1) * GRID_PAGE_LIMIT
+        end = start + GRID_PAGE_LIMIT
 
         return {
-            "featured": featured[:limit],
-            "popular": popular[:limit],
-            "recent_titles": recent_titles[:limit],
-            "latest_titles": latest_titles[:limit],
-            "recent_chapters": public_recent_chapters[: max(limit, 12)],
+            "section": "recentes",
+            "title": _section_conf("recentes")["title"],
+            "page": current_page,
+            "limit": GRID_PAGE_LIMIT,
+            "total_items": total,
+            "total_pages": total_pages,
+            "has_next": current_page < total_pages,
+            "has_prev": current_page > 1,
+            "items": items[start:end],
         }
 
-    return await _stale_while_revalidate("home", _HOME_TTL, _HOME_TTL * 3, producer, limit=limit)
+    return await _cached(f"recentes:{page}", RECENT_TTL, factory)
 
 
-async def _title_payload(title_id: str, lang: str, user_id: str = "") -> dict[str, Any]:
-    async def producer() -> dict[str, Any]:
-        bundle = await get_title_bundle(title_id, lang)
-        public_bundle = _public_title_bundle(bundle, lang)
-        if user_id:
-            public_bundle["last_read"] = _public_last_read(get_last_read_entry(user_id, public_bundle["title_id"]))
-        return public_bundle
+async def _get_paginated_section_page(section: str, page: int) -> dict:
+    conf = _section_conf(section)
+    if not conf:
+        return {
+            "section": section,
+            "title": section.replace("_", " ").title(),
+            "page": page,
+            "limit": GRID_PAGE_LIMIT,
+            "total_items": 0,
+            "total_pages": 0,
+            "has_next": False,
+            "has_prev": page > 1,
+            "items": [],
+        }
 
-    return await _cached("title", _TITLE_TTL, producer, title_id=title_id, lang=lang, user_id=user_id)
+    if conf.get("kind") == "recent":
+        return await _get_recent_page(page)
+
+    slug = conf["slug"]
+
+    async def meta_factory():
+        first_html = await _get(_section_url(slug, 1))
+        total_pages = _extract_last_page(first_html, slug)
+        return {"first_html": first_html, "total_pages": total_pages}
+
+    meta = await _cached(f"meta:{section}", SECTION_TTL, meta_factory)
+    total_pages = max(1, int(meta["total_pages"]))
+    current_page = min(max(1, page), total_pages)
+
+    async def page_factory():
+        if current_page == 1:
+            page_html = meta["first_html"]
+        else:
+            page_html = await _get(_section_url(slug, current_page))
+
+        raw_items = _extract_listing_cards(page_html)
+        items = await _filter_items_with_episodes(raw_items)
+
+        if section == "em_lancamento":
+            enriched = []
+            for item in items:
+                anime_id = item.get("id") or ""
+                latest = 0
+                try:
+                    payload = await get_episodes(anime_id, 0, MAX_EPISODES_FETCH)
+                    episodes = _normalize_episodes(payload.get("all_items") or payload.get("items") or [])
+                    if episodes:
+                        latest = int(_parse_episode_number(episodes[-1].get("number")) or 0)
+                        item["episodes"] = len(episodes)
+                        item["latest_episode"] = latest
+                except Exception:
+                    item["latest_episode"] = latest
+                enriched.append(item)
+            items = sorted(enriched, key=lambda x: (-(x.get("latest_episode") or 0), x.get("title") or ""))
+
+        return {
+            "section": section,
+            "title": conf["title"],
+            "page": current_page,
+            "limit": GRID_PAGE_LIMIT,
+            "total_items": len(items) if current_page == 1 else total_pages * GRID_PAGE_LIMIT,
+            "total_pages": total_pages,
+            "has_next": current_page < total_pages,
+            "has_prev": current_page > 1,
+            "items": items[:GRID_PAGE_LIMIT],
+        }
+
+    return await _cached(f"page:{section}:{current_page}", 30 if section == "em_lancamento" else SECTION_TTL, page_factory)
 
 
-async def _chapter_payload(chapter_id: str, lang: str) -> dict[str, Any]:
-    async def producer() -> dict[str, Any]:
-        payload = await get_chapter_reader_payload(chapter_id, lang)
-        return _public_reader_payload(payload)
+# =============================================================================
+# BACKGROUND
+# =============================================================================
 
-    return await _cached("chapter", _CHAPTER_TTL, producer, chapter_id=chapter_id, lang=lang)
+@app.on_event("startup")
+async def _startup_tasks():
+    # Pre-create the proxy client on startup so the first request is instant.
+    await get_proxy_client()
+
+    async def _recent_refresher():
+        while True:
+            try:
+                _invalidate_prefix("recentes:")
+                _invalidate_prefix("page:recentes")
+                _invalidate_prefix("page:em_lancamento")
+                _invalidate_prefix("meta:em_lancamento")
+                _emit_event("catalog_refresh", "recentes")
+            except Exception:
+                pass
+            await asyncio.sleep(60)
+
+    asyncio.create_task(_recent_refresher())
 
 
-@app.get("/api/ping")
-async def ping() -> dict[str, bool]:
-    return {"ok": True}
+@app.on_event("shutdown")
+async def _shutdown_tasks():
+    global _PROXY_CLIENT
+    if _PROXY_CLIENT and not _PROXY_CLIENT.is_closed:
+        await _PROXY_CLIENT.aclose()
+        _PROXY_CLIENT = None
 
 
-@app.get("/api/home")
-async def api_home(limit: int = Query(HOME_SECTION_LIMIT, ge=4, le=24)):
-    return await _home_payload(limit=limit)
+# =============================================================================
+# ROOT / HEALTH
+# =============================================================================
 
+@app.get("/")
+def root():
+    return {
+        "ok": True,
+        "name": "QG BALTIGO API",
+        "version": "4.0.0",
+        "sections": list(SECTIONS.keys()),
+    }
+
+
+@app.get("/api/health")
+def health():
+    return {
+        "ok": True,
+        "cache_entries": len(_CACHE),
+        "timestamp": int(time.time()),
+    }
+
+
+# =============================================================================
+# CATALOG
+# =============================================================================
+
+@app.get("/api/catalog/home")
+async def catalog_home():
+    ordered_sections = [
+        "recentes",
+        "em_lancamento",
+        "atualizados",
+        "top",
+        "legendados",
+        "dublados",
+        "acao",
+        "aventura",
+        "comedia",
+    ]
+
+    tasks = [_get_paginated_section_page(section, 1) for section in ordered_sections]
+    featured_task = _build_featured_payload()
+    results = await asyncio.gather(*tasks, featured_task, return_exceptions=True)
+    featured_result = results[-1]
+    section_results = results[:-1]
+
+    payload = []
+    for section, result in zip(ordered_sections, section_results):
+        conf = _section_conf(section)
+        title = conf["title"] if conf else section
+        if isinstance(result, Exception):
+            payload.append({"key": section, "title": title, "page": 1, "total_pages": 0, "items": []})
+        else:
+            payload.append({
+                "key": section,
+                "title": result["title"],
+                "page": 1,
+                "total_pages": result["total_pages"],
+                "items": [item for item in result["items"][:HOME_SECTION_LIMIT] if _has_minimum_catalog_fields(item)],
+            })
+
+    featured = None if isinstance(featured_result, Exception) else featured_result
+    return {"ok": True, "featured": featured, "sections": payload}
+
+
+@app.get("/api/catalog/list")
+async def catalog_list(
+    section: str = Query("dublados"),
+    page: int = Query(1, ge=1),
+):
+    data = await _get_paginated_section_page(section, page)
+    data["items"] = [item for item in data["items"] if _has_minimum_catalog_fields(item)]
+    return {"ok": bool(data["items"]), **data}
+
+
+# =============================================================================
+# SEARCH
+# =============================================================================
 
 @app.get("/api/search")
-async def api_search(q: str = Query("", min_length=1), limit: int = Query(12, ge=1, le=24)):
-    return await _search_with_suggestions(q, limit)
+async def api_search(
+    q: str = Query(..., min_length=1),
+    page: int = Query(1, ge=1),
+    limit: int = Query(GRID_PAGE_LIMIT, ge=1, le=60),
+):
+    query = q.strip()
+    normalized_query = _normalize_text(query)
+
+    async def factory():
+        upstream: list[dict[str, Any]] = []
+        try:
+            upstream = await search_anime(query)
+        except Exception:
+            upstream = []
+
+        seeds = await _build_search_candidates()
+        merged: dict[str, dict[str, Any]] = {}
+        for item in upstream + seeds:
+            anime_id = item.get("id") or item.get("default_anime_id") or ""
+            if anime_id and anime_id not in merged:
+                merged[anime_id] = {"id": anime_id, **item}
+
+        enriched = await asyncio.gather(*[_enrich_search_item(item) for item in merged.values()], return_exceptions=True)
+        results = []
+        titles_for_suggestions = []
+        for item in enriched:
+            if not item or isinstance(item, Exception):
+                continue
+            titles_for_suggestions.append(item.get("title") or "")
+            title_score = _score_text_match(query, item.get("title") or "", *(item.get("alt_titles") or []))
+            tag_score = _score_text_match(query, *(item.get("genres") or []))
+            score = max(title_score, tag_score + 15 if tag_score else 0)
+            if score <= 0:
+                continue
+            item["_score"] = score
+            results.append(item)
+
+        results.sort(key=lambda item: (-item.get("_score", 0), item.get("title") or ""))
+        suggestions = _suggestions(query, titles_for_suggestions)
+        cleaned = []
+        for item in results:
+            item.pop("_score", None)
+            cleaned.append(item)
+        return {"items": cleaned, "suggestions": suggestions}
+
+    payload = await _cached(f"search:v2:{normalized_query}", SEARCH_TTL, factory)
+    shaped = payload.get("items") or []
+    suggestions = payload.get("suggestions") or []
+
+    total = len(shaped)
+    total_pages = max(1, (total + limit - 1) // limit) if total else 0
+    current_page = min(page, total_pages) if total_pages else 1
+    start = (current_page - 1) * limit
+    end = start + limit
+
+    return {
+        "ok": True,
+        "query": query,
+        "items": shaped[start:end],
+        "count": total,
+        "page": current_page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "has_next": current_page < total_pages if total_pages else False,
+        "has_prev": current_page > 1,
+        "suggestions": suggestions,
+    }
 
 
-@app.get("/api/sections/{section_name}")
-async def api_section(section_name: str, limit: int = Query(12, ge=1, le=24)):
-    async def producer() -> dict[str, Any]:
-        if section_name == "recent_chapters":
-            items = await get_recent_chapters(limit=max(limit, 12))
-            clean = [_public_title_item(item) for item in items if _has_real_chapter(item)]
-            clean.sort(key=lambda item: (item.get("updated_at") or "", item.get("chapter_number") or item.get("latest_chapter") or ""), reverse=True)
-            return {"items": clean[:limit]}
+# =============================================================================
+# ANIME / EPISODES
+# =============================================================================
 
-        section_map = {
-            "featured": "getFeatured",
-            "popular": "getPopular",
-            "recent_titles": "getRecentRead",
-            "latest_titles": "getLatestTable",
-        }
-        search_type = section_map.get(section_name)
-        if not search_type:
-            raise HTTPException(status_code=404, detail="Secao nao encontrada.")
+@app.get("/api/anime/{anime_id}")
+async def api_anime(anime_id: str):
+    async def factory():
+        data = await get_anime_details(anime_id)
+        if not data:
+            return None
 
-        extra = {"search_time": "week"} if search_type == "getRecentRead" else {}
-        items = await get_title_search(search_type, limit=max(limit, 16), **extra)
-        clean = [_public_title_item(item) for item in items if _has_real_chapter(item)]
-        if section_name in {"latest_titles", "recent_titles"}:
-            clean.sort(key=lambda item: (item.get("updated_at") or "", item.get("latest_chapter") or ""), reverse=True)
-        return {"items": clean[:limit]}
+        episodes_payload = await get_episodes(anime_id, 0, MAX_EPISODES_FETCH)
+        episodes = _normalize_episodes(episodes_payload.get("all_items") or episodes_payload.get("items") or [])
+        item = _shape_details(data, anime_id)
+        if episodes:
+            item["episodes"] = len(episodes)
+        return {"item": item, "episodes": episodes}
 
-    return await _stale_while_revalidate("section", _SECTIONS_TTL, _SECTIONS_TTL * 3, producer, section_name=section_name, limit=limit)
+    payload = await _cached(f"anime:{anime_id}", ANIME_TTL, factory)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Anime não encontrado")
+
+    return {"ok": True, **payload}
 
 
-@app.get("/api/title/{title_id}")
-async def api_title(title_id: str, user_id: str = Query(""), lang: str = Query(PREFERRED_CHAPTER_LANG)):
-    try:
-        return await _title_payload(title_id, lang, user_id)
-    except Exception as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+@app.get("/api/anime/{anime_id}/episode/{episode}")
+async def api_episode(
+    anime_id: str,
+    episode: str,
+    quality: str = Query("HD"),
+    refresh: int = Query(0, description="Passe 1 para ignorar cache e buscar link novo"),
+):
+    quality = (quality or "HD").upper()
+    cache_key = f"episode:{anime_id}:{episode}:{quality}"
+
+    # Allow the frontend to force a fresh link fetch when the cached one has expired.
+    if refresh:
+        _invalidate_key(cache_key)
+        invalidate_episode_caches(anime_id, episode)
+
+    async def factory():
+        item = await get_episode_player(anime_id, episode, quality)
+        if not item:
+            return None
+
+        payload = _shape_episode_payload(anime_id, episode, quality, item)
+
+        # Automatic HD → SD fallback when the primary quality has no video.
+        if not payload.get("video"):
+            fallback_quality = "SD" if quality == "HD" else "HD"
+            try:
+                fallback_item = await get_episode_player(anime_id, episode, fallback_quality)
+                if fallback_item:
+                    fallback_payload = _shape_episode_payload(
+                        anime_id,
+                        episode,
+                        fallback_quality,
+                        fallback_item,
+                    )
+                    if fallback_payload.get("video"):
+                        return fallback_payload
+            except Exception:
+                pass
+
+        return payload
+
+    payload = await _cached(cache_key, EPISODE_TTL, factory)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Episódio não encontrado")
+
+    return {"ok": True, "item": payload}
 
 
-@app.get("/api/title/{title_id}/chapters")
-async def api_title_chapters(title_id: str, lang: str = Query(PREFERRED_CHAPTER_LANG)):
-    try:
-        bundle = await _title_payload(title_id, lang)
-        return {
-            "title_id": bundle["title_id"],
-            "title": bundle.get("title") or "",
-            "chapters": bundle.get("chapters") or [],
-        }
-    except Exception as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+@app.get("/api/episode/{episode_id}")
+async def api_episode_direct(
+    episode_id: str,
+    quality: str = Query("HD"),
+    refresh: int = Query(0),
+):
+    raw = (episode_id or "").strip().strip("/")
+    match = re.match(r"^(?P<anime>.+?)-ep-(?P<ep>\d+(?:[.,]\d+)?)$", raw)
+    if not match:
+        raise HTTPException(status_code=400, detail="Formato inválido. Use anime-slug-ep-12")
+    return await api_episode(match.group("anime"), match.group("ep"), quality=quality, refresh=refresh)
 
 
-@app.get("/api/chapter/{chapter_id}")
-async def api_chapter(chapter_id: str, lang: str = Query(PREFERRED_CHAPTER_LANG)):
-    try:
-        return await _chapter_payload(chapter_id, lang)
-    except Exception as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+@app.get("/api/events")
+async def api_events(request: Request):
+    async def event_stream():
+        last_sent = -1
+        while True:
+            if await request.is_disconnected():
+                break
+            event = _EVENT_STATE.get("last") or {}
+            event_id = int(event.get("id") or 0)
+            if event_id != last_sent:
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"id: {event_id}\nevent: catalog\ndata: {payload}\n\n"
+                last_sent = event_id
+            await asyncio.sleep(2)
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+
+
+@app.post("/api/cache/invalidate")
+async def invalidate_runtime(scope: str = Query("all")):
+    _invalidate_prefix("recentes:")
+    _invalidate_prefix("page:recentes")
+    _invalidate_prefix("page:em_lancamento")
+    _invalidate_prefix("meta:em_lancamento")
+    _invalidate_prefix("home:")
+    _emit_event("manual_invalidate", scope)
+    return {"ok": True, "scope": scope}
+
+
+# =============================================================================
+# PROGRESS
+# =============================================================================
+
+@app.post("/api/progress")
+async def save_progress(payload: ProgressPayload):
+    user_id = _clean(payload.user_id) or "guest"
+    anime_id = _clean(payload.anime_id)
+    episode = _clean(payload.episode)
+    if not anime_id or not episode:
+        raise HTTPException(status_code=400, detail="anime_id e episode são obrigatórios")
+
+    bucket = _PROGRESS.setdefault(user_id, {})
+    bucket[anime_id] = {
+        "anime_id": anime_id,
+        "episode": episode,
+        "watched_seconds": max(0, int(payload.watched_seconds or 0)),
+        "duration_seconds": max(0, int(payload.duration_seconds or 0)),
+        "title": _clean(payload.title),
+        "cover_url": payload.cover_url or "",
+        "completed": bool(payload.completed),
+        "updated_at": int(time.time()),
+    }
+    return {"ok": True, "item": bucket[anime_id]}
 
 
 @app.get("/api/progress")
-async def api_get_progress(user_id: str = Query(...), title_id: str = Query(...)):
-    data = _load_progress()
-    return _public_last_read(data.get(_progress_key(user_id, title_id))) or {}
+async def get_progress(user_id: str = Query("guest")):
+    items = list((_PROGRESS.get(_clean(user_id) or "guest") or {}).values())
+    items.sort(key=lambda item: item.get("updated_at", 0), reverse=True)
+    return {"ok": True, "items": items}
 
 
-@app.post("/api/progress")
-async def api_save_progress(payload: ProgressPayload):
-    data = _load_progress()
-    key = _progress_key(payload.user_id, payload.title_id)
-    stored = payload.model_dump()
-    data[key] = stored
-    _save_progress(data)
+# =============================================================================
+# CACHE
+# =============================================================================
 
-    mark_chapter_read(
-        user_id=payload.user_id,
-        title_id=payload.title_id,
-        chapter_id=payload.chapter_id,
-        chapter_number=payload.chapter_number,
-        title_name=payload.title_name,
-        chapter_url=payload.chapter_url,
-    )
+@app.post("/api/cache/clear")
+async def clear_cache(
+    prefix: str = Query("", description="Prefixo das chaves a limpar; vazio = tudo")
+):
+    if prefix:
+        _invalidate_prefix(prefix)
+        cleared = f"prefix:{prefix}"
+    else:
+        count = len(_CACHE)
+        _CACHE.clear()
+        cleared = f"all:{count}"
 
-    await _invalidate_prefix("cache")
-    return {"ok": True}
+    return {"ok": True, "cleared": cleared}
 
 
-@app.post("/api/refresh")
-async def api_refresh():
-    await _invalidate_prefix("cache")
-    return {"ok": True}
+# =============================================================================
+# STATIC / MINIAPP
+# =============================================================================
+
+if MINIAPP_DIR.exists():
+    app.mount("/miniapp", StaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
 
 
-@app.get("/api/media/telegraph/{asset_key}/{asset_name}")
-async def api_telegraph_media(asset_key: str, asset_name: str):
-    try:
-        asset_path = resolve_telegraph_asset_path(asset_key, asset_name)
-    except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-
-    return FileResponse(
-        asset_path,
-        media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
-
-
-@app.get("/")
-async def root():
-    return FileResponse(MINIAPP_DIR / "index.html")
-
-
-@app.middleware("http")
-async def add_perf_headers(request: Request, call_next):
-    start = time.perf_counter()
-    response: Response = await call_next(request)
-    elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-    response.headers["X-Response-Time"] = f"{elapsed_ms}ms"
-    response.headers["Cache-Control"] = response.headers.get("Cache-Control", "no-store")
+@app.get("/app")
+async def app_index():
+    index_path = MINIAPP_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend not found")
+    response = FileResponse(index_path)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     return response
 
 
-if MINIAPP_DIR.exists():
-    app.mount("/miniapp", StaticFiles(directory=MINIAPP_DIR, html=True), name="miniapp")
-```
+@app.get("/watch")
+async def app_watch():
+    watch_path = MINIAPP_DIR / "watch.html"
+    if not watch_path.exists():
+        raise HTTPException(status_code=404, detail="Watch page not found")
+    return FileResponse(watch_path)
 
----
 
-# miniapp/index.html
+# =============================================================================
+# PROXY STREAM  (global pooled client, proper Range support, smart retry)
+# =============================================================================
 
-```html
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-  <title>BALTIGO — Mangás</title>
-  <meta name="theme-color" content="#05060f" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --bg-void:#05060f;
-      --bg-base:#080b18;
-      --bg-raised:#0d1128;
-      --bg-float:#111630;
-      --bg-glass:rgba(255,255,255,0.045);
-      --bg-glass-2:rgba(255,255,255,0.07);
-      --violet:#7c3aed;
-      --violet-2:#9b5cf6;
-      --cyan:#06b6d4;
-      --rose:#f43f5e;
-      --green:#22c55e;
-      --amber:#f59e0b;
-      --grad-brand:linear-gradient(135deg,#7c3aed 0%,#2563eb 60%,#06b6d4 100%);
-      --grad-card:linear-gradient(160deg,rgba(124,58,237,0.12) 0%,rgba(6,182,212,0.06) 100%);
-      --grad-shine:linear-gradient(105deg,transparent 40%,rgba(255,255,255,0.06) 50%,transparent 60%);
-      --text:#eef2ff;
-      --text-2:#94a3b8;
-      --text-3:#64748b;
-      --border:rgba(255,255,255,0.08);
-      --border-2:rgba(255,255,255,0.13);
-      --border-v:rgba(124,58,237,0.45);
-      --shadow-sm:0 2px 12px rgba(0,0,0,0.4);
-      --shadow-md:0 8px 32px rgba(0,0,0,0.5);
-      --shadow-lg:0 20px 60px rgba(0,0,0,0.6);
-      --shadow-v:0 8px 32px rgba(124,58,237,0.3);
-      --header-h:64px;
-      --max-w:1440px;
-      --r-xs:8px;--r-sm:12px;--r-md:18px;--r-lg:24px;--r-xl:32px;
-      --safe-top:env(safe-area-inset-top,0px);
-      --safe-bottom:env(safe-area-inset-bottom,0px);
-      --font-d:'Syne',sans-serif;
-      --font-b:'DM Sans',sans-serif;
-      --ease:cubic-bezier(0.22,1,0.36,1);
+async def _proxy_request_with_retry(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+) -> httpx.Response:
+    """
+    Performs a streaming-compatible proxy request with automatic retry.
+
+    Each attempt uses the shared global client so TCP connections are reused.
+    On 4xx/5xx the function retries with exponential back-off up to
+    PROXY_MAX_RETRIES times before raising.
+    """
+    client = await get_proxy_client()
+    last_error: Exception | None = None
+
+    for attempt in range(PROXY_MAX_RETRIES + 1):
+        try:
+            # Use stream=True so we never buffer the full response in RAM.
+            response = await client.send(
+                client.build_request(method, url, headers=headers),
+                stream=True,
+            )
+
+            if response.status_code in (200, 206):
+                return response
+
+            # Non-retryable client errors.
+            if 400 <= response.status_code < 500:
+                await response.aclose()
+                raise Exception(f"Upstream client error: {response.status_code}")
+
+            await response.aclose()
+            last_error = Exception(f"Upstream server error: {response.status_code}")
+
+        except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+            last_error = exc
+
+        except Exception as exc:
+            last_error = exc
+            # Don't retry on non-network errors.
+            if not isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+                break
+
+        if attempt < PROXY_MAX_RETRIES:
+            await asyncio.sleep(0.3 * (attempt + 1))
+
+    raise last_error or Exception("Proxy: falha desconhecida após retries")
+
+
+@app.api_route("/api/proxy-stream", methods=["GET", "HEAD"])
+async def proxy_stream(
+    request: Request,
+    url: str = Query(..., min_length=1),
+):
+    range_header = request.headers.get("range", "")
+
+    outgoing_headers: dict[str, str] = {
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Referer": BASE_URL + "/",
+        "Origin": BASE_URL,
     }
-    *,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
-    html{scroll-behavior:smooth}
-    body{
-      font-family:var(--font-b);
-      font-size:15px;
-      color:var(--text);
-      background:var(--bg-void);
-      min-height:100dvh;
-      overflow-x:hidden;
-      -webkit-font-smoothing:antialiased;
-    }
-    body::before{
-      content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
-      background:
-        radial-gradient(ellipse 80% 50% at 110% -10%,rgba(124,58,237,0.18) 0%,transparent 60%),
-        radial-gradient(ellipse 60% 40% at -10% 110%,rgba(6,182,212,0.12) 0%,transparent 60%),
-        radial-gradient(ellipse 40% 30% at 50% 50%,rgba(37,99,235,0.07) 0%,transparent 70%);
-    }
-    a{color:inherit;text-decoration:none}
-    img{display:block;max-width:100%}
-    button{font-family:var(--font-b);cursor:pointer;border:none;outline:none;background:none;color:inherit}
-    input{font-family:var(--font-b);border:none;outline:none;background:none;color:inherit}
-    .app{position:relative;z-index:1;min-height:100dvh}
-    .hidden{display:none !important}
-    .topbar{
-      position:fixed;top:0;left:0;right:0;z-index:110;
-      height:calc(var(--header-h) + var(--safe-top));padding-top:var(--safe-top);
-      transition:transform .3s var(--ease),opacity .3s;
-    }
-    .topbar.reader-hide{transform:translateY(-100%);opacity:0;pointer-events:none}
-    .topbar::before{
-      content:'';position:absolute;inset:0;
-      background:linear-gradient(180deg,rgba(5,6,15,0.98) 0%,rgba(5,6,15,0.82) 70%,transparent 100%);
-      backdrop-filter:blur(20px) saturate(1.4);
-      -webkit-backdrop-filter:blur(20px) saturate(1.4);
-      border-bottom:1px solid var(--border);
-    }
-    .topbar-inner{
-      position:relative;max-width:var(--max-w);margin:0 auto;height:var(--header-h);
-      padding:0 20px;display:flex;align-items:center;gap:14px;
-    }
-    .brand{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
-    .brand-logo{
-      width:38px;height:38px;border-radius:10px;background:var(--grad-brand);display:grid;place-items:center;
-      font-family:var(--font-d);font-size:17px;font-weight:800;letter-spacing:-0.03em;box-shadow:var(--shadow-v);
-      flex-shrink:0;position:relative;overflow:hidden;
-    }
-    .brand-logo::after{content:'';position:absolute;inset:0;background:var(--grad-shine)}
-    .brand-info{min-width:0}.brand-name{font-family:var(--font-d);font-size:16px;font-weight:800;letter-spacing:-0.02em;line-height:1;background:var(--grad-brand);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}.brand-sub{font-size:11px;color:var(--text-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .topbar-actions{display:flex;gap:8px;align-items:center}
-    .icon-btn{width:40px;height:40px;border-radius:var(--r-sm);background:var(--bg-glass);border:1px solid var(--border);display:grid;place-items:center;font-size:16px;transition:background .2s var(--ease),border-color .2s,transform .15s var(--ease);flex-shrink:0}
-    .icon-btn:hover{background:var(--bg-glass-2);border-color:var(--border-2);transform:translateY(-1px)}
-    .icon-btn:active{transform:scale(0.94)}
-    .page{max-width:var(--max-w);margin:0 auto;padding:calc(var(--header-h) + var(--safe-top) + 20px) 20px calc(40px + var(--safe-bottom));animation:page-in .35s var(--ease) both}
-    @keyframes page-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
-    .hero-banner{position:relative;border-radius:var(--r-xl);overflow:hidden;margin-bottom:28px;min-height:360px;display:flex;align-items:flex-end;border:1px solid var(--border);background:var(--grad-card);box-shadow:var(--shadow-lg)}
-    .hero-bg{position:absolute;inset:0;background-size:cover;background-position:center top;transition:transform .7s var(--ease),opacity .3s var(--ease);filter:saturate(1.08)}
-    .hero-banner:hover .hero-bg{transform:scale(1.04)}
-    .hero-grad{position:absolute;inset:0;background:linear-gradient(0deg,rgba(5,6,15,0.97) 0%,rgba(5,6,15,0.82) 28%,rgba(5,6,15,0.35) 60%,rgba(5,6,15,0.06) 100%),linear-gradient(90deg,rgba(5,6,15,0.88) 0%,rgba(5,6,15,0.55) 36%,transparent 80%)}
-    .hero-body{position:relative;z-index:2;padding:32px;width:100%;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
-    .hero-copy{max-width:650px}
-    .hero-eyebrow{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);margin-bottom:10px}
-    .hero-eyebrow::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan);animation:pdot 2s ease-in-out infinite}
-    @keyframes pdot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.7)}}
-    .hero-title{font-family:var(--font-d);font-size:clamp(28px,4vw,54px);font-weight:800;line-height:1.0;letter-spacing:-.03em;margin-bottom:10px;max-width:620px;text-wrap:balance}
-    .hero-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-    .pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text-2);font-weight:700;background:var(--bg-glass-2);border:1px solid var(--border);padding:5px 10px;border-radius:999px;backdrop-filter:blur(6px)}
-    .pill.live{color:#a7f3d0}.pill.score{color:#fcd34d}
-    .hero-desc{color:var(--text-2);font-size:13px;line-height:1.65;max-width:560px;margin-bottom:16px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-    .hero-actions{display:flex;gap:10px;flex-wrap:wrap}
-    .hero-cover{width:190px;aspect-ratio:2/3;border-radius:24px;overflow:hidden;border:1px solid var(--border);box-shadow:var(--shadow-md);background:var(--bg-float);flex-shrink:0}
-    .hero-cover img{width:100%;height:100%;object-fit:cover}
-    .btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-b);font-size:14px;font-weight:700;border-radius:var(--r-sm);padding:0 18px;height:44px;border:1px solid var(--border);background:var(--bg-glass);color:var(--text);cursor:pointer;transition:all .2s var(--ease);white-space:nowrap;position:relative;overflow:hidden}
-    .btn::after{content:'';position:absolute;inset:0;background:var(--grad-shine);opacity:0;transition:opacity .2s}
-    .btn:hover{transform:translateY(-2px);background:var(--bg-glass-2);border-color:var(--border-2)}
-    .btn:hover::after{opacity:1}.btn:active{transform:scale(0.97)}.btn:disabled{opacity:.5;pointer-events:none}
-    .btn-primary{background:var(--grad-brand);border:none;box-shadow:var(--shadow-v);color:#fff}.btn-primary:hover{opacity:.95;box-shadow:0 12px 40px rgba(124,58,237,0.45)}
-    .btn-sm{height:36px;padding:0 14px;font-size:13px;border-radius:var(--r-xs)}
-    .btn-xs{height:30px;padding:0 10px;font-size:12px;border-radius:6px}
-    .btn-full{width:100%;justify-content:center}
-    .continue-wrap,.search-section,.section{margin-bottom:28px}
-    .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px}
-    .section-label{display:flex;align-items:center;gap:12px}.section-accent{width:6px;height:36px;border-radius:999px;background:var(--grad-brand);box-shadow:0 0 16px rgba(124,58,237,.45);flex-shrink:0}
-    .section-title{font-family:var(--font-d);font-weight:800;font-size:26px;letter-spacing:-.03em;line-height:1}
-    .section-count{color:var(--text-3);font-size:12px;margin-top:5px;font-weight:700}
-    .cw-scroll{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;scrollbar-width:none}.cw-scroll::-webkit-scrollbar{display:none}
-    .cw-card{flex-shrink:0;width:210px;border-radius:var(--r-md);overflow:hidden;background:var(--bg-raised);border:1px solid var(--border);cursor:pointer;transition:transform .22s var(--ease),border-color .22s}
-    .cw-card:hover{transform:translateY(-4px);border-color:var(--border-v)}
-    .cw-thumb{position:relative;aspect-ratio:16/9;background:var(--bg-float);overflow:hidden}.cw-thumb img{width:100%;height:100%;object-fit:cover;transition:transform .4s var(--ease)}
-    .cw-card:hover .cw-thumb img{transform:scale(1.06)}
-    .cw-prog-bar{position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,0.12)}
-    .cw-prog-fill{height:100%;background:var(--grad-brand);border-radius:2px}
-    .cw-badge{position:absolute;top:7px;right:7px;background:rgba(5,6,15,0.82);font-size:10px;font-weight:700;color:var(--text-2);padding:3px 7px;border-radius:6px;backdrop-filter:blur(6px)}
-    .cw-info{padding:10px 12px 12px}.cw-title{font-size:13px;font-weight:800;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px}.cw-sub{font-size:11px;color:var(--text-3)}
-    .search-row{display:flex;gap:10px;align-items:stretch;margin-bottom:14px}
-    .search-bar{flex:1;position:relative;display:flex;align-items:center;gap:12px;height:52px;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--r-md);padding:0 18px;transition:border-color .2s var(--ease),box-shadow .2s,background .2s}
-    .search-bar:focus-within{border-color:var(--border-v);box-shadow:0 0 0 3px rgba(124,58,237,0.15);background:#101631}.search-ico{font-size:18px;color:var(--text-3)}.search-input{flex:1;font-size:15px;color:var(--text)}.search-input::placeholder{color:var(--text-3)}
-    .chip-row{display:flex;gap:8px;flex-wrap:wrap}.chip{height:34px;padding:0 12px;border-radius:999px;background:var(--bg-glass);border:1px solid var(--border);color:var(--text-2);font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px;transition:all .2s var(--ease)}.chip:hover{transform:translateY(-1px);background:var(--bg-glass-2);color:var(--text);border-color:var(--border-2)}
-    .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}
-    .manga-card{border-radius:22px;overflow:hidden;background:var(--bg-raised);border:1px solid var(--border);cursor:pointer;transition:transform .22s var(--ease),border-color .22s,box-shadow .22s;position:relative}
-    .manga-card:hover{transform:translateY(-6px);border-color:var(--border-v);box-shadow:var(--shadow-md)}
-    .card-thumb{position:relative;aspect-ratio:2/3;background:var(--bg-float);overflow:hidden}.card-thumb img{width:100%;height:100%;object-fit:cover;transition:transform .4s var(--ease),filter .2s}.manga-card:hover .card-thumb img{transform:scale(1.05)}
-    .card-gradient{position:absolute;inset:0;background:linear-gradient(180deg,transparent 25%,rgba(5,6,15,.18) 50%,rgba(5,6,15,.75) 100%)}
-    .card-badge{position:absolute;top:8px;left:8px;z-index:2;background:rgba(5,6,15,.8);color:var(--text-2);border:1px solid var(--border);backdrop-filter:blur(8px);padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.card-badge.adult{color:#fecdd3;border-color:rgba(244,63,94,.25)}
-    .card-body{padding:12px}.card-title{font-size:14px;font-weight:800;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:36px}.card-meta{margin-top:7px;color:var(--text-3);font-size:12px;line-height:1.45}
-    .page-panel{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:28px;overflow:hidden;box-shadow:var(--shadow-lg)}
-    .detail-hero{position:relative;min-height:420px;overflow:hidden}.detail-bg{position:absolute;inset:0;background-size:cover;background-position:center top;filter:saturate(1.05);transform:scale(1.02)}.detail-grad{position:absolute;inset:0;background:linear-gradient(0deg,rgba(5,6,15,0.98) 0%,rgba(5,6,15,0.94) 26%,rgba(5,6,15,0.58) 60%,rgba(5,6,15,0.15) 100%),linear-gradient(90deg,rgba(5,6,15,0.98) 0%,rgba(5,6,15,0.84) 30%,rgba(5,6,15,0.3) 70%,transparent 100%)}
-    .detail-inner{position:relative;z-index:2;display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;align-items:end;padding:32px;min-height:420px}
-    .detail-cover{width:240px;aspect-ratio:2/3;border-radius:24px;overflow:hidden;background:var(--bg-float);border:1px solid var(--border);box-shadow:var(--shadow-lg)}.detail-cover img{width:100%;height:100%;object-fit:cover}
-    .detail-title{font-family:var(--font-d);font-size:clamp(28px,4vw,50px);font-weight:800;letter-spacing:-.03em;line-height:1;margin-bottom:12px;text-wrap:balance}.detail-alt{color:var(--text-3);font-size:13px;line-height:1.5;margin-bottom:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.detail-meta,.genre-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.detail-desc{color:var(--text-2);line-height:1.75;font-size:14px;max-width:880px;margin-top:8px}.detail-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
-    .detail-body{padding:24px 24px 28px}.chapter-panel{background:var(--bg-raised);border:1px solid var(--border);border-radius:24px;padding:18px}.chapter-tools{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.chapter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:10px;margin-top:14px}.chapter-btn{min-height:54px;border-radius:16px;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);padding:10px 12px;text-align:left;transition:all .18s var(--ease)}.chapter-btn:hover{transform:translateY(-2px);background:rgba(255,255,255,0.06);border-color:var(--border-v)}.chapter-btn.read{border-color:rgba(34,197,94,.28);background:rgba(34,197,94,.10)}.chapter-n{font-size:13px;font-weight:800;line-height:1.2}.chapter-meta{font-size:11px;color:var(--text-3);margin-top:4px;line-height:1.35}
-    .reader-shell{max-width:1000px;margin:0 auto}.reader-top{position:sticky;top:calc(var(--header-h) + var(--safe-top) + 8px);z-index:50;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-radius:18px;margin-bottom:16px;background:rgba(8,11,24,.84);border:1px solid var(--border);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:var(--shadow-md);flex-wrap:wrap}.reader-info h1{font-family:var(--font-d);font-size:clamp(20px,2.5vw,30px);line-height:1;letter-spacing:-.03em;margin-bottom:6px}.reader-sub{color:var(--text-3);font-size:12px;font-weight:700}.reader-actions{display:flex;gap:8px;flex-wrap:wrap}.reader-images{display:grid;gap:14px;padding-bottom:24px}.reader-page{width:min(100%,960px);margin:0 auto;border-radius:22px;overflow:hidden;background:var(--bg-float);border:1px solid var(--border);box-shadow:var(--shadow-md);min-height:280px}.reader-page img{width:100%;height:auto;display:block}.reader-bottom-nav{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:10px;padding-bottom:24px}
-    .empty-state{border:1px solid var(--border);border-radius:24px;background:rgba(255,255,255,0.03);padding:28px;color:var(--text-2);text-align:center;min-height:120px;display:grid;place-items:center;line-height:1.7}
-    .overlay{position:fixed;inset:0;z-index:160;display:flex;align-items:center;justify-content:center;background:rgba(5,6,15,.72);backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2);transition:opacity .25s var(--ease),visibility .25s var(--ease);opacity:1;visibility:visible}.overlay.hidden{opacity:0;visibility:hidden;pointer-events:none}
-    .loader-card{width:min(92vw,420px);padding:24px;border-radius:24px;background:rgba(13,17,40,.92);border:1px solid var(--border-2);box-shadow:var(--shadow-lg);text-align:center}.loader-orb{width:72px;height:72px;margin:0 auto 14px;border-radius:50%;background:var(--grad-brand);position:relative;box-shadow:0 0 40px rgba(124,58,237,.38);animation:orb 1.25s infinite alternate ease-in-out}.loader-orb::after{content:'📚';position:absolute;inset:0;display:grid;place-items:center;font-size:28px;filter:drop-shadow(0 3px 10px rgba(0,0,0,.35))}@keyframes orb{from{transform:translateY(0) scale(1)}to{transform:translateY(-6px) scale(1.04)}}.loader-title{font-family:var(--font-d);font-size:22px;font-weight:800;letter-spacing:-.03em}.loader-text{margin-top:8px;color:var(--text-2);line-height:1.6;font-size:13px}
-    .toast{position:fixed;left:50%;bottom:calc(18px + var(--safe-bottom));transform:translateX(-50%) translateY(20px);z-index:170;min-width:min(90vw,340px);max-width:min(92vw,500px);padding:12px 14px;border-radius:16px;background:rgba(13,17,40,.95);border:1px solid var(--border-2);color:var(--text);box-shadow:var(--shadow-lg);opacity:0;pointer-events:none;transition:all .25s var(--ease);text-align:center;font-size:13px;line-height:1.45}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-    @media (max-width:980px){.detail-inner{grid-template-columns:1fr;align-items:start}.detail-cover{width:210px}.hero-body{padding:24px}.hero-cover{width:150px}}
-    @media (max-width:720px){.page{padding-left:14px;padding-right:14px}.topbar-inner{padding:0 14px}.hero-banner{min-height:420px}.hero-cover{display:none}.section-title{font-size:22px}.card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.chapter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.reader-top{top:calc(var(--header-h) + var(--safe-top) + 4px)}}
-    @media (max-width:460px){.card-grid{gap:12px}.chapter-grid{grid-template-columns:1fr 1fr}.hero-title{font-size:30px}.detail-title{font-size:30px}.loader-card{padding:20px}}
-  </style>
-</head>
-<body>
-  <div class="app">
-    <header class="topbar" id="topbar">
-      <div class="topbar-inner">
-        <button class="icon-btn" id="backBtn" title="Voltar">←</button>
-        <div class="brand" id="brandTap">
-          <div class="brand-logo">M</div>
-          <div class="brand-info">
-            <div class="brand-name">Mangas Baltigo</div>
-            <div class="brand-sub" id="brandSub">Catálogo premium, leitura contínua e capítulos rápidos</div>
-          </div>
-        </div>
-        <div class="topbar-actions">
-          <button class="icon-btn" id="searchFocusBtn" title="Buscar">⌕</button>
-          <button class="icon-btn" id="homeBtn" title="Início">⌂</button>
-        </div>
-      </div>
-    </header>
 
-    <main id="homePage" class="page">
-      <section class="hero-banner" id="heroBanner">
-        <div class="hero-bg" id="heroBg"></div>
-        <div class="hero-grad"></div>
-        <div class="hero-body">
-          <div class="hero-copy">
-            <div class="hero-eyebrow">Leitura em destaque</div>
-            <h1 class="hero-title" id="heroTitle">Descubra mangás em uma experiência feita para Telegram.</h1>
-            <div class="hero-meta" id="heroMeta">
-              <span class="pill live">⚡ Busca rápida</span>
-              <span class="pill">📚 Leitura contínua</span>
-              <span class="pill">🆕 Capítulos recentes</span>
-            </div>
-            <p class="hero-desc" id="heroDesc">Pesquise obras, continue de onde parou, abra capítulos direto no leitor vertical e navegue sem fricção.</p>
-            <div class="hero-actions">
-              <button class="btn btn-primary" id="heroPrimaryBtn">Explorar agora</button>
-              <button class="btn" id="heroSecondaryBtn">Capítulos recentes</button>
-            </div>
-          </div>
-          <div class="hero-cover" id="heroCoverWrap">
-            <img id="heroCover" alt="Destaque" />
-          </div>
-        </div>
-      </section>
+    if range_header:
+        outgoing_headers["Range"] = range_header
 
-      <section class="continue-wrap" id="continueWrap">
-        <div class="section-head">
-          <div class="section-label">
-            <div class="section-accent"></div>
-            <div>
-              <div class="section-title">Continue lendo</div>
-              <div class="section-count">Seu progresso recente</div>
-            </div>
-          </div>
-        </div>
-        <div class="cw-scroll" id="continueList"></div>
-      </section>
+    method = "HEAD" if request.method == "HEAD" else "GET"
 
-      <section class="search-section">
-        <div class="search-row">
-          <form class="search-bar" id="searchForm">
-            <div class="search-ico">🔎</div>
-            <input class="search-input" id="searchInput" type="search" placeholder="Busque um mangá pelo nome ou tag..." autocomplete="off" />
-          </form>
-          <button class="btn btn-primary" id="searchBtn">Buscar</button>
-        </div>
-        <div class="chip-row">
-          <button class="chip" data-jump="featuredSection">Destaques</button>
-          <button class="chip" data-jump="popularSection">Populares</button>
-          <button class="chip" data-jump="recentTitlesSection">Recentes</button>
-          <button class="chip" data-jump="latestSection">Atualizados</button>
-          <button class="chip" data-jump="recentChaptersSection">Novos capítulos</button>
-        </div>
-      </section>
+    try:
+        upstream = await _proxy_request_with_retry(method, url, outgoing_headers)
+    except Exception as exc:
+        print(f"PROXY ERROR [{method}] {url!r}: {exc!r}")
+        raise HTTPException(status_code=502, detail="Erro ao carregar vídeo")
 
-      <section class="section hidden" id="searchResultsSection">
-        <div class="section-head">
-          <div class="section-label">
-            <div class="section-accent"></div>
-            <div>
-              <div class="section-title">Resultados</div>
-              <div class="section-count" id="searchMeta">Buscando...</div>
-            </div>
-          </div>
-          <button class="btn btn-sm" id="clearSearchBtn">Limpar</button>
-        </div>
-        <div id="searchGrid"></div>
-      </section>
+    content_type = upstream.headers.get("content-type", "application/octet-stream")
 
-      <section class="section" id="featuredSection"><div class="section-head"><div class="section-label"><div class="section-accent"></div><div><div class="section-title">Destaques</div><div class="section-count" id="featuredCount">Carregando...</div></div></div></div><div id="featuredGrid"></div></section
-```
+    # Build the response headers we will forward to the browser.
+    passthrough: dict[str, str] = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+        "Accept-Ranges": upstream.headers.get("accept-ranges", "bytes"),
+        "Content-Type": content_type,
+        # Tell browsers/proxies not to cache proxy responses; caching is done at
+        # the application layer (episode endpoint) instead.
+        "Cache-Control": "no-store",
+    }
+
+    for header in ("content-length", "content-range", "content-disposition", "etag", "last-modified"):
+        value = upstream.headers.get(header)
+        if value:
+            passthrough[header.title().replace("-", "-")] = value
+
+    if method == "HEAD":
+        await upstream.aclose()
+        return Response(content=b"", status_code=upstream.status_code, headers=passthrough)
+
+    status_code = upstream.status_code
+
+    async def byte_stream():
+        try:
+            async for chunk in upstream.aiter_bytes(PROXY_CHUNK_SIZE):
+                yield chunk
+        except (httpx.ReadTimeout, httpx.RemoteProtocolError, GeneratorExit):
+            pass
+        finally:
+            await upstream.aclose()
+
+    return StreamingResponse(
+        byte_stream(),
+        status_code=status_code,
+        headers=passthrough,
+        media_type=content_type,
+    )
