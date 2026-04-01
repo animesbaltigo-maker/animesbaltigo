@@ -25,6 +25,13 @@ _HTTP_HEADERS = {
 
 MIN_SIMILARITY = 0.90
 
+TRACE_ALLOWED_CHAT_TYPES = {"private", "group", "supergroup"}
+
+
+def _trace_chat_allowed(update: Update) -> bool:
+    chat = update.effective_chat
+    return bool(chat and chat.type in TRACE_ALLOWED_CHAT_TYPES)
+
 
 def _seconds_to_hhmmss(seconds: float | int | None) -> str:
     try:
@@ -203,9 +210,9 @@ async def _find_bot_anime_match(item: dict) -> dict | None:
 
     for query in queries:
         try:
-            results = await search_animes(query, limit=5)
+            results = await search_anime(query, limit=5)
         except TypeError:
-            results = await search_animes(query)
+            results = await search_anime(query)
         except Exception:
             results = []
 
@@ -288,6 +295,9 @@ async def _trace_me() -> dict:
 
 
 async def traceme(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _trace_chat_allowed(update):
+        return
+
     if not await ensure_channel_membership(update, context):
         return
 
@@ -306,6 +316,9 @@ async def traceme(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def tracequota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _trace_chat_allowed(update):
+        return
+
     if not await ensure_channel_membership(update, context):
         return
 
@@ -339,6 +352,9 @@ async def tracequota(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def trace_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _trace_chat_allowed(update):
+        return
+
     if not await ensure_channel_membership(update, context):
         return
 
