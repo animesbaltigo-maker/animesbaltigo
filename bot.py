@@ -43,13 +43,11 @@ from handlers.inline import inline_query
 from handlers.testminiapp import testminiapp
 from handlers.tracemoe import traceme, tracequota, trace_photo_handler
 
-# IA Gemini
+
 from handlers.group_ai import group_ai_handler
-from services.gemini_ai import generate_anime_reply
 
 
 init_metrics_db()
-
 
 async def post_init(app: Application):
     asyncio.create_task(preload_popular_cache())
