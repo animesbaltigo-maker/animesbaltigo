@@ -9,6 +9,9 @@ async def ensure_channel_membership(update, context: ContextTypes.DEFAULT_TYPE):
     if not REQUIRED_CHANNEL:
         return True
 
+    if not update.effective_user or not update.effective_message:
+        return False
+
     user_id = update.effective_user.id
 
     try:
