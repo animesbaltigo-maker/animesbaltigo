@@ -1319,6 +1319,108 @@ def _player_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
+def _anime_access_row(anime_id: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(
+            "Abrir no bot",
+            callback_data=f"eps|{anime_id}|0",
+        ),
+        InlineKeyboardButton(
+            "Abrir no MiniApp",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+    ]
+
+
+def _variant_access_row(label: str, anime_id: str) -> list[InlineKeyboardButton]:
+    raw = (label or "").strip().lower()
+    if raw.startswith("jp") or "legend" in raw:
+        variant_label = "legendado"
+    elif raw.startswith("br") or "dub" in raw:
+        variant_label = "dublado"
+    else:
+        variant_label = (label or "anime").strip().lower()
+
+    return [
+        InlineKeyboardButton(
+            f"Bot: {variant_label}",
+            callback_data=f"var|{anime_id}",
+        ),
+        InlineKeyboardButton(
+            f"MiniApp: {variant_label}",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+    ]
+
+
+def _player_keyboard(
+    anime_id: str,
+    episode: str,
+    detected_video: str,
+    prev_episode,
+    next_episode,
+    selected_quality: str,
+    user_id: int | str,
+    available_qualities: set | None = None,
+):
+    selected_quality = _normalize_quality(selected_quality)
+    available_qualities = available_qualities or set()
+
+    hd_label = "HD"
+    sd_label = "SD"
+
+    if available_qualities:
+        if "HD" not in available_qualities:
+            hd_label = "HD indisponivel"
+        if "SD" not in available_qualities:
+            sd_label = "SD indisponivel"
+
+    if selected_quality == "HD":
+        hd_label = f"{hd_label} [ok]"
+    else:
+        sd_label = f"{sd_label} [ok]"
+
+    watched = is_episode_watched(user_id, anime_id, episode)
+
+    watch_toggle_button = InlineKeyboardButton(
+        "Desmarcar como visto" if watched else "Marcar como visto",
+        callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
+    )
+
+    rows = [
+        [InlineKeyboardButton("Assistir episodio", url=detected_video or "https://t.me")],
+        [watch_toggle_button],
+        [
+            InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
+            InlineKeyboardButton(sd_label, callback_data=f"ql|{anime_id}|{episode}|SD"),
+        ],
+    ]
+
+    nav = []
+    if prev_episode:
+        nav.append(
+            InlineKeyboardButton(
+                "Anterior",
+                callback_data=f"ep|{anime_id}|{prev_episode}",
+            )
+        )
+    if next_episode:
+        nav.append(
+            InlineKeyboardButton(
+                "Proximo",
+                callback_data=f"ep|{anime_id}|{next_episode}",
+            )
+        )
+    if nav:
+        rows.append(nav)
+
+    rows.append([
+        InlineKeyboardButton("Lista de episodios", callback_data=f"eps|{anime_id}|0")
+    ])
+
+    return InlineKeyboardMarkup(rows)
+
+
 def _anime_cache_key(anime_id: str) -> str:
     return f"anime_cache:{anime_id}"
 
