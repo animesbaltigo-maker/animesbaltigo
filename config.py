@@ -5,8 +5,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8675150552:AAHoUu64RoMPHNdaChP9RQGF0iz-tk7Crbo").strip()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyB5r2mv-Dyjgl4yxTVEkIBpCg8LPIaQDRQ").strip()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "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").strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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").strip()
 
 SOURCE_SITE_BASE = os.getenv("SOURCE_SITE_BASE", "https://animefire.io").strip().rstrip("/")
 
