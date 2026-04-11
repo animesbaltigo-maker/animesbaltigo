@@ -857,6 +857,8 @@ def _single_anime_keyboard(
         ]
     ]
 
+    rows = [_anime_access_row(anime_id)]
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, fallback_item or {})
     trailer_url = _build_trailer_url(anime)
@@ -905,6 +907,12 @@ def _variant_keyboard(
             )
         ])
 
+    rows = []
+    if sub_variant:
+        rows.append(_variant_access_row("JP no bot", sub_variant["id"]))
+    if dub_variant:
+        rows.append(_variant_access_row("BR no bot", dub_variant["id"]))
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, item)
     trailer_url = _build_trailer_url(anime)
@@ -914,6 +922,10 @@ def _variant_keyboard(
 
     if trailer_url:
         second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
+
+    if not rows:
+        default_id = item.get("default_anime_id") or item.get("id")
+        rows.append(_anime_access_row(default_id))
 
     if second_row:
         rows.append(second_row)
@@ -1201,6 +1213,29 @@ def _build_miniapp_anime_url(anime_id: str) -> str:
     return f"{base}/?anime={anime_id}"
 
 
+def _anime_access_row(anime_id: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(
+            "📱 MiniApp",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+        InlineKeyboardButton(
+            "📋 Lista no bot",
+            callback_data=f"eps|{anime_id}|0",
+        ),
+    ]
+
+
+def _variant_access_row(label: str, anime_id: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(label, callback_data=f"var|{anime_id}"),
+        InlineKeyboardButton(
+            "📱 MiniApp",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+    ]
+
+
 def _player_keyboard(
     anime_id: str,
     episode: str,
@@ -1246,6 +1281,10 @@ def _player_keyboard(
             InlineKeyboardButton(
                 "▶️ Assistir",
                 web_app=WebAppInfo(url=miniapp_episode_url),
+            ),
+            InlineKeyboardButton(
+                "Link normal",
+                callback_data=f"watch|{anime_id}|{episode}",
             )
         ],
         [watch_toggle_button],
@@ -1986,6 +2025,44 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if data.startswith("watch|"):
                     _, anime_id, episode = data.split("|", 2)
+
+                    anime = await _get_cached_anime(context, anime_id)
+                    selected_quality = _get_selected_quality(context, anime_id, episode)
+                    player = await _get_cached_player(anime_id, episode, selected_quality)
+                    video_url = (player.get("video") or "").strip()
+
+                    _safe_log_event(
+                        event_type="watch_click",
+                        user_id=user.id,
+                        username=user.username or user.first_name or "",
+                        anime_id=anime_id,
+                        anime_title=anime.get("title", "Sem tÃ­tulo"),
+                        episode=str(episode),
+                        extra=selected_quality,
+                    )
+
+                    if not video_url:
+                        await _safe_answer_query(query, "âŒ NÃ£o encontrei o vÃ­deo desse episÃ³dio.", show_alert=True)
+                        return
+
+                    try:
+                        await query.message.reply_text(
+                            (
+                                f"🔗 <b>{html.escape(_format_title_with_version(anime.get('title', 'Sem tÃ­tulo'), _resolve_is_dubbed(context, anime_id, anime=anime)))}</b>\n"
+                                f"Episodio: {html.escape(str(episode))}\n"
+                                f"Qualidade: {html.escape(selected_quality)}\n\n"
+                                "Use o botao abaixo para abrir o link normal."
+                            ),
+                            parse_mode="HTML",
+                            disable_web_page_preview=True,
+                            reply_markup=InlineKeyboardMarkup(
+                                [[InlineKeyboardButton("Abrir link normal", url=video_url)]]
+                            ),
+                        )
+                    except Exception:
+                        await _safe_answer_query(query, "âš ï¸ NÃ£o consegui enviar o link normal agora.", show_alert=True)
+
+                    return
 
                     anime = await _get_cached_anime(context, anime_id)
                     selected_quality = _get_selected_quality(context, anime_id, episode)
