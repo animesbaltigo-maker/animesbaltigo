@@ -436,6 +436,29 @@ def _build_miniapp_anime_url(anime_id: str) -> str:
     return f"{base}/?anime={anime_id}"
 
 
+def _anime_access_row(anime_id: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(
+            "MiniApp",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+        InlineKeyboardButton(
+            "Lista no bot",
+            callback_data=f"eps|{anime_id}|0",
+        ),
+    ]
+
+
+def _variant_access_row(label: str, anime_id: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(label, callback_data=f"var|{anime_id}"),
+        InlineKeyboardButton(
+            "MiniApp",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+    ]
+
+
 def _player_keyboard(
     anime_id: str,
     episode: str,
@@ -481,6 +504,10 @@ def _player_keyboard(
             InlineKeyboardButton(
                 "▶️ Assistir",
                 web_app=WebAppInfo(url=miniapp_episode_url),
+            ),
+            InlineKeyboardButton(
+                "Link normal",
+                callback_data=f"watch|{anime_id}|{episode}",
             )
         ],
         [watch_toggle_button],
@@ -565,6 +592,8 @@ def _single_anime_keyboard(
         ]
     ]
 
+    rows = [_anime_access_row(anime_id)]
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, fallback_item or {})
     trailer_url = _build_trailer_url(anime)
@@ -608,6 +637,12 @@ def _variant_keyboard(
             )
         ])
 
+    rows = []
+    if sub_variant:
+        rows.append(_variant_access_row("JP no bot", sub_variant["id"]))
+    if dub_variant:
+        rows.append(_variant_access_row("BR no bot", dub_variant["id"]))
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, group_item)
     trailer_url = _build_trailer_url(anime)
@@ -617,6 +652,10 @@ def _variant_keyboard(
 
     if trailer_url:
         second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
+
+    if not rows:
+        default_id = group_item.get("default_anime_id") or group_item.get("id")
+        rows.append(_anime_access_row(default_id))
 
     if second_row:
         rows.append(second_row)
