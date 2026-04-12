@@ -148,6 +148,28 @@ def _cache_set(cache: dict, key: str, data):
     }
 
 
+def invalidate_callback_episode_cache(anime_id: str) -> None:
+    anime_id = str(anime_id or "").strip()
+    if not anime_id:
+        return
+
+    prefix = f"{anime_id}|"
+
+    for cache in (_GLOBAL_EPISODES_CACHE, _GLOBAL_PLAYER_CACHE):
+        for key in list(cache.keys()):
+            if str(key).startswith(prefix):
+                cache.pop(key, None)
+
+    for inflight in (_INFLIGHT_EPISODES, _INFLIGHT_PLAYER):
+        for key in list(inflight.keys()):
+            if not str(key).startswith(prefix):
+                continue
+
+            task = inflight.pop(key, None)
+            if task and not task.done():
+                task.cancel()
+
+
 async def _dedup_fetch(cache: dict, inflight: dict, key: str, ttl: int, coro_factory):
     cached = _cache_get(cache, key, ttl)
     if cached is not None:
@@ -1376,9 +1398,9 @@ def _player_keyboard(
             sd_label = "SD indisponivel"
 
     if selected_quality == "HD":
-        hd_label = f"{hd_label} [ok]"
+        hd_label = f"{hd_label} 🔘"
     else:
-        sd_label = f"{sd_label} [ok]"
+        sd_label = f"{sd_label} 🔘"
 
     watched = is_episode_watched(user_id, anime_id, episode)
 
@@ -2084,7 +2106,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     _set_inflight_action(message.chat.id, message.message_id, current_action)
 
-                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|")):
+                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "rec|", "var|", "vw|", "unvw|")):
                     await _set_loading_state(query)
 
                 if data.startswith("ql|"):
@@ -2096,11 +2118,16 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     requested_quality = _normalize_quality(requested_quality)
                     current_quality = _get_selected_quality(context, anime_id, episode)
 
-                    if not _can_switch_quality_now(context, anime_id, episode):
-                        await _safe_answer_query(query, "⏳ Aguarde um instante para trocar a qualidade.", show_alert=False)
+                    if current_quality == requested_quality:
+                        await _safe_answer_query(
+                            query,
+                            f"🔘 Já está em {requested_quality}.",
+                            show_alert=False,
+                        )
                         return
 
-                    if current_quality == requested_quality:
+                    if not _can_switch_quality_now(context, anime_id, episode):
+                        await _safe_answer_query(query, "⏳ Aguarde um instante para trocar a qualidade.", show_alert=False)
                         return
 
                     _set_selected_quality(context, anime_id, episode, requested_quality)
