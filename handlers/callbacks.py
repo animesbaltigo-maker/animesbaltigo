@@ -30,8 +30,8 @@ CALLBACK_COOLDOWN = 1.0
 QUALITY_COOLDOWN = 0.8
 
 ANIME_CACHE_TTL = 60 * 30
-EPISODES_CACHE_TTL = 60 * 10
-PLAYER_CACHE_TTL = 60 * 10
+EPISODES_CACHE_TTL = 60 * 2
+PLAYER_CACHE_TTL = 60 * 2
 RECOMMEND_CACHE_TTL = 60 * 5
 
 GLOBAL_FETCH_SEMAPHORE = asyncio.Semaphore(40)
@@ -1322,11 +1322,11 @@ def _player_keyboard(
 def _anime_access_row(anime_id: str) -> list[InlineKeyboardButton]:
     return [
         InlineKeyboardButton(
-            "Abrir no bot",
+            "📚 Ver no bot",
             callback_data=f"eps|{anime_id}|0",
         ),
         InlineKeyboardButton(
-            "Abrir no MiniApp",
+            "📱 Abrir MiniApp",
             web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
         ),
     ]
@@ -1383,12 +1383,12 @@ def _player_keyboard(
     watched = is_episode_watched(user_id, anime_id, episode)
 
     watch_toggle_button = InlineKeyboardButton(
-        "Desmarcar como visto" if watched else "Marcar como visto",
+        "❌ Desmarcar como visto" if watched else "✅ Marcar como visto",
         callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
     )
 
     rows = [
-        [InlineKeyboardButton("Assistir episodio", url=detected_video or "https://t.me")],
+        [InlineKeyboardButton("▶️ Assistir episódio", url=detected_video or "https://t.me")],
         [watch_toggle_button],
         [
             InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
@@ -1400,14 +1400,14 @@ def _player_keyboard(
     if prev_episode:
         nav.append(
             InlineKeyboardButton(
-                "Anterior",
+                "⏮ Anterior",
                 callback_data=f"ep|{anime_id}|{prev_episode}",
             )
         )
     if next_episode:
         nav.append(
             InlineKeyboardButton(
-                "Proximo",
+                "Próximo ⏭",
                 callback_data=f"ep|{anime_id}|{next_episode}",
             )
         )
@@ -1415,8 +1415,87 @@ def _player_keyboard(
         rows.append(nav)
 
     rows.append([
-        InlineKeyboardButton("Lista de episodios", callback_data=f"eps|{anime_id}|0")
+        InlineKeyboardButton("📋 Lista de episódios", callback_data=f"eps|{anime_id}|0")
     ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+def _variant_mode_labels(label: str) -> tuple[str, str]:
+    raw = (label or "").strip().lower()
+    if raw.startswith("jp") or "legend" in raw:
+        return (
+            "🇯🇵 Ver legendado no bot",
+            "📱 Abrir legendado no MiniApp",
+        )
+    if raw.startswith("br") or "dub" in raw:
+        return (
+            "🇧🇷 Ver dublado no bot",
+            "📱 Abrir dublado no MiniApp",
+        )
+    cleaned = (label or "anime").strip()
+    return (
+        f"🎬 Ver {cleaned} no bot",
+        f"📱 Abrir {cleaned} no MiniApp",
+    )
+
+
+def _variant_keyboard(
+    item: dict,
+    anime: dict,
+    fallback_title: str = "Sem tÃ­tulo",
+    back_callback: str | None = None,
+) -> InlineKeyboardMarkup:
+    rows = []
+
+    sub_variant = _pick_variant(item, dubbed=False)
+    dub_variant = _pick_variant(item, dubbed=True)
+
+    if sub_variant:
+        bot_label, mini_label = _variant_mode_labels("jp")
+        rows.append([
+            InlineKeyboardButton(bot_label, callback_data=f"var|{sub_variant['id']}")
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                mini_label,
+                web_app=WebAppInfo(url=_build_miniapp_anime_url(sub_variant["id"])),
+            )
+        ])
+
+    if dub_variant:
+        bot_label, mini_label = _variant_mode_labels("br")
+        rows.append([
+            InlineKeyboardButton(bot_label, callback_data=f"var|{dub_variant['id']}")
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                mini_label,
+                web_app=WebAppInfo(url=_build_miniapp_anime_url(dub_variant["id"])),
+            )
+        ])
+
+    second_row = []
+    anilist_url = _build_anilist_url(anime, fallback_title, item)
+    trailer_url = _build_trailer_url(anime)
+
+    if anilist_url:
+        second_row.append(InlineKeyboardButton("🧾 Sinopse", url=anilist_url))
+
+    if trailer_url:
+        second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
+
+    if not rows:
+        default_id = item.get("default_anime_id") or item.get("id")
+        rows.append(_anime_access_row(default_id))
+
+    if second_row:
+        rows.append(second_row)
+
+    if back_callback:
+        rows.append([
+            InlineKeyboardButton("🔙 Voltar", callback_data=back_callback)
+        ])
 
     return InlineKeyboardMarkup(rows)
 
