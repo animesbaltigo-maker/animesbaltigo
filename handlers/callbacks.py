@@ -14,6 +14,7 @@ from services.animefire_client import (
     get_episodes,
     get_episode_player,
     get_random_anime_by_genre,
+    invalidate_anime_episode_cache,
 )
 from services.metrics import (
     log_event,
@@ -2030,6 +2031,13 @@ async def _render_episodes_page(
     items = payload.get("items", [])
     total = payload.get("total", 0)
 
+    if total <= 0 and offset == 0:
+        invalidate_anime_episode_cache(anime_id)
+        invalidate_callback_episode_cache(anime_id)
+        payload = await _get_cached_episodes(anime_id, offset, EPISODES_PER_PAGE)
+        items = payload.get("items", [])
+        total = payload.get("total", 0)
+
     display_title = _format_title_with_version(
         _pick_display_title(anime, anime.get("title") or "Sem título"),
         _resolve_is_dubbed(context, anime_id, anime=anime),
@@ -2076,6 +2084,20 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_answer_query(query, "⚠️ Não aperte várias vezes seguidas.", show_alert=False)
         return
 
+    if data.startswith("ql|"):
+        parts = data.split("|", 3)
+        if len(parts) == 4:
+            _, anime_id, episode, requested_quality = parts
+            requested_quality = _normalize_quality(requested_quality)
+            current_quality = _get_selected_quality(context, anime_id, episode)
+            if current_quality == requested_quality:
+                await _safe_answer_query(
+                    query,
+                    f"🔘 Já está em {requested_quality}.",
+                    show_alert=False,
+                )
+                return
+
     message = query.message
     user_lock = _user_lock(user.id)
 
@@ -2117,14 +2139,6 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     _, anime_id, episode, requested_quality = parts
                     requested_quality = _normalize_quality(requested_quality)
                     current_quality = _get_selected_quality(context, anime_id, episode)
-
-                    if current_quality == requested_quality:
-                        await _safe_answer_query(
-                            query,
-                            f"🔘 Já está em {requested_quality}.",
-                            show_alert=False,
-                        )
-                        return
 
                     if not _can_switch_quality_now(context, anime_id, episode):
                         await _safe_answer_query(query, "⏳ Aguarde um instante para trocar a qualidade.", show_alert=False)
