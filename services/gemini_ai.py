@@ -1,3 +1,4 @@
+"""
 akira.py — Motor de resposta da Assistente Akira (Ecossistema Baltigo)
 
 Melhorias em relação à versão original:
