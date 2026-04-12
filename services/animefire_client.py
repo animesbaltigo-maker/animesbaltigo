@@ -37,11 +37,12 @@ _INFLIGHT_PLAYER = {}
 
 _SEARCH_CACHE_TTL = 1800
 _DETAILS_CACHE_TTL = 43200
-_EPISODES_CACHE_TTL = 21600
+_EPISODES_CACHE_TTL = 180
 _VIDEO_CACHE_TTL = 21600
 _ANILIST_CACHE_TTL = 86400
 _HTML_CACHE_TTL = 1800
 _PLAYER_CACHE_TTL = 21600
+_EMPTY_EPISODES_CACHE_TTL = 45
 
 _HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -116,6 +117,28 @@ def invalidate_episode_caches(anime_id: str, episode: str) -> None:
 
     _drop_matching_cache_entries(_HTML_CACHE, lambda key: str(key).rstrip("/") in episode_page_urls)
     _cancel_matching_inflight(_INFLIGHT_HTML, lambda key: str(key).rstrip("/") in episode_page_urls)
+    invalidate_anime_episode_cache(anime_id)
+
+
+def _related_episode_cache_keys(anime_id: str) -> set[str]:
+    normalized_anime_id = _normalize_slug_for_page(anime_id)
+    normalized_base_slug = _normalize_episode_slug(anime_id)
+    keys = {normalized_anime_id}
+
+    if normalized_base_slug:
+        keys.add(normalized_base_slug)
+        keys.add(f"{normalized_base_slug}-todos-os-episodios")
+
+    return {key for key in keys if key}
+
+
+def invalidate_anime_episode_cache(anime_id: str) -> None:
+    cache_keys = _related_episode_cache_keys(anime_id)
+    if not cache_keys:
+        return
+
+    _drop_matching_cache_entries(_EPISODES_CACHE, lambda key: str(key) in cache_keys)
+    _cancel_matching_inflight(_INFLIGHT_EPISODES, lambda key: str(key) in cache_keys)
 
 
 def _cache_get(cache: dict, key: str, ttl: int):
@@ -123,18 +146,22 @@ def _cache_get(cache: dict, key: str, ttl: int):
     if not item:
         return None
 
-    if time.time() - item["time"] > ttl:
+    effective_ttl = int(item.get("ttl", ttl) or ttl)
+    if time.time() - item["time"] > effective_ttl:
         cache.pop(key, None)
         return None
 
     return item["data"]
 
 
-def _cache_set(cache: dict, key: str, data):
-    cache[key] = {
+def _cache_set(cache: dict, key: str, data, ttl: int | None = None):
+    item = {
         "time": time.time(),
         "data": data,
     }
+    if ttl is not None:
+        item["ttl"] = ttl
+    cache[key] = item
 
 
 async def _dedup_fetch(cache: dict, inflight: dict, key: str, ttl: int, coro_factory):
@@ -1356,6 +1383,32 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
         for item in episodes:
             unique[item["episode"]] = item
 
+        if len(unique) <= 1:
+            try:
+                from services.recent_episodes_client import get_recent_episodes
+
+                related_ids = _related_episode_cache_keys(anime_id)
+                recent_items = await get_recent_episodes(limit=60)
+
+                for recent in recent_items:
+                    recent_anime_id = _normalize_slug_for_page(recent.get("anime_id") or "")
+                    if recent_anime_id not in related_ids:
+                        continue
+
+                    recent_episode = str(recent.get("episode") or "").strip()
+                    if not recent_episode:
+                        continue
+
+                    unique.setdefault(
+                        recent_episode,
+                        {
+                            "episode": recent_episode,
+                            "base_slug": recent_anime_id or _normalize_episode_slug(anime_id),
+                        },
+                    )
+            except Exception as error:
+                print(f"[EPISODES] fallback_recent_error={repr(error)}")
+
         items = sorted(unique.values(), key=lambda x: int(x["episode"]))
 
         by_episode = {}
@@ -1368,13 +1421,19 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
             "by_episode": by_episode,
         }
 
-    payload = await _dedup_fetch(
-        _EPISODES_CACHE,
-        _INFLIGHT_EPISODES,
-        anime_id,
-        _EPISODES_CACHE_TTL,
-        _fetch,
-    )
+    payload = _cache_get(_EPISODES_CACHE, anime_id, _EPISODES_CACHE_TTL)
+    if payload is None:
+        task = _INFLIGHT_EPISODES.get(anime_id)
+        if task is None:
+            task = asyncio.create_task(_fetch())
+            _INFLIGHT_EPISODES[anime_id] = task
+
+        try:
+            payload = await task
+            ttl = _EMPTY_EPISODES_CACHE_TTL if payload.get("total", 0) <= 0 else _EPISODES_CACHE_TTL
+            _cache_set(_EPISODES_CACHE, anime_id, payload, ttl=ttl)
+        finally:
+            _INFLIGHT_EPISODES.pop(anime_id, None)
 
     items = payload["items"]
     total = payload["total"]
