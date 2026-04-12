@@ -214,7 +214,7 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     history = conversation_memory.get_history(chat_id)
 
     try:
-        reply = generate_anime_reply(user_text, history=history)
+        reply = await generate_anime_reply(user_text, history=history)
     except RuntimeError as e:
         err = str(e)
         if any(k in err for k in ("RESOURCE_EXHAUSTED", "429", "quota")):
@@ -236,7 +236,7 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # ── Resolve botões em paralelo com o split ──────────────────────────────
     parts, keyboard = await asyncio.gather(
-        asyncio.to_thread(split_for_telegram, reply),
+        asyncio.to_thread(split_for_telegram, reply),  # síncrona leve
         _resolve_buttons(reply, user_text),
     )
 
