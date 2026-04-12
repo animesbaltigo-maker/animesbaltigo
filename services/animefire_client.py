@@ -1,9 +1,11 @@
 import asyncio
+import json
 import html as html_lib
 import random
 import re
 import time
 import unicodedata
+from pathlib import Path
 from urllib.parse import quote, unquote, urljoin
 
 import httpx
@@ -43,6 +45,7 @@ _ANILIST_CACHE_TTL = 86400
 _HTML_CACHE_TTL = 1800
 _PLAYER_CACHE_TTL = 21600
 _EMPTY_EPISODES_CACHE_TTL = 45
+_POSTED_EPISODES_JSON_PATH = Path(__file__).resolve().parent.parent / "data" / "episodios_postados.json"
 
 _HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -143,6 +146,50 @@ def invalidate_anime_episode_cache(anime_id: str) -> None:
     anime_page_urls = {f"{BASE_URL}/animes/{key}" for key in cache_keys}
     _drop_matching_cache_entries(_HTML_CACHE, lambda key: str(key).rstrip("/") in anime_page_urls)
     _cancel_matching_inflight(_INFLIGHT_HTML, lambda key: str(key).rstrip("/") in anime_page_urls)
+
+
+def _load_posted_episode_items(anime_id: str) -> list[dict]:
+    related_ids = _related_episode_cache_keys(anime_id)
+    if not related_ids or not _POSTED_EPISODES_JSON_PATH.exists():
+        return []
+
+    try:
+        raw = json.loads(_POSTED_EPISODES_JSON_PATH.read_text(encoding="utf-8"))
+    except Exception as error:
+        print(f"[EPISODES] posted_json_error={repr(error)}")
+        return []
+
+    if not isinstance(raw, list):
+        return []
+
+    items = []
+    seen = set()
+
+    for entry in raw:
+        value = str(entry or "").strip()
+        if not value or "|" not in value:
+            continue
+
+        raw_anime_id, raw_episode = value.split("|", 1)
+        normalized_anime_id = _normalize_slug_for_page(raw_anime_id)
+        normalized_episode = str(raw_episode or "").strip()
+
+        if normalized_anime_id not in related_ids or not normalized_episode:
+            continue
+
+        key = f"{normalized_anime_id}|{normalized_episode}"
+        if key in seen:
+            continue
+
+        seen.add(key)
+        items.append(
+            {
+                "episode": normalized_episode,
+                "base_slug": normalized_anime_id or _normalize_episode_slug(anime_id),
+            }
+        )
+
+    return items
 
 
 def _cache_get(cache: dict, key: str, ttl: int):
@@ -1388,12 +1435,17 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
         html_doc = await _get(url)
         unique = _extract_unique_episodes(html_doc)
 
+        for item in _load_posted_episode_items(anime_id):
+            unique.setdefault(item["episode"], item)
+
         if len(unique) <= 1:
             try:
                 fresh_html_doc = await _request_text(url, headers=_HTTP_HEADERS)
                 fresh_unique = _extract_unique_episodes(fresh_html_doc)
                 if len(fresh_unique) > len(unique):
                     unique = fresh_unique
+                    for item in _load_posted_episode_items(anime_id):
+                        unique.setdefault(item["episode"], item)
                     _cache_set(_HTML_CACHE, url, fresh_html_doc, ttl=_HTML_CACHE_TTL)
             except Exception as error:
                 print(f"[EPISODES] refresh_html_error={repr(error)}")
