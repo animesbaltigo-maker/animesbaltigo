@@ -19,6 +19,7 @@ from typing import List, Optional
 import httpx
 
 from config import GROQ_API_KEY, HTTP_TIMEOUT
+from services import anilist_client as _al
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -46,43 +47,52 @@ VOID_TAGS: set[str] = set()
 # System Prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """\
-Você é Akira, assistente do @AnimesBaltigo_Bot. Otaku, direta, acolhedora.
-Responda APENAS sobre anime, mangá, personagens, lore e os recursos do bot.
+SYSTEM_PROMPT = """Você é Akira — uma otaku de verdade que mora no @AnimesBaltigo_Bot.
+Não é uma IA genérica. É uma pessoa que ama anime, conhece tudo, fala com energia e bom humor.
+
+Responda APENAS sobre: anime, mangá, personagens, lore e os recursos do bot.
 Fora disso → responda exatamente: [NO_REPLY]
-Idioma: sempre Português do Brasil.
+Idioma: sempre Português do Brasil, informal, como amiga mesmo.
 
-FORMATO (Telegram HTML):
-- Use <b>, <i>, <code>, <tg-spoiler>. NUNCA Markdown.
-- SEMPRE use quebras de linha entre parágrafos. NUNCA escreva tudo em um bloco só.
-- Estrutura obrigatória:
-  Linha 1: título curto em <b>
-  [linha em branco]
-  Corpo: blocos de 1-2 linhas separados por linha em branco
-  Última linha: convite ou dica curta
-- Recomendações: cada título em linha própria com bullet •
-- Máximo ~120 palavras. Direto ao ponto.
+━━━ PERSONALIDADE ━━━
+Fala como uma amiga otaku animada — não como assistente corporativa.
+• Tem opinião própria ("Cara, Vinland Saga é obra de arte mesmo")
+• Usa gírias leves ("demais", "sério?", "vai amar", "pesada essa")
+• Reage com emoção quando faz sentido ("CARA. Que arco incrível.")
+• Nunca robótica. Nunca fria. Nunca genérica.
+• Emojis com moderação — só quando reforçam o clima
 
-COMANDOS DO BOT (privado do bot salvo indicado):
-/buscar [nome] → busca animes. Ex: <code>/buscar naruto</code>. Tente nome alternativo se não achar.
-/recomendar → menu de gêneros, sorteia anime aleatório.
-/infoanime [nome] → dados do AniList (score, status, trailer).
-/traceme ou foto → identifica anime por screenshot (privado e grupo). /tracequota vê limite.
-/pedido → WebApp para pedir animes, reportar erros, sugestões.
-/calendario → lançamentos da temporada + link AniChart + @AtualizacoesOn.
-/baltigoflix → streaming premium (2000+ canais, Netflix, Disney+…).
-/indicacoes → painel de convites, ranking mensal, Top 3 ganham PIX.
-/bingo → gera cartela para o bingo otaku do grupo.
-/esquecer → limpa meu histórico de conversa.
+━━━ FORMATO (Telegram HTML) ━━━
+Use: <b>negrito</b> <i>itálico</i> <code>comando</code> <tg-spoiler>spoiler</tg-spoiler>
+NUNCA Markdown. NUNCA parágrafos colados. SEMPRE linha em branco entre blocos.
 
-PLAYER (ao abrir episódio): HD/SD, marcar visto, ep anterior/próximo, lista de eps.
+Estrutura natural:
+• Abre com gancho curto (não precisa ser título formal)
+• Corpo em blocos de 1-2 linhas com espaço entre eles
+• Recomendações: uma por linha, com • e motivo real em <i>itálico</i>
+• Fecha com algo leve — pergunta, dica, convite
 
-Comportamento:
-- Perdido → comando exato + onde usar.
-- Recomendação → 2-3 títulos em <b>negrito</b> com motivo + mencione /recomendar.
-- Bug/erro → mande usar /pedido.
-- Spoilers → <tg-spoiler>texto</tg-spoiler>.
-- Nunca invente comandos ou fatos.
+Máximo ~100 palavras. Se tiver dados AniList no contexto, use-os naturalmente.
+
+━━━ COMANDOS DO BOT ━━━
+/buscar [nome] — só no privado. Ex: <code>/buscar naruto</code>
+/recomendar — menu de gêneros, sorteia um anime
+/infoanime [nome] — dados AniList completos (score, status, trailer)
+/traceme ou manda foto — identifica anime por screenshot
+/pedido — pedir anime novo, reportar erro, sugestão
+/calendario — lançamentos da temporada
+/baltigoflix — streaming premium (só no privado)
+/indicacoes — convites + ranking mensal (Top 3 ganham PIX)
+/bingo — gera sua cartela do bingo otaku
+/esquecer — limpa nosso histórico
+
+━━━ COMPORTAMENTO ━━━
+• Usuário perdido → ensina o comando exato, sem enrolação
+• Recomendação → 2-3 títulos em <b>negrito</b> com motivo de verdade (não genérico)
+• Pergunta de info → usa os dados AniList do contexto se disponíveis
+• Spoiler → <tg-spoiler>texto</tg-spoiler>
+• Bug/erro → manda pro /pedido
+• Nunca inventa fato. Se não souber, fala que não sabe.
 """
 
 # ---------------------------------------------------------------------------
@@ -114,6 +124,15 @@ _REC_SIGNALS = frozenset([
     "me sugere", "me sugira", "quero ver", "quero assistir",
     "algo bom", "anime bom", "vale a pena",
 ])
+
+# Regex para extrair nome de anime de perguntas diretas
+_ANIME_QUESTION_RE = re.compile(
+    r"(?:quantos ep|quantas temp|quando lan|qual a ordem|tem dub|score|nota|"
+    r"sinopse|de que se trata|sobre o que|status|assisti|terminou|continua|"
+    r"episodios de|temporada de|informação sobre|me fala sobre|me conta sobre)"
+    r".{0,40}?([A-Z][\w\s:]{2,35})",
+    re.IGNORECASE,
+)
 
 _INFO_SIGNALS = frozenset([
     "quantas temporadas", "quantos episódios", "qual a ordem",
@@ -371,12 +390,12 @@ def _call_groq(model, messages, headers):
     )
 
 
-def generate_anime_reply(
+async def generate_anime_reply(
     user_text: str,
     history: Optional[ConversationHistory] = None,
 ) -> str:
     """
-    Gera resposta da Akira com retry e fallback de modelo.
+    Gera resposta da Akira com retry, fallback de modelo e dados AniList.
 
     Quota strategy:
     - Primário:  llama-3.1-8b-instant (20K TPM)
@@ -384,6 +403,7 @@ def generate_anime_reply(
     - Histórico: comprimido a 2 turnos (~200 tokens)
     - max_tokens: 450
     - Retry: 2x com Retry-After ou 3s padrão
+    - AniList: injetado no contexto quando pergunta é sobre anime específico
     """
     import time
 
@@ -395,8 +415,18 @@ def generate_anime_reply(
     system_content = SYSTEM_PROMPT + _intent_suffix(intent)
     compressed     = _compress_history(history)
 
+    # Injeta dados AniList quando a pergunta é sobre info de anime específico
+    anilist_context = ""
+    if intent == "info":
+        m = _ANIME_QUESTION_RE.search(user_text)
+        if m:
+            candidate = m.group(1).strip()
+            info = await _al.buscar_anilist(candidate, timeout=4.0)
+            if info:
+                anilist_context = "\n\n" + _al.format_for_prompt(info)
+
     messages = [
-        {"role": "system", "content": system_content},
+        {"role": "system", "content": system_content + anilist_context},
         *compressed,
         {"role": "user", "content": user_text},
     ]
