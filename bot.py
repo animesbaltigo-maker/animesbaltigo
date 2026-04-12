@@ -44,7 +44,7 @@ from handlers.testminiapp import testminiapp
 from handlers.tracemoe import traceme, tracequota, trace_photo_handler
 
 
-from handlers.group_ai import group_ai_handler
+from handlers.group_ai import group_ai_handler, esquecer_handler
 
 
 init_metrics_db()
@@ -137,6 +137,8 @@ def main():
         ),
         group=99,
     )
+
+    app.add_handler(CommandHandler("esquecer", esquecer_handler))
 
     # IA Gemini nos grupos
     app.add_handler(
