@@ -734,9 +734,9 @@ def _player_keyboard(
             sd_label = "SD indisponivel"
 
     if selected_quality == "HD":
-        hd_label = f"{hd_label} [ok]"
+        hd_label = f"{hd_label} 🔘"
     else:
-        sd_label = f"{sd_label} [ok]"
+        sd_label = f"{sd_label} 🔘"
 
     watched = is_episode_watched(user_id, anime_id, episode)
 
