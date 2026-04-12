@@ -26,95 +26,96 @@ from utils.gatekeeper import ensure_channel_membership
 
 TRIGGER = "akira"
 
-# Captura qualquer texto em <b>...</b> — candidatos a título de anime
-_BOLD_RE = re.compile(r"<b>([^<]{2,60})</b>")
-
-# Palavras que definitivamente não são títulos de anime
-_NOISE_WORDS = frozenset([
-    "baltigo", "animesbaltigo", "mangasbaltigo", "miniapp", "webapp",
-    "bot", "como", "aqui", "olha", "veja", "atenção", "nota", "dica",
-    "spoiler", "aviso", "importante", "resultado", "busca", "episódio",
-    "temporada", "dublado", "legendado", "disponível", "acesse",
-    "entre", "envie", "abra", "escolha", "toque", "clique",
-    "gênero", "ação", "romance", "comédia", "terror", "drama",
-    "mistério", "fantasia", "esportes", "recomendação", "sugestão",
-    "passo", "exemplo", "oi", "olá", "sim", "não",
-])
-
-# Quantos animes resolver no máximo por resposta
-_MAX_BUTTONS = 3
-# Timeout por busca (paralelas, não somam)
+_MAX_BUTTONS    = 3
 _RESOLVE_TIMEOUT = 4.5
-# Score mínimo que consideramos match confiante (evita falsos positivos)
-_MIN_SCORE_RATIO = 0.55
+_MIN_SCORE_RATIO = 0.60
+
+# Regex para capturar conteúdo de <b>...</b> (até 120 chars para pegar listas)
+_BOLD_RE  = re.compile(r"<b>([^<]{2,120})</b>")
+# Separadores de lista dentro de um <b>: "X, Y e Z" ou "X ou Y"
+_SPLIT_RE = re.compile(r"\s*(?:,\s*|\s+e\s+|\s+ou\s+)\s*")
+
+# Palavras/prefixos que não são títulos de anime
+_NOISE_EXACT = frozenset([
+    "baltigo", "bot", "miniapp", "webapp", "busca", "episódio", "temporada",
+    "dublado", "legendado", "disponível", "gênero", "ação", "romance",
+    "comédia", "terror", "drama", "mistério", "fantasia", "esportes",
+    "recomendação", "sugestão", "oi", "olá", "sim", "não", "anime", "mangá",
+])
+_NOISE_PREFIX = ("@", "/", "como", "aqui", "olha", "veja", "entre", "envie",
+                 "abra", "escolha", "toque", "clique", "acesse", "passo")
 
 
 # ─── Detecção e resolução ─────────────────────────────────────────────────────
 
-def _extract_candidates(text: str) -> list[str]:
+def _extract_candidates(reply: str, user_text: str) -> list[str]:
     """
-    Extrai candidatos a título de anime do texto HTML da Akira.
-    Pega conteúdo de <b>...</b>, filtra ruído e deduplicada.
+    Estratégia em duas camadas:
+
+    1. Prioridade: anime mencionado explicitamente pelo usuário na mensagem.
+       Se o usuário disse "quero assistir Naruto", Naruto é o candidato principal.
+
+    2. Complemento: títulos em <b>...</b> da resposta da Akira.
+       Divide listas ("X, Y e Z" dentro de um <b>) em candidatos individuais.
+
+    Isso evita o bug de pegar animes mencionados "de passagem" na resposta
+    quando o usuário perguntou sobre um anime específico.
     """
     seen: set[str] = set()
     candidates: list[str] = []
 
-    for match in _BOLD_RE.finditer(text):
-        raw = match.group(1).strip()
-
-        # Ignora vazios, muito curtos, usernames de bot (@...) e noise words
-        if not raw or len(raw) < 3:
-            continue
-        if raw.startswith("@"):
-            continue
-        if raw.lower() in _NOISE_WORDS:
-            continue
-        # Ignora frases longas (mais de 5 palavras provavelmente não é título)
-        if len(raw.split()) > 6:
-            continue
-        # Ignora se começa com emoji ou símbolo
-        if raw[0] in "🎌⚡🔥💡📖🤖🎬📅🎲🧠🔎":
-            continue
-
-        key = raw.lower()
+    def _add(title: str) -> None:
+        t = title.strip().rstrip(".")
+        if len(t) < 3 or len(t) > 50:
+            return
+        if t.lower() in _NOISE_EXACT:
+            return
+        if any(t.lower().startswith(p) for p in _NOISE_PREFIX):
+            return
+        if len(t.split()) > 7:
+            return
+        key = t.lower()
         if key not in seen:
             seen.add(key)
-            candidates.append(raw)
+            candidates.append(t)
 
-        if len(candidates) >= _MAX_BUTTONS * 2:  # busca extra pra ter margem
+    # Camada 1 — anime citado pelo usuário (extrai palavras capitalizadas
+    # ou sequências que parecem título após "assistir/ver/quero/buscar")
+    intent_re = re.compile(
+        r"(?:assistir|ver|buscar|jogar|ler|quero|gosto de|falar de|sobre)"
+        r"\s+([^?!.,\n]{2,40})",
+        re.IGNORECASE,
+    )
+    for m in intent_re.finditer(user_text):
+        _add(m.group(1).strip())
+
+    # Camada 2 — <b>títulos</b> da resposta, com split de listas
+    for m in _BOLD_RE.finditer(reply):
+        raw = m.group(1).strip()
+        parts = _SPLIT_RE.split(raw)
+        for p in parts:
+            _add(p)
+        if len(candidates) >= _MAX_BUTTONS * 2:
             break
 
-    return candidates
+    return candidates[:_MAX_BUTTONS * 2]
 
 
 def _title_similarity(query: str, result_title: str) -> float:
-    """
-    Score simples de similaridade entre o candidato extraído e o título retornado.
-    Retorna 0.0–1.0. Não depende de libs externas.
-    """
     q = query.lower().strip()
     r = result_title.lower().strip()
-
     if q == r:
         return 1.0
     if q in r or r in q:
         return 0.85
-
-    # Jaccard nas palavras
     q_words = set(q.split())
     r_words = set(r.split())
     if not q_words or not r_words:
         return 0.0
-    intersection = q_words & r_words
-    union = q_words | r_words
-    return len(intersection) / len(union)
+    return len(q_words & r_words) / len(q_words | r_words)
 
 
 async def _resolve_one(candidate: str) -> tuple[str, str] | None:
-    """
-    Tenta resolver um candidato a um (display_title, anime_id) real.
-    Retorna None se não achar com confiança suficiente.
-    """
     try:
         results = await asyncio.wait_for(
             search_anime(candidate),
@@ -123,42 +124,29 @@ async def _resolve_one(candidate: str) -> tuple[str, str] | None:
     except Exception as e:
         print(f"[Akira][resolve] erro '{candidate}': {e}")
         return None
-
     if not results:
         return None
-
-    best = results[0]
+    best       = results[0]
     best_title = str(best.get("title") or "").strip()
     anime_id   = str(best.get("id")    or "").strip()
-
     if not anime_id or not best_title:
         return None
-
-    # Verifica se o resultado é realmente sobre o anime que a Akira mencionou
-    score = _title_similarity(candidate, best_title)
-    if score < _MIN_SCORE_RATIO:
-        print(f"[Akira][resolve] '{candidate}' → '{best_title}' score={score:.2f} — descartado")
+    if _title_similarity(candidate, best_title) < _MIN_SCORE_RATIO:
+        print(f"[Akira][resolve] '{candidate}' → '{best_title}' descartado")
         return None
-
     return best_title, anime_id
 
 
-async def _resolve_buttons(text: str) -> InlineKeyboardMarkup | None:
-    """
-    Pipeline completo: extrai candidatos → resolve em paralelo → monta teclado.
-    Retorna None se nenhum anime for resolvido com confiança.
-    """
-    candidates = _extract_candidates(text)
+async def _resolve_buttons(reply: str, user_text: str) -> InlineKeyboardMarkup | None:
+    candidates = _extract_candidates(reply, user_text)
     if not candidates:
         return None
 
-    # Resolve todos em paralelo, limita aos primeiros _MAX_BUTTONS*2
     raw_results = await asyncio.gather(
-        *[_resolve_one(c) for c in candidates[:_MAX_BUTTONS * 2]],
+        *[_resolve_one(c) for c in candidates],
         return_exceptions=False,
     )
 
-    # Filtra Nones e deduplicada por anime_id
     seen_ids: set[str] = set()
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -169,18 +157,13 @@ async def _resolve_buttons(text: str) -> InlineKeyboardMarkup | None:
         if anime_id in seen_ids:
             continue
         seen_ids.add(anime_id)
-
         label = f"▶️ {display_title}"
         if len(label) > 40:
             label = label[:37].rstrip() + "..."
-
-        rows.append([
-            InlineKeyboardButton(
-                text=label,
-                url=f"https://t.me/{BOT_USERNAME}?start=anime_{anime_id}",
-            )
-        ])
-
+        rows.append([InlineKeyboardButton(
+            text=label,
+            url=f"https://t.me/{BOT_USERNAME}?start=anime_{anime_id}",
+        )])
         if len(rows) >= _MAX_BUTTONS:
             break
 
@@ -254,7 +237,7 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # ── Resolve botões em paralelo com o split ──────────────────────────────
     parts, keyboard = await asyncio.gather(
         asyncio.to_thread(split_for_telegram, reply),
-        _resolve_buttons(reply),
+        _resolve_buttons(reply, user_text),
     )
 
     # Salva na memória
