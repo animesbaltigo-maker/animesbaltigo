@@ -25,7 +25,10 @@ from config import GROQ_API_KEY, HTTP_TIMEOUT
 # ---------------------------------------------------------------------------
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL_NAME = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+MODEL_PRIMARY  = os.getenv("GROQ_MODEL",         "llama-3.1-8b-instant").strip()
+MODEL_FALLBACK = os.getenv("GROQ_MODEL_FALLBACK", "llama3-8b-8192").strip()
+_MAX_RETRIES    = 2
+_RETRY_DELAY_S  = 3.0
 
 TELEGRAM_MAX_LEN = 4000
 NO_REPLY_TOKEN = "[NO_REPLY]"
@@ -44,123 +47,36 @@ VOID_TAGS: set[str] = set()
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-Você é <b>Akira</b>, assistente oficial do ecossistema <b>Baltigo</b>.
-Personalidade: otaku estilosa, acolhedora, direta — sem enrolação, sem robótica.
+Você é Akira, assistente do @AnimesBaltigo_Bot. Otaku, direta, acolhedora.
+Responda APENAS sobre anime, mangá, personagens, lore e os recursos do bot.
+Fora disso → responda exatamente: [NO_REPLY]
+Idioma: sempre Português do Brasil.
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 DOMÍNIO — responda APENAS sobre:
-━━━━━━━━━━━━━━━━━━━━━━━━
-• Anime (episódios, temporadas, filmes, ordem, onde assistir)
-• Mangá (capítulos, onde ler, formatos disponíveis)
-• Personagens, histórias, curiosidades, lore
-• Recomendações otaku personalizadas
-• Como usar o @AnimesBaltigo_Bot
-• Como usar o @MangasBaltigo_Bot
-• MiniApp / WebApp Baltigo
+FORMATO (Telegram HTML):
+- Use <b>, <i>, <code>, <tg-spoiler>. NUNCA Markdown.
+- Estrutura: título em <b>, blocos curtos, emoji moderado, linha final amigável.
+- Respostas curtas e diretas. Máximo ~150 palavras salvo necessidade real.
 
-Se a mensagem estiver FORA desse domínio → responda exatamente: [NO_REPLY]
+COMANDOS DO BOT (privado do bot salvo indicado):
+/buscar [nome] → busca animes. Ex: <code>/buscar naruto</code>. Tente nome alternativo se não achar.
+/recomendar → menu de gêneros, sorteia anime aleatório.
+/infoanime [nome] → dados do AniList (score, status, trailer).
+/traceme ou foto → identifica anime por screenshot (privado e grupo). /tracequota vê limite.
+/pedido → WebApp para pedir animes, reportar erros, sugestões.
+/calendario → lançamentos da temporada + link AniChart + @AtualizacoesOn.
+/baltigoflix → streaming premium (2000+ canais, Netflix, Disney+…).
+/indicacoes → painel de convites, ranking mensal, Top 3 ganham PIX.
+/bingo → gera cartela para o bingo otaku do grupo.
+/esquecer → limpa meu histórico de conversa.
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-📐 FORMATAÇÃO — REGRAS OBRIGATÓRIAS
-━━━━━━━━━━━━━━━━━━━━━━━━
-Use APENAS HTML compatível com Telegram:
-  <b>negrito</b>   <i>itálico</i>   <u>sublinhado</u>   <s>riscado</s>
-  <code>comando</code>   <pre>bloco</pre>   <blockquote>citação</blockquote>
-  <tg-spoiler>spoiler</tg-spoiler>
+PLAYER (ao abrir episódio): HD/SD, marcar visto, ep anterior/próximo, lista de eps.
 
-NUNCA use Markdown (* _ ` # etc).
-NUNCA use tags fora da lista acima.
-NUNCA deixe tags abertas sem fechar.
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-🎨 ESTRUTURA IDEAL DE RESPOSTA
-━━━━━━━━━━━━━━━━━━━━━━━━
-1. <b>🎌 Título chamativo e curto</b>
-
-2. Contextualização em 1–2 linhas
-
-3. Conteúdo principal (passo a passo OU lista OU explicação)
-   — Blocos curtos (2–3 linhas)
-   — Emojis estratégicos (não em excesso)
-   — <b> para pontos chave, <code> para comandos
-
-4. Linha final amigável (convite, dica extra, pergunta leve)
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 COMO ENSINAR O BOT (use sempre que relevante)
-━━━━━━━━━━━━━━━━━━━━━━━━
-Para assistir anime:
-  1. Entre no @AnimesBaltigo_Bot
-  2. Envie <code>/buscar nome_do_anime</code>
-  3. Escolha o título na lista
-  4. Abra pelo MiniApp/WebApp ou opção disponível
-
-Para ler mangá:
-  1. Entre no @MangasBaltigo_Bot
-  2. Busque o nome da obra
-  3. Abra o título
-  4. Leia via MiniApp, Telegraph, PDF ou EPUB (depende da obra)
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-💡 COMPORTAMENTO ADAPTATIVO
-━━━━━━━━━━━━━━━━━━━━━━━━
-• Usuário perdido → guia passo a passo, didático
-• Usuário experiente → resposta direta e objetiva
-• Pedido de recomendação → pergunta gênero/humor se não informado, ou sugere direto com motivo
-• Pergunta sobre personagem/lore → responda com entusiasmo, organize por tópicos se longo
-• Spoiler → use <tg-spoiler>conteúdo</tg-spoiler>
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-🚫 PROIBIDO
-━━━━━━━━━━━━━━━━━━━━━━━━
-• Inventar fatos (se não souber, diga claramente)
-• Resposta seca sem formatação
-• Texto corrido sem estrutura
-• Falar de qualquer assunto fora do domínio
-• HTML quebrado ou mal fechado
-• Usar *** ou ### ou qualquer Markdown
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-🌟 EXEMPLOS DE QUALIDADE
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-[Exemplo — Como assistir]
-<b>🎌 Assistir anime por aqui é bem simples</b>
-
-Olha o caminho 👇
-
-1. Entre no <b>@AnimesBaltigo_Bot</b>
-2. Envie <code>/buscar naruto</code>
-3. Escolha o título na lista
-4. Abra pelo <b>MiniApp</b> ou opção disponível
-
-💡 Quer uma indicação de anime agora? Me fala seu estilo!
-
----
-
-[Exemplo — Recomendação]
-<b>⚡ Boa escolha começar por aí!</b>
-
-Se você curte <i>ação intensa + poderes absurdos</i>, vai amar:
-
-• <b>Jujutsu Kaisen</b> — maldições, batalhas épicas, personagens marcantes
-• <b>Demon Slayer</b> — animação incrível, história emocionante
-• <b>Chainsaw Man</b> — dark, estiloso, imprevisível
-
-Todos disponíveis no <b>@AnimesBaltigo_Bot</b> 🎬
-
-Quer mais detalhes de algum?
-
----
-
-[Exemplo — Spoiler]
-<b>🔥 Sobre aquela cena do episódio 20...</b>
-
-<tg-spoiler>O Eren revela que controlou os Titãs desde o início, jogando tudo que a gente achava que sabia pela janela.</tg-spoiler>
-
-Pesada, né? 😅
-
-Idioma de resposta: sempre Português do Brasil.
+Comportamento:
+- Perdido → comando exato + onde usar.
+- Recomendação → 2-3 títulos em <b>negrito</b> com motivo + mencione /recomendar.
+- Bug/erro → mande usar /pedido.
+- Spoilers → <tg-spoiler>texto</tg-spoiler>.
+- Nunca invente comandos ou fatos.
 """
 
 # ---------------------------------------------------------------------------
@@ -173,6 +89,15 @@ _HELP_SIGNALS = frozenset([
     "me ajuda", "não entendi", "nao entendi", "onde clico",
     "como abro", "miniapp", "webapp", "como acesso", "tutorial",
     "não tô entendendo", "nao to entendendo", "o que é isso",
+    # comandos específicos
+    "buscar", "traceme", "tracequota", "pedido", "calendario",
+    "baltigoflix", "indicacoes", "indicações", "bingo", "ajuda",
+    "recomendar", "infoanime", "esquecer",
+    # intenções de uso
+    "como identifico", "como identificar", "como peço", "como pedir",
+    "como participo", "como participar", "como ganho", "como ganhar",
+    "como convido", "como convidar", "como assisto", "como assistir",
+    "qual comando", "quais comandos", "o que tem", "o que posso",
 ])
 
 _REC_SIGNALS = frozenset([
@@ -180,12 +105,17 @@ _REC_SIGNALS = frozenset([
     "o que assistir", "o que ler", "tem algo", "tem algum",
     "qual anime", "qual mangá", "por onde começo", "sugestão",
     "sugestao", "não sei o que ver", "nao sei o que ver",
+    "me sugere", "me sugira", "quero ver", "quero assistir",
+    "algo bom", "anime bom", "vale a pena",
 ])
 
 _INFO_SIGNALS = frozenset([
     "quantas temporadas", "quantos episódios", "qual a ordem",
     "onde assistir", "onde ler", "tem dublado", "tem legenda",
     "personagem", "arco", "saga", "história", "lore",
+    "quando lança", "quando sai", "nova temporada", "continuação",
+    "score", "nota", "avaliação", "sinopse", "de que se trata",
+    "trailer", "studio", "estúdio",
 ])
 
 
@@ -207,18 +137,22 @@ def _intent_suffix(intent: str) -> str:
         return (
             "\n\n[CONTEXTO ATIVO: usuário precisa de ajuda prática]\n"
             "Priorize orientação passo a passo, clara e acolhedora. "
-            "Use exemplos de comando reais."
+            "Use o comando EXATO do bot (ex: /buscar, /traceme, /recomendar). "
+            "Mencione onde o comando funciona (privado ou grupo). "
+            "Use exemplos reais de uso."
         )
     if intent == "recommendation":
         return (
             "\n\n[CONTEXTO ATIVO: usuário quer recomendação]\n"
             "Se o gênero/humor não estiver claro, faça UMA pergunta curta. "
-            "Se tiver contexto suficiente, recomende 2–3 títulos com 1 linha de motivo cada."
+            "Se tiver contexto suficiente, recomende 2–3 títulos com 1 linha de motivo cada. "
+            "Ao final, mencione o /recomendar para ele explorar mais por conta própria."
         )
     if intent == "info":
         return (
             "\n\n[CONTEXTO ATIVO: usuário quer informação sobre anime/mangá]\n"
-            "Responda de forma organizada. Use spoiler tag se revelar plot importante."
+            "Responda de forma organizada. Use <tg-spoiler> se revelar plot importante. "
+            "Se for informação de score/status/data, mencione que pode usar /infoanime para ver dados atualizados."
         )
     return ""
 
@@ -400,75 +334,100 @@ def split_for_telegram(text: str, max_len: int = TELEGRAM_MAX_LEN) -> list[str]:
 ConversationHistory = List[dict]
 
 
+def _compress_history(history):
+    """Comprime histórico: 2 últimos turnos, respostas longas truncadas a 300 chars."""
+    if not history:
+        return []
+    recent = history[-4:]
+    compressed = []
+    for msg in recent:
+        role    = msg.get("role", "")
+        content = (msg.get("content") or "").strip()
+        if role == "assistant" and len(content) > 300:
+            content = content[:297] + "…"
+        compressed.append({"role": role, "content": content})
+    return compressed
+
+
+def _call_groq(model, messages, headers):
+    return httpx.post(
+        GROQ_API_URL,
+        headers=headers,
+        json={
+            "model":             model,
+            "messages":          messages,
+            "temperature":       0.75,
+            "max_tokens":        450,
+            "top_p":             0.9,
+            "frequency_penalty": 0.2,
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+
+
 def generate_anime_reply(
     user_text: str,
     history: Optional[ConversationHistory] = None,
 ) -> str:
     """
-    Gera resposta da Akira.
+    Gera resposta da Akira com retry e fallback de modelo.
 
-    Args:
-        user_text: Mensagem atual do usuário.
-        history:   Histórico anterior no formato [{"role": "user"|"assistant", "content": "..."}].
-                   Máximo recomendado: 10 turnos (para não explodir o context window).
-
-    Returns:
-        Texto HTML sanitizado pronto para envio ao Telegram,
-        ou "[NO_REPLY]" se a mensagem estiver fora do domínio.
+    Quota strategy:
+    - Primário:  llama-3.1-8b-instant (20K TPM)
+    - Fallback:  llama3-8b-8192       (20K TPM)
+    - Histórico: comprimido a 2 turnos (~200 tokens)
+    - max_tokens: 450
+    - Retry: 2x com Retry-After ou 3s padrão
     """
+    import time
+
     user_text = (user_text or "").strip()
     if not user_text:
         return NO_REPLY_TOKEN
 
-    intent = _detect_intent(user_text)
+    intent         = _detect_intent(user_text)
     system_content = SYSTEM_PROMPT + _intent_suffix(intent)
-
-    # Monta histórico com limite de segurança (evita context overflow)
-    safe_history: ConversationHistory = []
-    if history:
-        # Mantém no máximo os últimos 10 turnos (20 mensagens)
-        safe_history = history[-20:]
+    compressed     = _compress_history(history)
 
     messages = [
         {"role": "system", "content": system_content},
-        *safe_history,
+        *compressed,
         {"role": "user", "content": user_text},
     ]
 
-    try:
-        response = httpx.post(
-            GROQ_API_URL,
-            headers=_build_headers(),
-            json={
-                "model": MODEL_NAME,
-                "messages": messages,
-                "temperature": 0.80,       # Ligeiramente menor = mais consistente
-                "max_tokens": 1024,        # Aumentado para evitar truncamento
-                "top_p": 0.9,
-                "frequency_penalty": 0.3,  # Reduz repetição de frases
-            },
-            timeout=HTTP_TIMEOUT,
-        )
-    except httpx.TimeoutException as exc:
-        raise RuntimeError("Timeout ao chamar a Groq API.") from exc
-    except httpx.RequestError as exc:
-        raise RuntimeError(f"Erro de conexão com a Groq API: {exc}") from exc
+    headers    = _build_headers()
+    last_error = ""
 
-    if response.is_error:
-        detail = _extract_error_detail(response)
-        raise RuntimeError(f"Groq API retornou {response.status_code}{detail}")
+    for model in [MODEL_PRIMARY, MODEL_FALLBACK]:
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = _call_groq(model, messages, headers)
+            except httpx.TimeoutException:
+                last_error = f"timeout em {model}"
+                break
+            except httpx.RequestError as exc:
+                raise RuntimeError(f"Erro de conexão com a Groq API: {exc}") from exc
 
-    data = response.json()
-    content = _extract_content(data)
+            if response.status_code == 429:
+                if attempt < _MAX_RETRIES:
+                    wait = min(float(response.headers.get("retry-after", _RETRY_DELAY_S)), 10.0)
+                    print(f"[Akira] 429 em {model}, aguardando {wait:.1f}s (tentativa {attempt+1})")
+                    time.sleep(wait)
+                    continue
+                last_error = f"429 em {model} após {_MAX_RETRIES} tentativas"
+                break
 
-    if not content:
-        return NO_REPLY_TOKEN
+            if response.is_error:
+                detail = _extract_error_detail(response)
+                raise RuntimeError(f"Groq API retornou {response.status_code}{detail}")
 
-    # Verifica token de recusa antes de sanitizar
-    if NO_REPLY_TOKEN in content:
-        return NO_REPLY_TOKEN
+            data    = response.json()
+            content = _extract_content(data)
+            if not content or NO_REPLY_TOKEN in content:
+                return NO_REPLY_TOKEN
+            return sanitize_telegram_html(content)
 
-    return sanitize_telegram_html(content)
+    raise RuntimeError(f"429 — quota esgotada. Último erro: {last_error}")
 
 
 # ---------------------------------------------------------------------------
