@@ -140,6 +140,10 @@ def invalidate_anime_episode_cache(anime_id: str) -> None:
     _drop_matching_cache_entries(_EPISODES_CACHE, lambda key: str(key) in cache_keys)
     _cancel_matching_inflight(_INFLIGHT_EPISODES, lambda key: str(key) in cache_keys)
 
+    anime_page_urls = {f"{BASE_URL}/animes/{key}" for key in cache_keys}
+    _drop_matching_cache_entries(_HTML_CACHE, lambda key: str(key).rstrip("/") in anime_page_urls)
+    _cancel_matching_inflight(_INFLIGHT_HTML, lambda key: str(key).rstrip("/") in anime_page_urls)
+
 
 def _cache_get(cache: dict, key: str, ttl: int):
     item = cache.get(key)
@@ -1359,29 +1363,40 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
 
     async def _fetch():
         url = f"{BASE_URL}/animes/{anime_id}"
-        html_doc = await _get(url)
-        soup = BeautifulSoup(html_doc, "html.parser")
-
-        episodes = []
         pattern = re.compile(r"/animes/([^/]+)/(\d+)(?:/)?$")
 
-        for anchor in soup.select("a[href*='/animes/']"):
-            href = (anchor.get("href") or "").strip()
-            match = pattern.search(href)
-            if not match:
-                continue
+        def _extract_unique_episodes(html_doc: str) -> dict[str, dict]:
+            soup = BeautifulSoup(html_doc, "html.parser")
+            unique = {}
 
-            base_slug = match.group(1)
-            ep = match.group(2)
+            for anchor in soup.select("a[href*='/animes/']"):
+                href = (anchor.get("href") or "").strip()
+                match = pattern.search(href)
+                if not match:
+                    continue
 
-            episodes.append({
-                "episode": ep,
-                "base_slug": base_slug,
-            })
+                base_slug = match.group(1)
+                ep = match.group(2)
 
-        unique = {}
-        for item in episodes:
-            unique[item["episode"]] = item
+                unique[ep] = {
+                    "episode": ep,
+                    "base_slug": base_slug,
+                }
+
+            return unique
+
+        html_doc = await _get(url)
+        unique = _extract_unique_episodes(html_doc)
+
+        if len(unique) <= 1:
+            try:
+                fresh_html_doc = await _request_text(url, headers=_HTTP_HEADERS)
+                fresh_unique = _extract_unique_episodes(fresh_html_doc)
+                if len(fresh_unique) > len(unique):
+                    unique = fresh_unique
+                    _cache_set(_HTML_CACHE, url, fresh_html_doc, ttl=_HTML_CACHE_TTL)
+            except Exception as error:
+                print(f"[EPISODES] refresh_html_error={repr(error)}")
 
         if len(unique) <= 1:
             try:
