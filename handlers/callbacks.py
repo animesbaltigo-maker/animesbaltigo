@@ -606,8 +606,7 @@ def _anime_text(
         f"<b>Ano:</b> <i>{html.escape(str(year))}</i>\n"
         f"<b>Status:</b> <i>{html.escape(str(status))}</i>\n"
         f"<b>Total Episódios:</b> <i>{html.escape(str(episodes))}</i>\n"
-        f"<b>Studio:</b> <i>{html.escape(str(studio))}</i>\n"
-        f"<b>Classificação:</b> <i>{html.escape(str(rating))}</i>\n\n"
+        f"<b>Studio:</b> <i>{html.escape(str(studio))}</i>\n\n"
         f"🔥 <i>Assista direto pelo bot, do jeito mais simples e completo.</i>"
     )
 
