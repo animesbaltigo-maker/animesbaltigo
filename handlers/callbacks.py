@@ -14,7 +14,6 @@ from services.animefire_client import (
     get_episodes,
     get_episode_player,
     get_random_anime_by_genre,
-    invalidate_anime_episode_cache,
 )
 from services.metrics import (
     log_event,
@@ -31,8 +30,8 @@ CALLBACK_COOLDOWN = 1.0
 QUALITY_COOLDOWN = 0.8
 
 ANIME_CACHE_TTL = 60 * 30
-EPISODES_CACHE_TTL = 60 * 2
-PLAYER_CACHE_TTL = 60 * 2
+EPISODES_CACHE_TTL = 60 * 10
+PLAYER_CACHE_TTL = 60 * 10
 RECOMMEND_CACHE_TTL = 60 * 5
 
 GLOBAL_FETCH_SEMAPHORE = asyncio.Semaphore(40)
@@ -147,28 +146,6 @@ def _cache_set(cache: dict, key: str, data):
         "time": _now(),
         "data": data,
     }
-
-
-def invalidate_callback_episode_cache(anime_id: str) -> None:
-    anime_id = str(anime_id or "").strip()
-    if not anime_id:
-        return
-
-    prefix = f"{anime_id}|"
-
-    for cache in (_GLOBAL_EPISODES_CACHE, _GLOBAL_PLAYER_CACHE):
-        for key in list(cache.keys()):
-            if str(key).startswith(prefix):
-                cache.pop(key, None)
-
-    for inflight in (_INFLIGHT_EPISODES, _INFLIGHT_PLAYER):
-        for key in list(inflight.keys()):
-            if not str(key).startswith(prefix):
-                continue
-
-            task = inflight.pop(key, None)
-            if task and not task.done():
-                task.cancel()
 
 
 async def _dedup_fetch(cache: dict, inflight: dict, key: str, ttl: int, coro_factory):
@@ -880,8 +857,6 @@ def _single_anime_keyboard(
         ]
     ]
 
-    rows = [_anime_access_row(anime_id)]
-
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, fallback_item or {})
     trailer_url = _build_trailer_url(anime)
@@ -930,12 +905,6 @@ def _variant_keyboard(
             )
         ])
 
-    rows = []
-    if sub_variant:
-        rows.append(_variant_access_row("JP no bot", sub_variant["id"]))
-    if dub_variant:
-        rows.append(_variant_access_row("BR no bot", dub_variant["id"]))
-
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, item)
     trailer_url = _build_trailer_url(anime)
@@ -945,10 +914,6 @@ def _variant_keyboard(
 
     if trailer_url:
         second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
-
-    if not rows:
-        default_id = item.get("default_anime_id") or item.get("id")
-        rows.append(_anime_access_row(default_id))
 
     if second_row:
         rows.append(second_row)
@@ -1236,29 +1201,6 @@ def _build_miniapp_anime_url(anime_id: str) -> str:
     return f"{base}/?anime={anime_id}"
 
 
-def _anime_access_row(anime_id: str) -> list[InlineKeyboardButton]:
-    return [
-        InlineKeyboardButton(
-            "📱 MiniApp",
-            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
-        ),
-        InlineKeyboardButton(
-            "📋 Lista no bot",
-            callback_data=f"eps|{anime_id}|0",
-        ),
-    ]
-
-
-def _variant_access_row(label: str, anime_id: str) -> list[InlineKeyboardButton]:
-    return [
-        InlineKeyboardButton(label, callback_data=f"var|{anime_id}"),
-        InlineKeyboardButton(
-            "📱 MiniApp",
-            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
-        ),
-    ]
-
-
 def _player_keyboard(
     anime_id: str,
     episode: str,
@@ -1304,10 +1246,6 @@ def _player_keyboard(
             InlineKeyboardButton(
                 "▶️ Assistir",
                 web_app=WebAppInfo(url=miniapp_episode_url),
-            ),
-            InlineKeyboardButton(
-                "Link normal",
-                callback_data=f"watch|{anime_id}|{episode}",
             )
         ],
         [watch_toggle_button],
@@ -1338,187 +1276,6 @@ def _player_keyboard(
     rows.append([
         InlineKeyboardButton("📋 Lista de episódios", callback_data=f"eps|{anime_id}|0")
     ])
-
-    return InlineKeyboardMarkup(rows)
-
-
-def _anime_access_row(anime_id: str) -> list[InlineKeyboardButton]:
-    return [
-        InlineKeyboardButton(
-            "📚 Ver no bot",
-            callback_data=f"eps|{anime_id}|0",
-        ),
-        InlineKeyboardButton(
-            "📱 Abrir MiniApp",
-            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
-        ),
-    ]
-
-
-def _variant_access_row(label: str, anime_id: str) -> list[InlineKeyboardButton]:
-    raw = (label or "").strip().lower()
-    if raw.startswith("jp") or "legend" in raw:
-        variant_label = "legendado"
-    elif raw.startswith("br") or "dub" in raw:
-        variant_label = "dublado"
-    else:
-        variant_label = (label or "anime").strip().lower()
-
-    return [
-        InlineKeyboardButton(
-            f"Bot: {variant_label}",
-            callback_data=f"var|{anime_id}",
-        ),
-        InlineKeyboardButton(
-            f"MiniApp: {variant_label}",
-            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
-        ),
-    ]
-
-
-def _player_keyboard(
-    anime_id: str,
-    episode: str,
-    detected_video: str,
-    prev_episode,
-    next_episode,
-    selected_quality: str,
-    user_id: int | str,
-    available_qualities: set | None = None,
-):
-    selected_quality = _normalize_quality(selected_quality)
-    available_qualities = available_qualities or set()
-
-    hd_label = "HD"
-    sd_label = "SD"
-
-    if available_qualities:
-        if "HD" not in available_qualities:
-            hd_label = "HD indisponivel"
-        if "SD" not in available_qualities:
-            sd_label = "SD indisponivel"
-
-    if selected_quality == "HD":
-        hd_label = f"{hd_label} 🔘"
-    else:
-        sd_label = f"{sd_label} 🔘"
-
-    watched = is_episode_watched(user_id, anime_id, episode)
-
-    watch_toggle_button = InlineKeyboardButton(
-        "❌ Desmarcar como visto" if watched else "✅ Marcar como visto",
-        callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
-    )
-
-    rows = [
-        [InlineKeyboardButton("▶️ Assistir episódio", url=detected_video or "https://t.me")],
-        [watch_toggle_button],
-        [
-            InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
-            InlineKeyboardButton(sd_label, callback_data=f"ql|{anime_id}|{episode}|SD"),
-        ],
-    ]
-
-    nav = []
-    if prev_episode:
-        nav.append(
-            InlineKeyboardButton(
-                "⏮ Anterior",
-                callback_data=f"ep|{anime_id}|{prev_episode}",
-            )
-        )
-    if next_episode:
-        nav.append(
-            InlineKeyboardButton(
-                "Próximo ⏭",
-                callback_data=f"ep|{anime_id}|{next_episode}",
-            )
-        )
-    if nav:
-        rows.append(nav)
-
-    rows.append([
-        InlineKeyboardButton("📋 Lista de episódios", callback_data=f"eps|{anime_id}|0")
-    ])
-
-    return InlineKeyboardMarkup(rows)
-
-
-def _variant_mode_labels(label: str) -> tuple[str, str]:
-    raw = (label or "").strip().lower()
-    if raw.startswith("jp") or "legend" in raw:
-        return (
-            "🇯🇵 Ver legendado no bot",
-            "📱 Abrir legendado no MiniApp",
-        )
-    if raw.startswith("br") or "dub" in raw:
-        return (
-            "🇧🇷 Ver dublado no bot",
-            "📱 Abrir dublado no MiniApp",
-        )
-    cleaned = (label or "anime").strip()
-    return (
-        f"🎬 Ver {cleaned} no bot",
-        f"📱 Abrir {cleaned} no MiniApp",
-    )
-
-
-def _variant_keyboard(
-    item: dict,
-    anime: dict,
-    fallback_title: str = "Sem tÃ­tulo",
-    back_callback: str | None = None,
-) -> InlineKeyboardMarkup:
-    rows = []
-
-    sub_variant = _pick_variant(item, dubbed=False)
-    dub_variant = _pick_variant(item, dubbed=True)
-
-    if sub_variant:
-        bot_label, mini_label = _variant_mode_labels("jp")
-        rows.append([
-            InlineKeyboardButton(bot_label, callback_data=f"var|{sub_variant['id']}")
-        ])
-        rows.append([
-            InlineKeyboardButton(
-                mini_label,
-                web_app=WebAppInfo(url=_build_miniapp_anime_url(sub_variant["id"])),
-            )
-        ])
-
-    if dub_variant:
-        bot_label, mini_label = _variant_mode_labels("br")
-        rows.append([
-            InlineKeyboardButton(bot_label, callback_data=f"var|{dub_variant['id']}")
-        ])
-        rows.append([
-            InlineKeyboardButton(
-                mini_label,
-                web_app=WebAppInfo(url=_build_miniapp_anime_url(dub_variant["id"])),
-            )
-        ])
-
-    second_row = []
-    anilist_url = _build_anilist_url(anime, fallback_title, item)
-    trailer_url = _build_trailer_url(anime)
-
-    if anilist_url:
-        second_row.append(InlineKeyboardButton("🧾 Sinopse", url=anilist_url))
-
-    if trailer_url:
-        second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
-
-    if not rows:
-        default_id = item.get("default_anime_id") or item.get("id")
-        rows.append(_anime_access_row(default_id))
-
-    if second_row:
-        rows.append(second_row)
-
-    if back_callback:
-        rows.append([
-            InlineKeyboardButton("🔙 Voltar", callback_data=back_callback)
-        ])
 
     return InlineKeyboardMarkup(rows)
 
@@ -2031,13 +1788,6 @@ async def _render_episodes_page(
     items = payload.get("items", [])
     total = payload.get("total", 0)
 
-    if total <= 0 and offset == 0:
-        invalidate_anime_episode_cache(anime_id)
-        invalidate_callback_episode_cache(anime_id)
-        payload = await _get_cached_episodes(anime_id, offset, EPISODES_PER_PAGE)
-        items = payload.get("items", [])
-        total = payload.get("total", 0)
-
     display_title = _format_title_with_version(
         _pick_display_title(anime, anime.get("title") or "Sem título"),
         _resolve_is_dubbed(context, anime_id, anime=anime),
@@ -2084,20 +1834,6 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_answer_query(query, "⚠️ Não aperte várias vezes seguidas.", show_alert=False)
         return
 
-    if data.startswith("ql|"):
-        parts = data.split("|", 3)
-        if len(parts) == 4:
-            _, anime_id, episode, requested_quality = parts
-            requested_quality = _normalize_quality(requested_quality)
-            current_quality = _get_selected_quality(context, anime_id, episode)
-            if current_quality == requested_quality:
-                await _safe_answer_query(
-                    query,
-                    f"🔘 Já está em {requested_quality}.",
-                    show_alert=False,
-                )
-                return
-
     message = query.message
     user_lock = _user_lock(user.id)
 
@@ -2128,7 +1864,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     _set_inflight_action(message.chat.id, message.message_id, current_action)
 
-                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "rec|", "var|", "vw|", "unvw|")):
+                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|")):
                     await _set_loading_state(query)
 
                 if data.startswith("ql|"):
@@ -2142,6 +1878,9 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     if not _can_switch_quality_now(context, anime_id, episode):
                         await _safe_answer_query(query, "⏳ Aguarde um instante para trocar a qualidade.", show_alert=False)
+                        return
+
+                    if current_quality == requested_quality:
                         return
 
                     _set_selected_quality(context, anime_id, episode, requested_quality)
@@ -2247,44 +1986,6 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if data.startswith("watch|"):
                     _, anime_id, episode = data.split("|", 2)
-
-                    anime = await _get_cached_anime(context, anime_id)
-                    selected_quality = _get_selected_quality(context, anime_id, episode)
-                    player = await _get_cached_player(anime_id, episode, selected_quality)
-                    video_url = (player.get("video") or "").strip()
-
-                    _safe_log_event(
-                        event_type="watch_click",
-                        user_id=user.id,
-                        username=user.username or user.first_name or "",
-                        anime_id=anime_id,
-                        anime_title=anime.get("title", "Sem tÃ­tulo"),
-                        episode=str(episode),
-                        extra=selected_quality,
-                    )
-
-                    if not video_url:
-                        await _safe_answer_query(query, "âŒ NÃ£o encontrei o vÃ­deo desse episÃ³dio.", show_alert=True)
-                        return
-
-                    try:
-                        await query.message.reply_text(
-                            (
-                                f"🔗 <b>{html.escape(_format_title_with_version(anime.get('title', 'Sem tÃ­tulo'), _resolve_is_dubbed(context, anime_id, anime=anime)))}</b>\n"
-                                f"Episodio: {html.escape(str(episode))}\n"
-                                f"Qualidade: {html.escape(selected_quality)}\n\n"
-                                "Use o botao abaixo para abrir o link normal."
-                            ),
-                            parse_mode="HTML",
-                            disable_web_page_preview=True,
-                            reply_markup=InlineKeyboardMarkup(
-                                [[InlineKeyboardButton("Abrir link normal", url=video_url)]]
-                            ),
-                        )
-                    except Exception:
-                        await _safe_answer_query(query, "âš ï¸ NÃ£o consegui enviar o link normal agora.", show_alert=True)
-
-                    return
 
                     anime = await _get_cached_anime(context, anime_id)
                     selected_quality = _get_selected_quality(context, anime_id, episode)
