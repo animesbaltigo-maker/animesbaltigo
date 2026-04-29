@@ -858,7 +858,7 @@ def _single_anime_keyboard(
     ]
 
     rows.append([
-        InlineKeyboardButton("Baixar offline", callback_data=f"off|{anime_id}")
+        InlineKeyboardButton("\U0001f4e5 Baixar offline", callback_data=f"off|{anime_id}")
     ])
 
     second_row = []
@@ -912,7 +912,7 @@ def _variant_keyboard(
     default_id = item.get("default_anime_id") or item.get("id")
     if default_id:
         rows.append([
-            InlineKeyboardButton("Baixar offline", callback_data=f"off|{default_id}")
+            InlineKeyboardButton("\U0001f4e5 Baixar offline", callback_data=f"off|{default_id}")
         ])
 
     second_row = []
@@ -1002,23 +1002,23 @@ def _episodes_keyboard(anime_id: str, offset: int, items: list, total: int):
 
 
 def _offline_menu_text(title: str) -> str:
-    safe_title = html.escape((title or "Sem titulo").strip())
+    safe_title = html.escape((title or "Sem t\u00edtulo").strip())
     return (
-        f"<b>{safe_title}</b>\n\n"
-        "Escolha a versao que voce quer baixar para assistir offline."
+        f"\U0001f4e5 <b>{safe_title}</b>\n\n"
+        "Escolha a vers\u00e3o que voc\u00ea quer baixar para assistir offline."
     )
 
 
 def _download_episode_list_text(title: str, offset: int, total: int) -> str:
-    safe_title = html.escape((title or "Sem titulo").strip())
+    safe_title = html.escape((title or "Sem t\u00edtulo").strip())
     current_page = (offset // EPISODES_PER_PAGE) + 1
     total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
     return (
-        "<b>Baixar offline</b>\n\n"
+        "\U0001f4e5 <b>Baixar offline</b>\n\n"
         f"<b>{safe_title}</b>\n"
-        f"<b>Total de episodios:</b> {total}\n"
-        f"<b>Pagina:</b> {current_page}/{total_pages}\n\n"
-        "Toque em um episodio para o bot baixar e enviar no Telegram."
+        f"<b>Total de epis\u00f3dios:</b> {total}\n"
+        f"<b>P\u00e1gina:</b> {current_page}/{total_pages}\n\n"
+        "Toque em um epis\u00f3dio para o bot baixar e enviar no Telegram."
     )
 
 
@@ -1032,7 +1032,7 @@ def _offline_version_keyboard(item: dict, back_callback: str | None = None) -> I
     if sub_variant:
         rows.append([
             InlineKeyboardButton(
-                "Baixar legendado",
+                "\U0001f1ef\U0001f1f5 Baixar legendado",
                 callback_data=f"offeps|{sub_variant['id']}|0",
             )
         ])
@@ -1040,23 +1040,23 @@ def _offline_version_keyboard(item: dict, back_callback: str | None = None) -> I
     if dub_variant:
         rows.append([
             InlineKeyboardButton(
-                "Baixar dublado",
+                "\U0001f1e7\U0001f1f7 Baixar dublado",
                 callback_data=f"offeps|{dub_variant['id']}|0",
             )
         ])
 
     if not rows and default_id:
         rows.append([
-            InlineKeyboardButton("Ver episodios offline", callback_data=f"offeps|{default_id}|0")
+            InlineKeyboardButton("\U0001f4fa Ver epis\u00f3dios offline", callback_data=f"offeps|{default_id}|0")
         ])
 
     if len(variants) <= 1 and default_id and rows:
-        rows = [[InlineKeyboardButton("Ver episodios offline", callback_data=f"offeps|{default_id}|0")]]
+        rows = [[InlineKeyboardButton("\U0001f4fa Ver epis\u00f3dios offline", callback_data=f"offeps|{default_id}|0")]]
 
     if back_callback:
-        rows.append([InlineKeyboardButton("Voltar", callback_data=back_callback)])
+        rows.append([InlineKeyboardButton("\U0001f519 Voltar", callback_data=back_callback)])
     elif default_id:
-        rows.append([InlineKeyboardButton("Voltar", callback_data=f"anime|{default_id}")])
+        rows.append([InlineKeyboardButton("\U0001f519 Voltar", callback_data=f"anime|{default_id}")])
 
     return InlineKeyboardMarkup(rows)
 
@@ -1083,21 +1083,21 @@ def _download_episodes_keyboard(anime_id: str, offset: int, items: list, total: 
     nav_row_2 = []
 
     if current_page > 1:
-        nav_row_1.append(InlineKeyboardButton("âª Primeira", callback_data=f"offeps|{anime_id}|0"))
+        nav_row_1.append(InlineKeyboardButton("\u23ea Primeira", callback_data=f"offeps|{anime_id}|0"))
         prev_offset = max(0, offset - EPISODES_PER_PAGE)
-        nav_row_1.append(InlineKeyboardButton("â¬…ï¸ Anterior", callback_data=f"offeps|{anime_id}|{prev_offset}"))
+        nav_row_1.append(InlineKeyboardButton("\u2b05\ufe0f Anterior", callback_data=f"offeps|{anime_id}|{prev_offset}"))
 
     if current_page < total_pages:
         next_offset = offset + EPISODES_PER_PAGE
-        nav_row_2.append(InlineKeyboardButton("PrÃ³xima âž¡ï¸", callback_data=f"offeps|{anime_id}|{next_offset}"))
-        nav_row_2.append(InlineKeyboardButton("Ãšltima â©", callback_data=f"offeps|{anime_id}|{last_offset}"))
+        nav_row_2.append(InlineKeyboardButton("Pr\u00f3xima \u27a1\ufe0f", callback_data=f"offeps|{anime_id}|{next_offset}"))
+        nav_row_2.append(InlineKeyboardButton("\u00daltima \u23e9", callback_data=f"offeps|{anime_id}|{last_offset}"))
 
     if nav_row_1:
         rows.append(nav_row_1)
     if nav_row_2:
         rows.append(nav_row_2)
 
-    rows.append([InlineKeyboardButton("ðŸ”™ Voltar", callback_data=f"off|{anime_id}")])
+    rows.append([InlineKeyboardButton("\U0001f519 Voltar", callback_data=f"off|{anime_id}")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1267,7 +1267,7 @@ def _player_keyboard(
 
     rows = [
         [InlineKeyboardButton("▶️ Assistir", url=detected_video or "https://t.me")],
-        [InlineKeyboardButton("Baixar offline", callback_data=f"dl|{anime_id}|{episode}")],
+        [InlineKeyboardButton("\U0001f4e5 Baixar offline", callback_data=f"dl|{anime_id}|{episode}")],
         [watch_toggle_button],
         [
             InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
@@ -1358,7 +1358,7 @@ def _player_keyboard(
                 web_app=WebAppInfo(url=miniapp_episode_url),
             )
         ],
-        [InlineKeyboardButton("Baixar offline", callback_data=f"dl|{anime_id}|{episode}")],
+        [InlineKeyboardButton("\U0001f4e5 Baixar offline", callback_data=f"dl|{anime_id}|{episode}")],
         [watch_toggle_button],
         [
             InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
@@ -2156,7 +2156,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     video_url = (player.get("video") or "").strip()
                     resolved_quality = _normalize_quality(player.get("quality", selected_quality))
                     title = _format_title_with_version(
-                        _pick_display_title(anime, anime.get("title") or "Sem titulo"),
+                        _pick_display_title(anime, anime.get("title") or "Sem t\u00edtulo"),
                         _resolve_is_dubbed(context, anime_id, anime=anime),
                     )
 
@@ -2165,7 +2165,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         user_id=user.id,
                         username=user.username or user.first_name or "",
                         anime_id=anime_id,
-                        anime_title=anime.get("title", "Sem titulo"),
+                        anime_title=anime.get("title", "Sem t\u00edtulo"),
                         episode=str(episode),
                         extra=resolved_quality,
                     )
