@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import random
 import shutil
 from pathlib import Path
@@ -233,6 +234,68 @@ async def _upload_big_file_parallel(path: Path, progress_callback: ProgressCallb
     return InputFileBig(file_id, total_parts, path.name)
 
 
+async def _send_media_request(
+    chat_id: int,
+    path: Path,
+    caption: str,
+    *,
+    as_video: bool,
+    attrs,
+    thumb: Path | None,
+    progress_callback: ProgressCallback | None,
+    protect_content: bool,
+):
+    from telethon import functions, types
+
+    file_size = path.stat().st_size
+    file_arg = None
+    callback = progress_callback
+
+    if (
+        TELETHON_PARALLEL_UPLOAD
+        and as_video
+        and file_size >= PARALLEL_THRESHOLD_BYTES
+    ):
+        file_arg = await _upload_big_file_parallel(path, progress_callback)
+        callback = None
+    else:
+        file_arg = await _client.upload_file(
+            str(path),
+            file_size=file_size,
+            file_name=path.name,
+            progress_callback=callback,
+        )
+
+    thumb_arg = None
+    if thumb:
+        thumb_arg = await _client.upload_file(str(thumb), file_name=thumb.name)
+
+    attributes = list(attrs or [])
+    if not any(isinstance(attr, types.DocumentAttributeFilename) for attr in attributes):
+        attributes.append(types.DocumentAttributeFilename(path.name))
+
+    mime_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
+    media = types.InputMediaUploadedDocument(
+        file=file_arg,
+        mime_type=mime_type,
+        attributes=attributes,
+        force_file=not as_video,
+        thumb=thumb_arg,
+    )
+
+    entity = await _client.get_input_entity(chat_id)
+    parsed_caption, entities = await _client._parse_message_text(caption, "html")
+    request = functions.messages.SendMediaRequest(
+        peer=entity,
+        media=media,
+        message=parsed_caption,
+        entities=entities,
+        noforwards=protect_content,
+    )
+    result = await _client(request)
+    return _client._get_response_message(request, result, entity)
+
+
 async def send_file_with_telethon(
     chat_id: int,
     path: Path,
@@ -268,38 +331,17 @@ async def send_file_with_telethon(
 
         thumb = await _make_thumbnail(path)
 
-    kwargs = {
-        "caption": caption,
-        "parse_mode": "html",
-        "force_document": not as_video,
-        "supports_streaming": as_video,
-        "thumb": str(thumb) if thumb else None,
-        "attributes": attrs,
-        "progress_callback": progress_callback,
-    }
-    if protect_content:
-        kwargs["noforwards"] = True
-
     try:
-        file_arg = str(path)
-        if (
-            TELETHON_PARALLEL_UPLOAD
-            and as_video
-            and path.stat().st_size >= PARALLEL_THRESHOLD_BYTES
-        ):
-            file_arg = await _upload_big_file_parallel(path, progress_callback)
-            kwargs["progress_callback"] = None
-
-        try:
-            result = await _client.send_file(chat_id, file_arg, **kwargs)
-        except TypeError as error:
-            if protect_content:
-                raise RuntimeError(
-                    "Sua versao do Telethon nao aceitou bloqueio de encaminhamento. "
-                    "Atualize com: pip install -U telethon"
-            ) from error
-            kwargs.pop("noforwards", None)
-            result = await _client.send_file(chat_id, str(path), **kwargs)
+        result = await _send_media_request(
+            chat_id,
+            path,
+            caption,
+            as_video=as_video,
+            attrs=attrs,
+            thumb=thumb,
+            progress_callback=progress_callback,
+            protect_content=protect_content,
+        )
         if protect_content:
             await _assert_protected(chat_id, result)
     finally:
