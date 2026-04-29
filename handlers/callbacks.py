@@ -2046,7 +2046,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     _set_inflight_action(message.chat.id, message.message_id, current_action)
 
-                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|", "dl|", "off|", "offeps|")):
+                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|", "off|", "offeps|")):
                     await _set_loading_state(query)
 
                 if data.startswith("ql|"):
@@ -2189,18 +2189,23 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"<b>Qualidade:</b> {html.escape(resolved_quality)}"
                     )
 
-                    await enqueue_video_download(
-                        context.application,
-                        VideoDownloadJob(
-                            chat_id=query.message.chat_id,
-                            anime_id=anime_id,
-                            episode=str(episode),
-                            quality=resolved_quality,
-                            title=title,
-                            video_url=video_url,
-                            caption=caption,
-                        ),
-                    )
+                    try:
+                        await enqueue_video_download(
+                            context.application,
+                            VideoDownloadJob(
+                                chat_id=query.message.chat_id,
+                                anime_id=anime_id,
+                                episode=str(episode),
+                                quality=resolved_quality,
+                                title=title,
+                                video_url=video_url,
+                                caption=caption,
+                            ),
+                        )
+                    except RuntimeError as error:
+                        await _safe_answer_query(query, str(error), show_alert=True)
+                        return
+
                     await _safe_answer_query(query, "Pedido de download enviado para a fila.", show_alert=False)
                     return
 
