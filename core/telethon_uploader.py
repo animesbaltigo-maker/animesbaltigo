@@ -28,6 +28,45 @@ def telethon_configured() -> bool:
     return bool(API_ID and API_HASH and BOT_TOKEN)
 
 
+def _as_message_list(result) -> list:
+    if result is None:
+        return []
+    if isinstance(result, (list, tuple)):
+        return [item for item in result if item is not None]
+    return [result]
+
+
+async def _delete_messages_best_effort(chat_id: int, messages: list) -> None:
+    ids = [getattr(message, "id", None) for message in messages]
+    ids = [message_id for message_id in ids if message_id is not None]
+    if not ids:
+        return
+    try:
+        await _client.delete_messages(chat_id, ids)
+    except Exception:
+        pass
+
+
+async def _assert_protected(chat_id: int, result) -> None:
+    messages = _as_message_list(result)
+    if not messages:
+        raise RuntimeError("Nao consegui confirmar se o episodio foi enviado protegido.")
+
+    unprotected = [
+        message
+        for message in messages
+        if getattr(message, "noforwards", False) is not True
+    ]
+    if not unprotected:
+        return
+
+    await _delete_messages_best_effort(chat_id, messages)
+    raise RuntimeError(
+        "O Telegram nao confirmou o bloqueio de compartilhamento nesse envio. "
+        "Apaguei o envio para nao vazar desprotegido. Atualize o Telethon e tente de novo."
+    )
+
+
 async def start_telethon_uploader() -> bool:
     global _client, _enabled
     if _enabled and _client:
@@ -252,15 +291,17 @@ async def send_file_with_telethon(
             kwargs["progress_callback"] = None
 
         try:
-            await _client.send_file(chat_id, file_arg, **kwargs)
+            result = await _client.send_file(chat_id, file_arg, **kwargs)
         except TypeError as error:
             if protect_content:
                 raise RuntimeError(
                     "Sua versao do Telethon nao aceitou bloqueio de encaminhamento. "
                     "Atualize com: pip install -U telethon"
-                ) from error
+            ) from error
             kwargs.pop("noforwards", None)
-            await _client.send_file(chat_id, str(path), **kwargs)
+            result = await _client.send_file(chat_id, str(path), **kwargs)
+        if protect_content:
+            await _assert_protected(chat_id, result)
     finally:
         if thumb:
             thumb.unlink(missing_ok=True)
