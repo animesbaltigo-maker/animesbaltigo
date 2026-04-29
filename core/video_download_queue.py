@@ -174,6 +174,7 @@ async def _download_file(job: VideoDownloadJob, entry: dict) -> Path:
                         await _progress(entry, job, downloaded, total)
 
     temp.replace(target)
+    _raise_if_too_large_for_upload(target.stat().st_size)
     return target
 
 
@@ -233,7 +234,7 @@ async def _download_hls(job: VideoDownloadJob, entry: dict, target: Path, temp: 
 async def _send_video_safe(bot, chat_id: int, path: Path, caption: str) -> bool:
     size = path.stat().st_size
 
-    if size > UPLOAD_MAX_BYTES:
+    if telethon_configured():
         if size > TELETHON_MAX_BYTES:
             raise RuntimeError(
                 f"Arquivo maior que o limite Telethon configurado: {_human_size(size)} > {_human_size(TELETHON_MAX_BYTES)}."
@@ -241,6 +242,13 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str) -> bool:
         sent = await send_file_with_telethon(chat_id, path, caption, as_video=True)
         if sent:
             return True
+        if size > UPLOAD_MAX_BYTES:
+            raise RuntimeError(
+                "Arquivo grande demais para Bot API e o uploader Telethon nao conseguiu iniciar.\n"
+                "Confira API_ID, API_HASH e se telethon esta instalado."
+            )
+
+    if size > UPLOAD_MAX_BYTES:
         raise RuntimeError(
             "Arquivo grande demais para Bot API e o uploader Telethon nao esta configurado.\n"
             "Preencha API_ID e API_HASH no .env."
