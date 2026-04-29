@@ -463,6 +463,11 @@ async def enqueue_video_download(app, job: VideoDownloadJob) -> int:
         entry["status_messages"].append(status)
         return queue.qsize()
 
+    if queue.full():
+        raise RuntimeError(
+            "A fila de downloads esta cheia agora. Tente de novo em alguns minutos."
+        )
+
     status = await app.bot.send_message(
         job.chat_id,
         (
