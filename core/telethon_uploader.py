@@ -2,16 +2,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import shutil
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from config import API_HASH, API_ID, BOT_TOKEN, TELETHON_SESSION_NAME
+from config import (
+    API_HASH,
+    API_ID,
+    BOT_TOKEN,
+    TELETHON_PARALLEL_UPLOAD,
+    TELETHON_PARALLEL_UPLOAD_THRESHOLD_MB,
+    TELETHON_PARALLEL_UPLOAD_WORKERS,
+    TELETHON_SESSION_NAME,
+)
 
 _client = None
 _enabled = False
 
 ProgressCallback = Callable[[int, int], Awaitable[None] | None]
+PARALLEL_THRESHOLD_BYTES = max(1, TELETHON_PARALLEL_UPLOAD_THRESHOLD_MB) * 1024 * 1024
 
 
 def telethon_configured() -> bool:
@@ -130,6 +140,60 @@ async def _make_thumbnail(path: Path) -> Path | None:
     return None
 
 
+async def _emit_progress(callback: ProgressCallback | None, current: int, total: int) -> None:
+    if not callback:
+        return
+    result = callback(current, total)
+    if asyncio.iscoroutine(result):
+        await result
+
+
+async def _upload_big_file_parallel(path: Path, progress_callback: ProgressCallback | None):
+    from telethon.tl.functions.upload import SaveBigFilePartRequest
+    from telethon.tl.types import InputFileBig
+
+    file_size = path.stat().st_size
+    part_size = 512 * 1024
+    total_parts = (file_size + part_size - 1) // part_size
+    file_id = random.randrange(-(2**63), 2**63)
+    workers = max(1, TELETHON_PARALLEL_UPLOAD_WORKERS)
+
+    next_part = 0
+    completed = 0
+    part_lock = asyncio.Lock()
+    progress_lock = asyncio.Lock()
+
+    async def reserve_part() -> int | None:
+        nonlocal next_part
+        async with part_lock:
+            if next_part >= total_parts:
+                return None
+            part = next_part
+            next_part += 1
+            return part
+
+    def read_part(part: int) -> bytes:
+        with path.open("rb") as file:
+            file.seek(part * part_size)
+            return file.read(part_size)
+
+    async def worker() -> None:
+        nonlocal completed
+        while True:
+            part = await reserve_part()
+            if part is None:
+                return
+            chunk = await asyncio.to_thread(read_part, part)
+            await _client(SaveBigFilePartRequest(file_id, part, total_parts, chunk))
+            async with progress_lock:
+                completed += len(chunk)
+                await _emit_progress(progress_callback, min(completed, file_size), file_size)
+
+    await asyncio.gather(*(worker() for _ in range(workers)))
+    await _emit_progress(progress_callback, file_size, file_size)
+    return InputFileBig(file_id, total_parts, path.name)
+
+
 async def send_file_with_telethon(
     chat_id: int,
     path: Path,
@@ -178,8 +242,17 @@ async def send_file_with_telethon(
         kwargs["noforwards"] = True
 
     try:
+        file_arg = str(path)
+        if (
+            TELETHON_PARALLEL_UPLOAD
+            and as_video
+            and path.stat().st_size >= PARALLEL_THRESHOLD_BYTES
+        ):
+            file_arg = await _upload_big_file_parallel(path, progress_callback)
+            kwargs["progress_callback"] = None
+
         try:
-            await _client.send_file(chat_id, str(path), **kwargs)
+            await _client.send_file(chat_id, file_arg, **kwargs)
         except TypeError as error:
             if protect_content:
                 raise RuntimeError(
