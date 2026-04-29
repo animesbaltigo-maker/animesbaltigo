@@ -483,6 +483,7 @@ def _player_keyboard(
                 web_app=WebAppInfo(url=miniapp_episode_url),
             )
         ],
+        [InlineKeyboardButton("Baixar offline", callback_data=f"dl|{anime_id}|{episode}")],
         [watch_toggle_button],
         [
             InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
@@ -565,6 +566,10 @@ def _single_anime_keyboard(
         ]
     ]
 
+    rows.append([
+        InlineKeyboardButton("Baixar offline", callback_data=f"off|{anime_id}")
+    ])
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, fallback_item or {})
     trailer_url = _build_trailer_url(anime)
@@ -608,6 +613,12 @@ def _variant_keyboard(
             )
         ])
 
+    default_id = group_item.get("default_anime_id") or group_item.get("id")
+    if default_id:
+        rows.append([
+            InlineKeyboardButton("Baixar offline", callback_data=f"off|{default_id}")
+        ])
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, group_item)
     trailer_url = _build_trailer_url(anime)
@@ -626,7 +637,7 @@ def _variant_keyboard(
         rows.append([
             InlineKeyboardButton(
                 "📺 Ver episódios",
-                 web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id))
+                 web_app=WebAppInfo(url=_build_miniapp_anime_url(default_id))
             )
         ])
 
@@ -731,6 +742,17 @@ async def _resolve_group_from_anime_id(anime_id: str):
     }
 
     return anime, fallback_item
+
+
+def _remember_group_item(context: ContextTypes.DEFAULT_TYPE, item: dict) -> None:
+    default_id = item.get("default_anime_id") or item.get("id")
+    if default_id:
+        context.user_data[f"anime_group:{default_id}"] = item
+
+    for variant in item.get("variants") or []:
+        variant_id = variant.get("id")
+        if variant_id:
+            context.user_data[f"anime_group:{variant_id}"] = item
 
 
 async def start(update, context):
@@ -893,6 +915,7 @@ async def start(update, context):
 
                 try:
                     anime, group_item = await _resolve_group_from_anime_id(anime_id)
+                    _remember_group_item(context, group_item)
 
                     fallback_title = group_item.get("title") or anime.get("title") or "Sem título"
                     cover = _pick_portrait_image(anime) or None
