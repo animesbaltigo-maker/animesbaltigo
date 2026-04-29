@@ -14,6 +14,8 @@ from telegram.error import TelegramError, TimedOut
 
 from config import (
     TELETHON_UPLOAD_MAX_MB,
+    VIDEO_CACHE_CLEANUP_INTERVAL_SECONDS,
+    VIDEO_CACHE_TTL_HOURS,
     VIDEO_DOWNLOAD_CACHE_DIR,
     VIDEO_DOWNLOAD_MAX_MB,
     VIDEO_DOWNLOAD_PROTECT_CONTENT,
@@ -34,11 +36,13 @@ HEADERS = {
     "Origin": "https://animefire.io",
 }
 
-CHUNK_SIZE = 1024 * 1024
+CHUNK_SIZE = 4 * 1024 * 1024
 PROGRESS_INTERVAL = 3.0
 MAX_BYTES = max(1, VIDEO_DOWNLOAD_MAX_MB) * 1024 * 1024
 UPLOAD_MAX_BYTES = max(1, VIDEO_UPLOAD_MAX_MB) * 1024 * 1024
 TELETHON_MAX_BYTES = max(1, TELETHON_UPLOAD_MAX_MB) * 1024 * 1024
+CACHE_TTL_SECONDS = max(1, VIDEO_CACHE_TTL_HOURS) * 3600
+CACHE_CLEANUP_INTERVAL = max(60, VIDEO_CACHE_CLEANUP_INTERVAL_SECONDS)
 
 
 @dataclass
@@ -53,6 +57,7 @@ class VideoDownloadJob:
 
 
 _workers: list[asyncio.Task] = []
+_cleanup_task: asyncio.Task | None = None
 _active_jobs: dict[str, dict] = {}
 
 
@@ -117,6 +122,46 @@ def _raise_if_too_large_for_upload(size: int) -> None:
     )
 
 
+def _cache_dir() -> Path:
+    cache_dir = Path(VIDEO_DOWNLOAD_CACHE_DIR)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def _cleanup_video_cache_sync() -> int:
+    cache_dir = _cache_dir()
+    now = time.time()
+    removed = 0
+    suffixes = {".mp4", ".mkv", ".webm", ".m3u8", ".part", ".jpg", ".jpeg"}
+
+    for path in cache_dir.iterdir():
+        try:
+            if not path.is_file() or path.suffix.lower() not in suffixes:
+                continue
+            age = now - path.stat().st_mtime
+            ttl = min(CACHE_TTL_SECONDS, 3600) if path.name.endswith(".part") else CACHE_TTL_SECONDS
+            if age >= ttl:
+                path.unlink(missing_ok=True)
+                removed += 1
+        except Exception:
+            pass
+
+    return removed
+
+
+async def cleanup_video_cache() -> int:
+    return await asyncio.to_thread(_cleanup_video_cache_sync)
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        try:
+            await cleanup_video_cache()
+        except Exception as error:
+            print(f"[VIDEO_CACHE] cleanup_error={error!r}")
+        await asyncio.sleep(CACHE_CLEANUP_INTERVAL)
+
+
 async def _safe_edit(message, text: str) -> None:
     try:
         await message.edit_text(text, parse_mode="HTML")
@@ -158,15 +203,16 @@ async def _download_file(job: VideoDownloadJob, entry: dict) -> Path:
     if not _is_downloadable_url(job.video_url):
         raise RuntimeError("Esse link de video nao pode ser baixado direto.")
 
-    cache_dir = Path(VIDEO_DOWNLOAD_CACHE_DIR)
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = _cache_dir()
 
     filename = _safe_filename(f"{job.title} - EP {job.episode} - {job.quality}")
     target = cache_dir / f"{filename}{'.mp4' if _is_hls_url(job.video_url) else _extension_from_url(job.video_url)}"
     temp = cache_dir / f"{target.name}.part"
 
     if target.exists() and target.stat().st_size > 0:
-        return target
+        if time.time() - target.stat().st_mtime < CACHE_TTL_SECONDS:
+            return target
+        target.unlink(missing_ok=True)
 
     if _is_hls_url(job.video_url):
         return await _download_hls(job, entry, target, temp)
@@ -379,6 +425,10 @@ async def _process_job(app, job: VideoDownloadJob) -> None:
         for message in list(entry["status_messages"]):
             await _safe_edit(message, f"<b>Falha ao baixar epis\u00f3dio:</b>\n<code>{html.escape(str(error))}</code>")
     finally:
+        try:
+            await cleanup_video_cache()
+        except Exception:
+            pass
         _active_jobs.pop(key, None)
 
 
@@ -433,18 +483,22 @@ async def enqueue_video_download(app, job: VideoDownloadJob) -> int:
 
 
 async def start_video_download_workers(app) -> None:
+    global _cleanup_task
     if app.bot_data.get("video_download_workers_started"):
         return
 
+    await cleanup_video_cache()
     app.bot_data["video_download_queue"] = asyncio.Queue(maxsize=VIDEO_DOWNLOAD_QUEUE_LIMIT)
     worker_count = max(1, VIDEO_DOWNLOAD_WORKERS)
     for _ in range(worker_count):
         _workers.append(asyncio.create_task(_worker(app, app.bot_data["video_download_queue"])))
 
+    _cleanup_task = asyncio.create_task(_cleanup_loop())
     app.bot_data["video_download_workers_started"] = True
 
 
 async def stop_video_download_workers(app) -> None:
+    global _cleanup_task
     queue = app.bot_data.get("video_download_queue")
     if queue is None:
         return
@@ -452,4 +506,9 @@ async def stop_video_download_workers(app) -> None:
         await queue.put(None)
     await asyncio.gather(*_workers, return_exceptions=True)
     _workers.clear()
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        await asyncio.gather(_cleanup_task, return_exceptions=True)
+        _cleanup_task = None
+    await cleanup_video_cache()
     app.bot_data["video_download_workers_started"] = False
