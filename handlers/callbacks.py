@@ -9,6 +9,7 @@ from urllib.parse import quote_plus
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update, WebAppInfo
 from telegram.ext import ContextTypes
 
+from core.video_download_queue import VideoDownloadJob, enqueue_video_download
 from services.animefire_client import (
     get_anime_details,
     get_episodes,
@@ -1157,6 +1158,7 @@ def _player_keyboard(
 
     rows = [
         [InlineKeyboardButton("▶️ Assistir", url=detected_video or "https://t.me")],
+        [InlineKeyboardButton("Baixar offline", callback_data=f"dl|{anime_id}|{episode}")],
         [watch_toggle_button],
         [
             InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
@@ -1247,6 +1249,7 @@ def _player_keyboard(
                 web_app=WebAppInfo(url=miniapp_episode_url),
             )
         ],
+        [InlineKeyboardButton("Baixar offline", callback_data=f"dl|{anime_id}|{episode}")],
         [watch_toggle_button],
         [
             InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
@@ -1945,6 +1948,54 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         episode,
                         caption_only=True,
                     )
+                    return
+
+                if data.startswith("dl|"):
+                    _, anime_id, episode = data.split("|", 2)
+
+                    anime = await _get_cached_anime(context, anime_id)
+                    selected_quality = _get_selected_quality(context, anime_id, episode)
+                    player = await _get_cached_player(anime_id, episode, selected_quality)
+                    video_url = (player.get("video") or "").strip()
+                    resolved_quality = _normalize_quality(player.get("quality", selected_quality))
+                    title = _format_title_with_version(
+                        _pick_display_title(anime, anime.get("title") or "Sem titulo"),
+                        _resolve_is_dubbed(context, anime_id, anime=anime),
+                    )
+
+                    _safe_log_event(
+                        event_type="download_click",
+                        user_id=user.id,
+                        username=user.username or user.first_name or "",
+                        anime_id=anime_id,
+                        anime_title=anime.get("title", "Sem titulo"),
+                        episode=str(episode),
+                        extra=resolved_quality,
+                    )
+
+                    if not video_url:
+                        await _safe_answer_query(query, "Nao encontrei o video desse episodio.", show_alert=True)
+                        return
+
+                    caption = (
+                        f"<b>{html.escape(title)}</b>\n"
+                        f"<b>Episodio:</b> {html.escape(str(episode))}\n"
+                        f"<b>Qualidade:</b> {html.escape(resolved_quality)}"
+                    )
+
+                    await enqueue_video_download(
+                        context.application,
+                        VideoDownloadJob(
+                            chat_id=query.message.chat_id,
+                            anime_id=anime_id,
+                            episode=str(episode),
+                            quality=resolved_quality,
+                            title=title,
+                            video_url=video_url,
+                            caption=caption,
+                        ),
+                    )
+                    await _safe_answer_query(query, "Pedido de download enviado para a fila.", show_alert=False)
                     return
 
                 if False and data.startswith("watch|"):
