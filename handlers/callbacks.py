@@ -857,6 +857,10 @@ def _single_anime_keyboard(
         ]
     ]
 
+    rows.append([
+        InlineKeyboardButton("Baixar offline", callback_data=f"off|{anime_id}")
+    ])
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, fallback_item or {})
     trailer_url = _build_trailer_url(anime)
@@ -905,6 +909,12 @@ def _variant_keyboard(
             )
         ])
 
+    default_id = item.get("default_anime_id") or item.get("id")
+    if default_id:
+        rows.append([
+            InlineKeyboardButton("Baixar offline", callback_data=f"off|{default_id}")
+        ])
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, item)
     trailer_url = _build_trailer_url(anime)
@@ -919,7 +929,6 @@ def _variant_keyboard(
         rows.append(second_row)
 
     if not rows:
-        default_id = item.get("default_anime_id") or item.get("id")
         rows.append([
             InlineKeyboardButton(
                 "📺 Ver episódios",
@@ -989,6 +998,106 @@ def _episodes_keyboard(anime_id: str, offset: int, items: list, total: int):
         InlineKeyboardButton("🔙 Voltar", callback_data=f"anime|{anime_id}")
     ])
 
+    return InlineKeyboardMarkup(rows)
+
+
+def _offline_menu_text(title: str) -> str:
+    safe_title = html.escape((title or "Sem titulo").strip())
+    return (
+        f"<b>{safe_title}</b>\n\n"
+        "Escolha a versao que voce quer baixar para assistir offline."
+    )
+
+
+def _download_episode_list_text(title: str, offset: int, total: int) -> str:
+    safe_title = html.escape((title or "Sem titulo").strip())
+    current_page = (offset // EPISODES_PER_PAGE) + 1
+    total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
+    return (
+        "<b>Baixar offline</b>\n\n"
+        f"<b>{safe_title}</b>\n"
+        f"<b>Total de episodios:</b> {total}\n"
+        f"<b>Pagina:</b> {current_page}/{total_pages}\n\n"
+        "Toque em um episodio para o bot baixar e enviar no Telegram."
+    )
+
+
+def _offline_version_keyboard(item: dict, back_callback: str | None = None) -> InlineKeyboardMarkup:
+    rows = []
+    variants = item.get("variants") or []
+    sub_variant = _pick_variant(item, dubbed=False)
+    dub_variant = _pick_variant(item, dubbed=True)
+    default_id = item.get("default_anime_id") or item.get("id")
+
+    if sub_variant:
+        rows.append([
+            InlineKeyboardButton(
+                "Baixar legendado",
+                callback_data=f"offeps|{sub_variant['id']}|0",
+            )
+        ])
+
+    if dub_variant:
+        rows.append([
+            InlineKeyboardButton(
+                "Baixar dublado",
+                callback_data=f"offeps|{dub_variant['id']}|0",
+            )
+        ])
+
+    if not rows and default_id:
+        rows.append([
+            InlineKeyboardButton("Ver episodios offline", callback_data=f"offeps|{default_id}|0")
+        ])
+
+    if len(variants) <= 1 and default_id and rows:
+        rows = [[InlineKeyboardButton("Ver episodios offline", callback_data=f"offeps|{default_id}|0")]]
+
+    if back_callback:
+        rows.append([InlineKeyboardButton("Voltar", callback_data=back_callback)])
+    elif default_id:
+        rows.append([InlineKeyboardButton("Voltar", callback_data=f"anime|{default_id}")])
+
+    return InlineKeyboardMarkup(rows)
+
+
+def _download_episodes_keyboard(anime_id: str, offset: int, items: list, total: int):
+    rows = []
+    current = []
+
+    for item in items:
+        ep = str(item.get("episode", "?"))
+        current.append(InlineKeyboardButton(ep, callback_data=f"dl|{anime_id}|{ep}"))
+        if len(current) == 5:
+            rows.append(current)
+            current = []
+
+    if current:
+        rows.append(current)
+
+    total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
+    current_page = (offset // EPISODES_PER_PAGE) + 1
+    last_offset = max(0, (total_pages - 1) * EPISODES_PER_PAGE)
+
+    nav_row_1 = []
+    nav_row_2 = []
+
+    if current_page > 1:
+        nav_row_1.append(InlineKeyboardButton("âª Primeira", callback_data=f"offeps|{anime_id}|0"))
+        prev_offset = max(0, offset - EPISODES_PER_PAGE)
+        nav_row_1.append(InlineKeyboardButton("â¬…ï¸ Anterior", callback_data=f"offeps|{anime_id}|{prev_offset}"))
+
+    if current_page < total_pages:
+        next_offset = offset + EPISODES_PER_PAGE
+        nav_row_2.append(InlineKeyboardButton("PrÃ³xima âž¡ï¸", callback_data=f"offeps|{anime_id}|{next_offset}"))
+        nav_row_2.append(InlineKeyboardButton("Ãšltima â©", callback_data=f"offeps|{anime_id}|{last_offset}"))
+
+    if nav_row_1:
+        rows.append(nav_row_1)
+    if nav_row_2:
+        rows.append(nav_row_2)
+
+    rows.append([InlineKeyboardButton("ðŸ”™ Voltar", callback_data=f"off|{anime_id}")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1815,6 +1924,68 @@ async def _render_episodes_page(
     return await _safe_edit_text(query, text, keyboard)
 
 
+async def _render_offline_menu(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    anime_id: str,
+    caption_only: bool = False,
+):
+    grouped_item = _get_group_item(context, anime_id)
+    anime = await _get_cached_anime(context, anime_id)
+
+    if not grouped_item:
+        grouped_item = {
+            "id": anime_id,
+            "default_anime_id": anime_id,
+            "title": anime.get("title") or anime_id,
+            "variants": [{
+                "id": anime_id,
+                "title": anime.get("title") or anime_id,
+                "is_dubbed": _resolve_is_dubbed(context, anime_id, anime=anime) is True,
+            }],
+        }
+        _remember_group_item(context, grouped_item)
+
+    title = _format_title_with_version(
+        _pick_display_title(anime, grouped_item.get("title") or "Sem tÃ­tulo"),
+        _resolve_is_dubbed(context, anime_id, anime=anime),
+    )
+    text = _offline_menu_text(title)
+    keyboard = _offline_version_keyboard(grouped_item)
+
+    image_url = _anime_secondary_image(anime)
+    if image_url:
+        return await _safe_edit_photo(query, image_url, text, keyboard, caption_only=caption_only)
+
+    return await _safe_edit_text(query, text, keyboard)
+
+
+async def _render_download_episodes_page(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    anime_id: str,
+    offset: int,
+    caption_only: bool = False,
+):
+    anime = await _get_cached_anime(context, anime_id)
+    payload = await _get_cached_episodes(anime_id, offset, EPISODES_PER_PAGE)
+    items = payload.get("items", [])
+    total = payload.get("total", 0)
+
+    display_title = _format_title_with_version(
+        _pick_display_title(anime, anime.get("title") or "Sem tÃ­tulo"),
+        _resolve_is_dubbed(context, anime_id, anime=anime),
+    )
+    text = _download_episode_list_text(display_title, offset, total)
+    keyboard = _download_episodes_keyboard(anime_id, offset, items, total)
+
+    image_url = _anime_secondary_image(anime)
+    if image_url:
+        return await _safe_edit_photo(query, image_url, text, keyboard, caption_only=caption_only)
+
+    return await _safe_edit_text(query, text, keyboard)
+
+
 async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
@@ -1866,7 +2037,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     _set_inflight_action(message.chat.id, message.message_id, current_action)
 
-                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|", "dl|")):
+                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|", "dl|", "off|", "offeps|")):
                     await _set_loading_state(query)
 
                 if data.startswith("ql|"):
@@ -1948,6 +2119,32 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         episode,
                         caption_only=True,
                     )
+                    return
+
+                if data.startswith("off|"):
+                    anime_id = data.split("|", 1)[1]
+                    ok = await _render_offline_menu(
+                        query,
+                        context,
+                        anime_id,
+                        caption_only=False,
+                    )
+                    if not ok:
+                        await _safe_answer_query(query, "NÃ£o consegui abrir o modo offline agora.", show_alert=False)
+                    return
+
+                if data.startswith("offeps|"):
+                    _, anime_id, offset_str = data.split("|", 2)
+                    offset = int(offset_str)
+                    ok = await _render_download_episodes_page(
+                        query,
+                        context,
+                        anime_id,
+                        offset,
+                        caption_only=False,
+                    )
+                    if not ok:
+                        await _safe_answer_query(query, "NÃ£o consegui abrir os episÃ³dios offline.", show_alert=False)
                     return
 
                 if data.startswith("dl|"):
