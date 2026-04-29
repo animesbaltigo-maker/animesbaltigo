@@ -43,6 +43,7 @@ UPLOAD_MAX_BYTES = max(1, VIDEO_UPLOAD_MAX_MB) * 1024 * 1024
 TELETHON_MAX_BYTES = max(1, TELETHON_UPLOAD_MAX_MB) * 1024 * 1024
 CACHE_TTL_SECONDS = max(1, VIDEO_CACHE_TTL_HOURS) * 3600
 CACHE_CLEANUP_INTERVAL = max(60, VIDEO_CACHE_CLEANUP_INTERVAL_SECONDS)
+PARTIAL_FILE_TTL_SECONDS = 15 * 60
 
 
 @dataclass
@@ -142,7 +143,7 @@ def _cleanup_video_cache_sync() -> int:
             if not path.is_file() or path.suffix.lower() not in suffixes:
                 continue
             age = now - path.stat().st_mtime
-            ttl = min(CACHE_TTL_SECONDS, 3600) if path.name.endswith(".part") else CACHE_TTL_SECONDS
+            ttl = PARTIAL_FILE_TTL_SECONDS if path.name.endswith(".part") else CACHE_TTL_SECONDS
             if age >= ttl:
                 path.unlink(missing_ok=True)
                 removed += 1
@@ -249,6 +250,21 @@ async def _download_file(job: VideoDownloadJob, entry: dict) -> Path:
     temp.replace(target)
     _raise_if_too_large_for_upload(target.stat().st_size)
     return target
+
+
+async def _delete_downloaded_file(path: Path | None) -> None:
+    if not path:
+        return
+    try:
+        cache_dir = _cache_dir().resolve()
+        target = path.resolve()
+        if target.parent != cache_dir:
+            return
+        target.unlink(missing_ok=True)
+        thumb = target.with_suffix(".thumb.jpg")
+        thumb.unlink(missing_ok=True)
+    except Exception as error:
+        print(f"[VIDEO_CACHE] delete_downloaded_error={error!r}")
 
 
 async def _download_hls(job: VideoDownloadJob, entry: dict, target: Path, temp: Path) -> Path:
@@ -387,6 +403,7 @@ async def _process_job(app, job: VideoDownloadJob) -> None:
     if not entry:
         return
 
+    path = None
     try:
         await _progress(entry, job, 0, None)
         path = await _download_file(job, entry)
@@ -428,6 +445,7 @@ async def _process_job(app, job: VideoDownloadJob) -> None:
         for message in list(entry["status_messages"]):
             await _safe_edit(message, f"<b>Falha ao baixar epis\u00f3dio:</b>\n<code>{html.escape(str(error))}</code>")
     finally:
+        await _delete_downloaded_file(path)
         try:
             await cleanup_video_cache()
         except Exception:
