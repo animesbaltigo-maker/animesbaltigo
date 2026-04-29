@@ -5,8 +5,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8675150552:AAHoUu64RoMPHNdaChP9RQGF0iz-tk7Crbo").strip()
-API_ID = int(os.getenv("API_ID", "0") or "0")
-API_HASH = os.getenv("API_HASH", "").strip()
+API_ID = int(os.getenv("API_ID", "34116600") or "0")
+API_HASH = os.getenv("API_HASH", "b8f22be457ce73f65fad82315073fbc3").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "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").strip()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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").strip()
 
@@ -50,3 +50,6 @@ VIDEO_DOWNLOAD_PROTECT_CONTENT = os.getenv("VIDEO_DOWNLOAD_PROTECT_CONTENT", "0"
 
 BOT_BRAND = os.getenv("BOT_BRAND", "Anime Brasil").strip()
 WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL", "").strip().rstrip("/")
+
+TELETHON_UPLOAD_MAX_MB=1900
+TELETHON_SESSION_NAME=data/anime_uploader_bot
