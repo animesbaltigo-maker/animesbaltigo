@@ -1723,7 +1723,7 @@ function renderProfile() {
 
 function openAffiliateGateway() {
   const uid = String(state.userId || S.userId || (typeof getTelegramUserId === "function" ? getTelegramUserId() : "") || "").trim();
-  const target = new URL("./affiliate.html", window.location.href);
+  const target = new URL("/affiliate", window.location.origin);
   if (uid && uid !== "Não identificado") target.searchParams.set("user_id", uid);
   target.searchParams.set("bot", "AnimesBaltigo_Bot");
   window.location.href = target.toString();
