@@ -1758,6 +1758,26 @@ E.retryBtn.addEventListener("click", async () => { if (!S.animeId || !S.ep) retu
 E.fsBtn.addEventListener("click", reqFs);
 window.addEventListener("popstate", () => goBack());
 
+     <span class="profile-row-label">Armazenamento</span>
+      <span class="profile-row-value">Local</span>
+    </div>
+    <div style="padding-top:14px">
+      <button class="btn btn-primary" id="affiliateGatewayBtn" style="width:100%">Painel de afiliados</button>
+    </div>
+  `;
+
+  const affiliateBtn = $$("affiliateGatewayBtn");
+  if (affiliateBtn) affiliateBtn.onclick = openAffiliateGateway;
+
+  setPage("profilePage");
+  syncUrl({ route: "profile" });
+}
+
+function openAffiliateGateway() {
+  const url = `/affiliate${state.userId ? `?user_id=${encodeURIComponent(state.userId)}&bot=${encodeURIComponent("animesBaltigo_Bot")}` : ""}`;
+  window.location.href = url;
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 bindVidEvts();
 connectSSE();
