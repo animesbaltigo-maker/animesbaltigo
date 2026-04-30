@@ -8,7 +8,7 @@ from config import BOT_USERNAME, STICKER_DIVISOR, WEBAPP_BASE_URL
 from services.affiliate_db import affiliate_summary, cents_to_money
 
 DEFAULT_BANNER_URL = (
-    "https://photo.chelpbot.me/AgACAgEAAxkBZ7DGAAFpse3x62wh4yTxu0BIhIPz12L_YwACMAxrGxpikUXp6-kJkxw_1QEAAwIAA3kAAzoE/photo.jpg"
+    "https://photo.chelpbot.me/AgACAgEAAxkBaz9i2mnzeCnUmtUCTPw2T4wmM5Ko9-20AALSC2sb37mgR1jBwbjGWjhgAQADAgADeQADOwQ/photo.jpg"
 )
 
 
