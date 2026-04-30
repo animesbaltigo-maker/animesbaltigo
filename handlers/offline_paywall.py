@@ -6,21 +6,66 @@ from urllib.parse import urlencode
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from config import BALTIGOFLIX_SUBSCRIBE_URL, BALTIGOFLIX_SUPPORT_URL
+from config import (
+    BALTIGOFLIX_SUBSCRIBE_URL,
+    BALTIGOFLIX_SUPPORT_URL,
+    CAKTO_ANUAL_CHECKOUT_URL,
+    CAKTO_BRONZE_CHECKOUT_URL,
+    CAKTO_CHECKOUT_URL,
+    CAKTO_DIAMANTE_CHECKOUT_URL,
+    CAKTO_MENSAL_CHECKOUT_URL,
+    CAKTO_OURO_CHECKOUT_URL,
+    CAKTO_RUBI_CHECKOUT_URL,
+    CAKTO_SEMESTRAL_CHECKOUT_URL,
+    CAKTO_TRIMESTRAL_CHECKOUT_URL,
+)
 from services.subscriptions import create_subscription_intent, get_active_subscription
 
 
-def _subscribe_url(token: str, user_id: int) -> str:
-    separator = "&" if "?" in BALTIGOFLIX_SUBSCRIBE_URL else "?"
-    query = urlencode({"ref": token, "tg_id": str(user_id), "source": "anime_offline"})
-    return f"{BALTIGOFLIX_SUBSCRIBE_URL}{separator}{query}"
+def _tracked_url(base_url: str, token: str, user_id: int, plan_code: str = "") -> str:
+    separator = "&" if "?" in base_url else "?"
+    query = urlencode({
+        "ref": token,
+        "tg_id": str(user_id),
+        "source": "anime_offline",
+        "external_reference": token,
+        "utm_source": "anime_bot",
+        "utm_medium": "telegram",
+        "utm_campaign": "offline_download",
+        "utm_content": token,
+        "sck": token,
+        "plan": plan_code,
+    })
+    return f"{base_url}{separator}{query}"
+
+
+def _plan_buttons(user_id: int, token: str) -> list[list[InlineKeyboardButton]]:
+    plans = [
+        ("Plano mensal", CAKTO_MENSAL_CHECKOUT_URL or CAKTO_BRONZE_CHECKOUT_URL, "mensal"),
+        ("Plano trimestral", CAKTO_TRIMESTRAL_CHECKOUT_URL or CAKTO_OURO_CHECKOUT_URL, "trimestral"),
+        ("Plano semestral", CAKTO_SEMESTRAL_CHECKOUT_URL or CAKTO_DIAMANTE_CHECKOUT_URL, "semestral"),
+        ("Plano anual", CAKTO_ANUAL_CHECKOUT_URL or CAKTO_RUBI_CHECKOUT_URL, "anual"),
+    ]
+    rows = [
+        [InlineKeyboardButton(label, url=_tracked_url(url, token, user_id, code))]
+        for label, url, code in plans
+        if url
+    ]
+    if rows:
+        return rows
+
+    fallback = CAKTO_CHECKOUT_URL or BALTIGOFLIX_SUBSCRIBE_URL
+    return [[
+        InlineKeyboardButton(
+            "🚀 Assinar BaltigoFlix",
+            url=_tracked_url(fallback, token, user_id, "baltigoflix"),
+        )
+    ]]
 
 
 def _keyboard(user_id: int, token: str) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton("🚀 Assinar BaltigoFlix", url=_subscribe_url(token, user_id))],
-        [InlineKeyboardButton("🔄 Já paguei / verificar", callback_data="subcheck")],
-    ]
+    rows = _plan_buttons(user_id, token)
+    rows.append([InlineKeyboardButton("🔄 Já paguei / verificar", callback_data="subcheck")])
     if BALTIGOFLIX_SUPPORT_URL:
         rows.append([InlineKeyboardButton("🛟 Suporte", url=BALTIGOFLIX_SUPPORT_URL)])
     return InlineKeyboardMarkup(rows)
@@ -32,7 +77,7 @@ def _text(title: str = "") -> str:
         "🔒 <b>Conteúdo exclusivo para assinantes da BaltigoFlix</b>"
         f"{anime_line}\n\n"
         "O download offline de episódios está bloqueado para quem não é assinante.\n\n"
-        "Escolha um plano no site. Assim que a Cakto aprovar o pagamento, "
+        "Escolha um plano. Assim que a Cakto aprovar o pagamento, "
         "o bot libera seu Telegram ID automaticamente pelo tempo correspondente ao plano.\n\n"
         "📌 <b>Seu acesso atual:</b> <code>sem assinatura ativa</code>\n"
         "📈 <b>Para liberar:</b> assine a BaltigoFlix."
