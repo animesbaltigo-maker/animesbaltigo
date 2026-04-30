@@ -38,6 +38,7 @@ from handlers.referral import indicacoes, referral_button
 from handlers.referral_admin import refstats, auto_referral_check_job
 from services.referral_db import init_referral_db
 from services.subscriptions import init_subscriptions_db
+from services.affiliate_db import init_affiliate_db, release_due_commissions
 from handlers.bingo import bingo
 from handlers.bingo_admin import startbingo, sortear, startbingo_auto, resetbingo
 from services.metrics import init_metrics_db
@@ -52,6 +53,7 @@ from handlers.group_ai import group_ai_handler, esquecer_handler
 
 init_metrics_db()
 init_subscriptions_db()
+init_affiliate_db()
 
 async def post_init(app: Application):
     await start_telethon_uploader()
@@ -83,6 +85,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
                 )
     except Exception:
         pass
+
+
+async def affiliate_release_job(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        release_due_commissions()
+    except Exception as error:
+        print("ERRO AFFILIATE RELEASE:", repr(error))
 
 
 def main():
@@ -176,6 +185,14 @@ def main():
             name="auto_referral_check",
         )
         print("[OK] Job registrado: auto_referral_check (a cada 3600s)")
+
+        app.job_queue.run_repeating(
+            affiliate_release_job,
+            interval=1800,
+            first=90,
+            name="affiliate_release",
+        )
+        print("[OK] Job registrado: affiliate_release (a cada 1800s)")
 
     app.add_error_handler(error_handler)
 
