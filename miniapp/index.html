@@ -101,8 +101,8 @@
     .btn:hover::after{opacity:1}
     .btn:active{transform:scale(0.96)!important}
     .btn:disabled{opacity:.35;pointer-events:none}
-    .btn-p{background:var(--brand);border:none;box-shadow:var(--sv);color:#fff}
-    .btn-p:hover{opacity:.88;box-shadow:0 10px 36px rgba(109,40,217,0.42)}
+    .btn-p,.btn-primary{background:var(--brand);border:none;box-shadow:var(--sv);color:#fff}
+    .btn-p:hover,.btn-primary:hover{opacity:.88;box-shadow:0 10px 36px rgba(109,40,217,0.42)}
     .btn-ghost{background:transparent}
     .btn-ghost:hover{background:var(--glass)}
     .btn-sm{height:34px;padding:0 13px;font-size:12px;border-radius:var(--r0)}
@@ -245,6 +245,22 @@
     .pan-title{font-family:var(--fd);font-size:16px;font-weight:700;letter-spacing:-.01em}
     .pan-sub{font-size:11px;color:var(--text3);margin-top:2px}
 
+    .profile-wrap{max-width:720px;margin:0 auto}
+    .profile-hero{position:relative;overflow:hidden;border-radius:var(--r4);border:1px solid var(--border);background:var(--card-grad);padding:22px;margin-bottom:18px}
+    .profile-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 80% at 100% 0%,rgba(109,40,217,0.24) 0%,transparent 60%),radial-gradient(ellipse 50% 65% at 0% 100%,rgba(6,182,212,0.14) 0%,transparent 60%);pointer-events:none}
+    .profile-hero-inner{position:relative;z-index:1;display:flex;gap:14px;align-items:center}
+    .profile-avatar{width:58px;height:58px;border-radius:18px;background:var(--brand);display:grid;place-items:center;font-family:var(--fd);font-size:24px;font-weight:900;box-shadow:var(--sv);flex-shrink:0}
+    .profile-kicker{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--c2);margin-bottom:4px}
+    .profile-title{font-family:var(--fd);font-size:26px;font-weight:900;letter-spacing:-.04em;line-height:1}
+    .profile-sub{font-size:12px;color:var(--text2);line-height:1.55;margin-top:7px}
+    .profile-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r3);padding:18px;box-shadow:var(--md)}
+    .profile-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid var(--border)}
+    .profile-row:first-child{padding-top:0}
+    .profile-row:last-of-type{border-bottom:none}
+    .profile-row-label{font-size:12px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+    .profile-row-value{font-size:13px;color:var(--text);font-weight:700;text-align:right;word-break:break-word}
+    .profile-note{margin-top:14px;font-size:12px;line-height:1.6;color:var(--text2);background:rgba(109,40,217,0.06);border:1px solid rgba(109,40,217,0.14);border-radius:var(--r2);padding:12px 14px}
+
     .ep-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(68px,1fr));gap:7px}
     .ep-btn{height:42px;border-radius:var(--r0);background:var(--glass);border:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text2);cursor:pointer;transition:all .15s var(--ease);display:flex;align-items:center;justify-content:center;position:relative}
     .ep-btn:hover{background:var(--glass2);border-color:var(--borderv);color:var(--text);transform:translateY(-2px)}
@@ -365,6 +381,10 @@
       .cw-card{width:158px}
       .anil-tabs{gap:3px}
       .anil-tab{padding:7px 10px;font-size:11px}
+      .profile-hero{padding:18px 14px;border-radius:var(--r3)}
+      .profile-title{font-size:22px}
+      .profile-row{align-items:flex-start;flex-direction:column;gap:4px}
+      .profile-row-value{text-align:left}
     }
     @media(max-width:360px){.card-grid{grid-template-columns:repeat(2,1fr)}}
   </style>
@@ -383,6 +403,7 @@
         </div>
       </div>
       <div class="tb-acts">
+        <button class="ib" id="profileBtn" aria-label="Perfil">👤</button>
         <button class="ib" id="refreshBtn" aria-label="Atualizar">↻</button>
         <button class="ib" id="homeBtn" aria-label="Início">⌂</button>
       </div>
@@ -418,6 +439,22 @@
       </div>
     </div>
     <div id="homeSections"></div>
+  </main>
+
+  <main class="page hidden" id="profilePage">
+    <div class="profile-wrap">
+      <div class="profile-hero">
+        <div class="profile-hero-inner">
+          <div class="profile-avatar">B</div>
+          <div>
+            <div class="profile-kicker">Área do usuário</div>
+            <h2 class="profile-title">Seu perfil Baltigo</h2>
+            <p class="profile-sub">Veja seus dados locais e acesse o painel de afiliados direto pelo WebApp.</p>
+          </div>
+        </div>
+      </div>
+      <div class="profile-card" id="profileInfo"></div>
+    </div>
   </main>
 
   <main class="page hidden" id="resultsPage">
@@ -559,6 +596,11 @@
 const tg = window.Telegram?.WebApp || null;
 if (tg) { try { tg.ready(); tg.expand(); tg.setHeaderColor?.("#03040b"); tg.setBackgroundColor?.("#03040b"); } catch(e){} }
 const IS_TG = !!window.Telegram?.WebApp;
+function getTelegramUserId() {
+  const qp = new URLSearchParams(window.location.search);
+  return String(tg?.initDataUnsafe?.user?.id || qp.get("user_id") || "").trim();
+}
+const state = { userId: getTelegramUserId() };
 const API = window.location.origin;
 const STALL_MS = 13000, LINK_TO = 10000, MAX_ATT = 4, API_TO = 25000;
 
@@ -583,7 +625,7 @@ function removeWatch(aid) { const m = getWM(); delete m[aid]; setWM(m); }
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const S = {
-  page: "home", hist: [],
+  page: "home", hist: [], userId: state.userId,
   srchQ: "", srchRes: [],
   anime: null, eps: [], animeId: "", ep: "",
   qual: "HD", vidUrl: "", epItem: null,
@@ -605,8 +647,8 @@ const E = {
   topbar: $("topbar"), hSub: $("hSub"),
   loadOv: $("loadOv"), loadTitle: $("loadTitle"), loadText: $("loadText"),
   toast: $("toast"),
-  backBtn: $("backBtn"), refreshBtn: $("refreshBtn"), homeBtn: $("homeBtn"),
-  homePage: $("homePage"), resultsPage: $("resultsPage"), animePage: $("animePage"), playerPage: $("playerPage"),
+  backBtn: $("backBtn"), profileBtn: $("profileBtn"), refreshBtn: $("refreshBtn"), homeBtn: $("homeBtn"),
+  homePage: $("homePage"), profilePage: $("profilePage"), profileInfo: $("profileInfo"), resultsPage: $("resultsPage"), animePage: $("animePage"), playerPage: $("playerPage"),
   heroArea: $("heroArea"), cwSection: $("cwSection"),
   srchInput: $("srchInput"), srchClr: $("srchClr"), srchSpin: $("srchSpin"),
   homeSections: $("homeSections"),
@@ -662,7 +704,13 @@ E.vidPlayer.addEventListener("click", () => { if (S.page === "player") { S.cinem
 function setPage(page, push = true) {
   exitCinema();
   const prev = S.page;
-  const pages = ["homePage","resultsPage","animePage","playerPage"];
+  const titles = { home: "Início", profile: "Perfil", results: "Resultados", anime: S.anime?.title || "Anime", player: "Player" };
+  if (prev === page) {
+    setSub(titles[page] || "BALTIGO");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  const pages = ["homePage","profilePage","resultsPage","animePage","playerPage"];
   const curEl = E[prev + "Page"];
   if (curEl && !curEl.classList.contains("hidden")) {
     curEl.classList.add("page-exit");
@@ -677,12 +725,17 @@ function setPage(page, push = true) {
     setTimeout(() => nEl.classList.remove("page-enter"), 350);
   }
   S.page = page;
-  const titles = { home: "Início", results: "Resultados", anime: S.anime?.title || "Anime", player: "Player" };
   setSub(titles[page] || "BALTIGO");
   if (push && prev !== page) S.hist.push(prev);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
-function goBack() { exitCinema(); setPage(S.hist.pop() || "home", false); }
+function goBack() {
+  exitCinema();
+  const target = S.hist.pop() || "home";
+  setPage(target, false);
+  if (target === "profile") syncUrl({ route: "profile" });
+  else if (target === "home") updateUrl({ anime: "", ep: "", q: "" });
+}
 
 // ── API ───────────────────────────────────────────────────────────────────────
 async function apiGet(path, ms = API_TO) {
@@ -1625,13 +1678,71 @@ async function openEp(aid, ep, qual = "HD", opts = {}) {
   }
 }
 
+// ── Profile / Affiliate ──────────────────────────────────────────────────────
+function renderProfile() {
+  const u = tg?.initDataUnsafe?.user || {};
+  const name = [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username || "Usuário Baltigo";
+  const username = u.username ? `@${u.username}` : "Não informado";
+  const userId = state.userId || S.userId || "Não identificado";
+  const histCount = getCW().length;
+  E.profileInfo.innerHTML = `
+    <div class="profile-row">
+      <span class="profile-row-label">Nome</span>
+      <span class="profile-row-value">${esc(name)}</span>
+    </div>
+    <div class="profile-row">
+      <span class="profile-row-label">Usuário</span>
+      <span class="profile-row-value">${esc(username)}</span>
+    </div>
+    <div class="profile-row">
+      <span class="profile-row-label">Telegram ID</span>
+      <span class="profile-row-value">${esc(userId)}</span>
+    </div>
+    <div class="profile-row">
+      <span class="profile-row-label">Histórico local</span>
+      <span class="profile-row-value">${histCount} ${histCount === 1 ? "anime" : "animes"}</span>
+    </div>
+    <div class="profile-row">
+      <span class="profile-row-label">Armazenamento</span>
+      <span class="profile-row-value">Local</span>
+    </div>
+    <div style="padding-top:14px">
+      <button class="btn btn-primary btn-full" id="affiliateGatewayBtn" style="width:100%">Painel de afiliados</button>
+    </div>
+    <div class="profile-note">
+      O painel usa seu Telegram ID para abrir sua área de afiliado. Se abrir fora do Telegram, o ID só aparece se vier na URL.
+    </div>
+  `;
+
+  const affiliateBtn = $("affiliateGatewayBtn");
+  if (affiliateBtn) affiliateBtn.onclick = openAffiliateGateway;
+
+  setPage("profile");
+  syncUrl({ route: "profile" });
+}
+
+function openAffiliateGateway() {
+  const url = `/affiliate${state.userId ? `?user_id=${encodeURIComponent(state.userId)}&bot=${encodeURIComponent("animesBaltigo_Bot")}` : ""}`;
+  window.location.href = url;
+}
+
 // ── URL params ────────────────────────────────────────────────────────────────
-function getQP() { const p = new URLSearchParams(window.location.search); return { anime: p.get("anime") || "", ep: p.get("ep") || p.get("episode") || "", q: nq(p.get("q") || "HD") }; }
+function getQP() { const p = new URLSearchParams(window.location.search); return { route: p.get("route") || "", anime: p.get("anime") || "", ep: p.get("ep") || p.get("episode") || "", q: nq(p.get("q") || "HD") }; }
 function updateUrl({ anime, ep, q }) {
   const u = new URL(window.location.href);
+  u.searchParams.delete("route");
   anime ? u.searchParams.set("anime", anime) : u.searchParams.delete("anime");
   ep ? u.searchParams.set("ep", ep) : u.searchParams.delete("ep");
   q ? u.searchParams.set("q", nq(q)) : u.searchParams.delete("q");
+  history.replaceState({}, "", u.toString());
+}
+function syncUrl({ route }) {
+  const u = new URL(window.location.href);
+  u.searchParams.delete("anime");
+  u.searchParams.delete("ep");
+  u.searchParams.delete("episode");
+  u.searchParams.delete("q");
+  route ? u.searchParams.set("route", route) : u.searchParams.delete("route");
   history.replaceState({}, "", u.toString());
 }
 
@@ -1656,7 +1767,8 @@ function connectSSE() {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function boot() {
-  const { anime, ep, q } = getQP();
+  const { route, anime, ep, q } = getQP();
+  if (route === "profile") { renderProfile(); return; }
   if (anime && ep) {
     try { await openEp(anime, ep, q, { pushHistory: false, force: true }); return; } catch {
       try { await openAnime(anime, { pushHistory: false }); return; } catch {}
@@ -1738,10 +1850,12 @@ E.resBkBtn.addEventListener("click", () => {
   if (S.resMode === "search" && S.srchQ) { E.srchInput.value = S.srchQ; E.srchClr.style.display = "block"; }
 });
 E.backBtn.addEventListener("click", () => goBack());
+E.profileBtn.addEventListener("click", () => { if (S.cssFsOn) exitCssFs(); exitCinema(); clearAutoplay(); renderProfile(); });
 E.homeBtn.addEventListener("click", async () => { if (S.cssFsOn) exitCssFs(); exitCinema(); clearAutoplay(); clrPlayer(); setPage("home"); await loadHome(); updateUrl({ anime: "", ep: "", q: "" }); });
 E.refreshBtn.addEventListener("click", async () => {
   const p = S.page;
   if (p === "home") { await loadHome(); return; }
+  if (p === "profile") { renderProfile(); return; }
   if (p === "results") { S.resMode === "search" && S.srchQ ? await doSearch(S.srchQ, S.resPage) : await loadSection(S.resSection || "dublados", S.resPage); return; }
   if (p === "anime" && S.animeId) { await openAnime(S.animeId, { pushHistory: false }); return; }
   if (p === "player" && S.animeId && S.ep) await openEp(S.animeId, S.ep, S.qual, { pushHistory: false, force: true });
