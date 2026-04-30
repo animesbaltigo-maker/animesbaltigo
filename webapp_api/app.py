@@ -1199,6 +1199,39 @@ async def affiliate_root_slash():
     return FileResponse(AFFILIATE_APP_DIR / "index.html")
 
 
+@app.get("/app/affiliate")
+async def affiliate_app_alias():
+    index_path = AFFILIATE_APP_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Affiliate frontend not found")
+    response = FileResponse(index_path)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.get("/app/affiliate/")
+async def affiliate_app_alias_slash():
+    index_path = AFFILIATE_APP_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Affiliate frontend not found")
+    response = FileResponse(index_path)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+@app.get("/affiliate")
+async def affiliate_root():
+    return FileResponse(AFFILIATE_APP_DIR / "index.html")
+
+
+@app.get("/affiliate/")
+async def affiliate_root_slash():
+    return FileResponse(AFFILIATE_APP_DIR / "index.html")
+
+
 @app.get("/affiliate/share/{user_id}")
 async def affiliate_share_preview(user_id: int):
     ref_url = f"https://t.me/{BOT_USERNAME.lstrip('@')}?start=ref_{int(user_id)}"
