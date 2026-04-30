@@ -262,6 +262,53 @@ def referral_stats(user_id):
         }
 
 
+def get_referrer_user_id(user_id):
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT referrer_user_id
+        FROM referrals
+        WHERE referred_user_id = ?
+        LIMIT 1
+        """, (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        try:
+            return int(row["referrer_user_id"])
+        except Exception:
+            return None
+
+
+def get_referrer_chain(user_id, max_depth=2):
+    chain = []
+    seen = {int(user_id)}
+    current = int(user_id)
+
+    for _ in range(max(0, int(max_depth or 0))):
+        referrer = get_referrer_user_id(current)
+        if not referrer or referrer in seen:
+            break
+        chain.append(referrer)
+        seen.add(referrer)
+        current = referrer
+
+    return chain
+
+
+def get_referral_user(user_id):
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT user_id, username, first_name, created_at, last_seen_at
+        FROM users
+        WHERE user_id = ?
+        LIMIT 1
+        """, (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else {}
+
+
 def referral_ranking(limit=3):
     with _connect() as conn:
         cur = conn.cursor()
