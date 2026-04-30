@@ -57,10 +57,10 @@ TELETHON_PARALLEL_UPLOAD_WORKERS = int(os.getenv("TELETHON_PARALLEL_UPLOAD_WORKE
 TELETHON_SESSION_NAME = os.getenv("TELETHON_SESSION_NAME", str(DATA_DIR / "anime_uploader_bot")).strip()
 VIDEO_DOWNLOAD_PROTECT_CONTENT = os.getenv("VIDEO_DOWNLOAD_PROTECT_CONTENT", "1").strip() == "1"
 
-BOT_BRAND = os.getenv("BOT_BRAND", "Anime Brasil").strip()
+OT_BRAND = os.getenv("BOT_BRAND", "Anime Brasil").strip()
 WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL", "").strip().rstrip("/")
 BALTIGOFLIX_SUBSCRIBE_URL = os.getenv("BALTIGOFLIX_SUBSCRIBE_URL", "http://baltigoflix.com.br/").strip()
-BALTIGOFLIX_SUPPORT_URL = os.getenv("BALTIGOFLIX_SUPPORT_URL", "https://t.me/QGSuporteBot").strip()
+BALTIGOFLIX_SUPPORT_URL = os.getenv("BALTIGOFLIX_SUPPORT_URL", "https://t.me/SourceBaltigo_Bot").strip()
 CAKTO_CHECKOUT_URL = os.getenv("CAKTO_CHECKOUT_URL", "").strip()
 CAKTO_MENSAL_CHECKOUT_URL = os.getenv("CAKTO_MENSAL_CHECKOUT_URL", "https://pay.cakto.com.br/9snqsP3").strip()
 CAKTO_TRIMESTRAL_CHECKOUT_URL = os.getenv("CAKTO_TRIMESTRAL_CHECKOUT_URL", "https://pay.cakto.com.br/3fsy24d").strip()
@@ -71,4 +71,7 @@ CAKTO_OURO_CHECKOUT_URL = os.getenv("CAKTO_OURO_CHECKOUT_URL", CAKTO_TRIMESTRAL_
 CAKTO_DIAMANTE_CHECKOUT_URL = os.getenv("CAKTO_DIAMANTE_CHECKOUT_URL", CAKTO_SEMESTRAL_CHECKOUT_URL).strip()
 CAKTO_RUBI_CHECKOUT_URL = os.getenv("CAKTO_RUBI_CHECKOUT_URL", CAKTO_ANUAL_CHECKOUT_URL).strip()
 CAKTO_WEBHOOK_SECRET = os.getenv("CAKTO_WEBHOOK_SECRET", "0ce52ce5-aa98-4aff-be81-23ccbb85f741").strip()
-
+CAKTO_CLIENT_ID = os.getenv("CAKTO_CLIENT_ID", "2j5rsXTfq6C7OW3cJJGl6CAUkQBotG5n2u1q4JnL").strip()
+CAKTO_CLIENT_SECRET = os.getenv("CAKTO_CLIENT_SECRET", "Cxokh3ErCGWEbLzxsDDUZ2wvkBUB5skAVirWWaPofKr9JFx5ctbKbPv2axSEeUtvwMMmF1aaiETPTLjcf6wSp4CyTpZ7A7KJQg1A0lMoBw01jwkIqTbUEOn1lDBLXs5Z").strip()
+CAKTO_API_BASE_URL = os.getenv("CAKTO_API_BASE_URL", "https://api.cakto.com.br").strip().rstrip("/")
+CAKTO_ORDER_SYNC_LIMIT = int(os.getenv("CAKTO_ORDER_SYNC_LIMIT", "100") or "100")
