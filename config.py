@@ -57,7 +57,7 @@ TELETHON_PARALLEL_UPLOAD_WORKERS = int(os.getenv("TELETHON_PARALLEL_UPLOAD_WORKE
 TELETHON_SESSION_NAME = os.getenv("TELETHON_SESSION_NAME", str(DATA_DIR / "anime_uploader_bot")).strip()
 VIDEO_DOWNLOAD_PROTECT_CONTENT = os.getenv("VIDEO_DOWNLOAD_PROTECT_CONTENT", "1").strip() == "1"
 
-OT_BRAND = os.getenv("BOT_BRAND", "Anime Brasil").strip()
+BOT_BRAND = os.getenv("BOT_BRAND", "Anime Brasil").strip()
 WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL", "").strip().rstrip("/")
 BALTIGOFLIX_SUBSCRIBE_URL = os.getenv("BALTIGOFLIX_SUBSCRIBE_URL", "http://baltigoflix.com.br/").strip()
 BALTIGOFLIX_SUPPORT_URL = os.getenv("BALTIGOFLIX_SUPPORT_URL", "https://t.me/SourceBaltigo_Bot").strip()
