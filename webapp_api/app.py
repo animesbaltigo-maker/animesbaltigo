@@ -14,11 +14,11 @@ import httpx
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import CAKTO_WEBHOOK_SECRET
+from config import ADMIN_IDS, BOT_USERNAME, CAKTO_WEBHOOK_SECRET, STICKER_DIVISOR
 from core.http_client import get_http_client
 from services.animefire_client import (
     get_anime_details,
@@ -30,6 +30,25 @@ from services.animefire_client import (
 from services.recent_episodes_client import get_recent_episodes
 from services.cakto_gateway import extract_webhook_secret_values, process_cakto_webhook
 from services.subscriptions import get_active_subscription, init_subscriptions_db
+from services.affiliate_db import (
+    admin_list_affiliates,
+    admin_list_withdrawals,
+    admin_overview,
+    admin_user_snapshot,
+    affiliate_summary,
+    cents_to_money,
+    complete_affiliate_account,
+    get_settings,
+    init_affiliate_db,
+    list_commissions,
+    list_withdrawals,
+    pay_withdrawal,
+    refuse_withdrawal,
+    release_due_commissions,
+    request_withdrawal,
+    set_pix_key,
+    update_setting,
+)
 
 BASE_URL = "https://animefire.io"
 
@@ -85,6 +104,7 @@ SECTIONS: dict[str, dict[str, str]] = {
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MINIAPP_DIR = BASE_DIR / "miniapp"
+AFFILIATE_APP_DIR = MINIAPP_DIR / "affiliate"
 
 app = FastAPI(
     title="QG BALTIGO API",
@@ -131,6 +151,33 @@ class ProgressPayload(BaseModel):
     completed: bool = False
 
 
+class AffiliatePixPayload(BaseModel):
+    user_id: str
+    pix_key: str
+
+
+class AffiliateUserPayload(BaseModel):
+    user_id: str
+
+
+class AffiliateAccountPayload(BaseModel):
+    user_id: str
+    full_name: str
+    email: str
+    phone: str
+
+
+class AffiliateAdminActionPayload(BaseModel):
+    admin_user_id: str
+    note: str = ""
+
+
+class AffiliateSettingPayload(BaseModel):
+    admin_user_id: str
+    key: str
+    value: str
+
+
 async def get_proxy_client() -> httpx.AsyncClient:
     global _PROXY_CLIENT
     if _PROXY_CLIENT is None or _PROXY_CLIENT.is_closed:
@@ -149,6 +196,35 @@ async def get_proxy_client() -> httpx.AsyncClient:
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
+
+
+def _is_admin_user(user_id: str | int | None) -> bool:
+    try:
+        return int(user_id or 0) in set(ADMIN_IDS)
+    except Exception:
+        return False
+
+
+def _admin_required(user_id: str | int | None) -> None:
+    if not _is_admin_user(user_id):
+        raise HTTPException(status_code=403, detail="Acesso admin negado.")
+
+
+def _money_fields(item: dict[str, Any]) -> dict[str, Any]:
+    result = dict(item)
+    for key in (
+        "amount_cents",
+        "commission_amount_cents",
+        "sale_amount_cents",
+        "available_cents",
+        "pending_cents",
+        "paid_cents",
+        "withdrawal_pending_cents",
+        "canceled_cents",
+    ):
+        if key in result:
+            result[key.replace("_cents", "") + "_formatted"] = cents_to_money(result.get(key))
+    return result
 
 
 def _normalize_text(value: str) -> str:
@@ -780,6 +856,7 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
 async def _startup_tasks():
     # Pre-create the proxy client on startup so the first request is instant.
     init_subscriptions_db()
+    init_affiliate_db()
     await get_proxy_client()
 
     async def _recent_refresher():
@@ -1106,6 +1183,176 @@ async def api_cakto_offline_webhook(request: Request):
 
     result = process_cakto_webhook(payload)
     return result
+
+
+# =============================================================================
+# AFFILIATE WEBAPP / GATEWAY
+# =============================================================================
+
+@app.get("/affiliate")
+async def affiliate_root():
+    return FileResponse(AFFILIATE_APP_DIR / "index.html")
+
+
+@app.get("/affiliate/")
+async def affiliate_root_slash():
+    return FileResponse(AFFILIATE_APP_DIR / "index.html")
+
+
+@app.get("/affiliate/share/{user_id}")
+async def affiliate_share_preview(user_id: int):
+    ref_url = f"https://t.me/{BOT_USERNAME.lstrip('@')}?start=ref_{int(user_id)}"
+    image_url = STICKER_DIVISOR if str(STICKER_DIVISOR or "").startswith("http") else ""
+    if not image_url:
+        image_url = "https://photo.chelpbot.me/AgACAgEAAxkBZ7DGAAFpse3x62wh4yTxu0BIhIPz12L_YwACMAxrGxpikUXp6-kJkxw_1QEAAwIAA3kAAzoE/photo.jpg"
+    html_body = f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Baltigo - Animes Offline no Telegram</title>
+  <meta property="og:title" content="Baltigo - Animes offline direto no Telegram">
+  <meta property="og:description" content="Assista animes, baixe episódios e veja offline pelo bot Baltigo.">
+  <meta property="og:image" content="{image_url}">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta http-equiv="refresh" content="0; url={ref_url}">
+</head>
+<body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#080b12;color:#fff;font-family:system-ui,sans-serif">
+  <main><h1>Baltigo Animes</h1><p>Redirecionando para o bot...</p><a style="color:#93c5fd" href="{ref_url}">Abrir agora</a></main>
+</body>
+</html>"""
+    return Response(content=html_body, media_type="text/html")
+
+
+@app.get("/api/affiliate/summary")
+async def api_affiliate_summary(user_id: str = Query(...)):
+    summary = affiliate_summary(user_id)
+    summary["available_formatted"] = cents_to_money(summary.get("available_cents"))
+    summary["pending_formatted"] = cents_to_money(summary.get("pending_cents"))
+    summary["paid_formatted"] = cents_to_money(summary.get("paid_cents"))
+    summary["withdrawal_pending_formatted"] = cents_to_money(summary.get("withdrawal_pending_cents"))
+    summary["canceled_formatted"] = cents_to_money(summary.get("canceled_cents"))
+    summary["is_admin"] = _is_admin_user(user_id)
+    return summary
+
+
+@app.get("/api/affiliate/commissions")
+async def api_affiliate_commissions(user_id: str = Query(...), limit: int = Query(60, ge=1, le=200)):
+    return {"items": [_money_fields(item) for item in list_commissions(user_id, limit=limit)]}
+
+
+@app.get("/api/affiliate/withdrawals")
+async def api_affiliate_withdrawals(user_id: str = Query(...), limit: int = Query(40, ge=1, le=200)):
+    return {"items": [_money_fields(item) for item in list_withdrawals(user_id, limit=limit)]}
+
+
+@app.post("/api/affiliate/account")
+async def api_affiliate_account(payload: AffiliateAccountPayload):
+    try:
+        profile = complete_affiliate_account(payload.user_id, payload.full_name, payload.email, payload.phone)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"ok": True, "profile": profile}
+
+
+@app.post("/api/affiliate/pix")
+async def api_affiliate_pix(payload: AffiliatePixPayload):
+    try:
+        return {"ok": True, "profile": set_pix_key(payload.user_id, payload.pix_key)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/affiliate/withdrawals")
+async def api_affiliate_request_withdrawal(payload: AffiliateUserPayload):
+    try:
+        withdrawal = request_withdrawal(payload.user_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"ok": True, "withdrawal": _money_fields(withdrawal)}
+
+
+@app.post("/api/affiliate/release")
+async def api_affiliate_release(payload: AffiliateAdminActionPayload):
+    _admin_required(payload.admin_user_id)
+    return {"ok": True, "released": release_due_commissions()}
+
+
+@app.get("/api/affiliate/admin/overview")
+async def api_affiliate_admin_overview(admin_user_id: str = Query(...)):
+    _admin_required(admin_user_id)
+    return admin_overview()
+
+
+@app.get("/api/affiliate/admin/withdrawals")
+async def api_affiliate_admin_withdrawals(
+    admin_user_id: str = Query(...),
+    status: str = Query("pending"),
+    limit: int = Query(100, ge=1, le=300),
+):
+    _admin_required(admin_user_id)
+    return {"items": [_money_fields(item) for item in admin_list_withdrawals(status=status, limit=limit)]}
+
+
+@app.get("/api/affiliate/admin/affiliates")
+async def api_affiliate_admin_affiliates(
+    admin_user_id: str = Query(...),
+    q: str = Query(""),
+    tier: str = Query("all"),
+    status: str = Query("all"),
+    sort: str = Query("sales"),
+    limit: int = Query(200, ge=1, le=500),
+):
+    _admin_required(admin_user_id)
+    return {
+        "items": [
+            _money_fields(item)
+            for item in admin_list_affiliates(query=q, tier=tier, status=status, sort=sort, limit=limit)
+        ]
+    }
+
+
+@app.get("/api/affiliate/admin/user/{user_id}")
+async def api_affiliate_admin_user(user_id: str, admin_user_id: str = Query(...)):
+    _admin_required(admin_user_id)
+    return admin_user_snapshot(user_id)
+
+
+@app.post("/api/affiliate/admin/withdrawals/{withdrawal_id}/pay")
+async def api_affiliate_admin_pay_withdrawal(withdrawal_id: int, payload: AffiliateAdminActionPayload):
+    _admin_required(payload.admin_user_id)
+    try:
+        withdrawal = pay_withdrawal(withdrawal_id, payload.admin_user_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"ok": True, "withdrawal": _money_fields(withdrawal)}
+
+
+@app.post("/api/affiliate/admin/withdrawals/{withdrawal_id}/refuse")
+async def api_affiliate_admin_refuse_withdrawal(withdrawal_id: int, payload: AffiliateAdminActionPayload):
+    _admin_required(payload.admin_user_id)
+    try:
+        withdrawal = refuse_withdrawal(withdrawal_id, payload.note)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"ok": True, "withdrawal": _money_fields(withdrawal)}
+
+
+@app.get("/api/affiliate/settings")
+async def api_affiliate_settings(admin_user_id: str = Query(...)):
+    _admin_required(admin_user_id)
+    return {"settings": get_settings()}
+
+
+@app.post("/api/affiliate/settings")
+async def api_affiliate_update_setting(payload: AffiliateSettingPayload):
+    _admin_required(payload.admin_user_id)
+    try:
+        update_setting(payload.key, payload.value)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"ok": True, "settings": get_settings()}
 
 
 # =============================================================================
