@@ -10,6 +10,8 @@ from services.cakto_api import cakto_api_configured, verify_cakto_payment_for_us
 from services.cakto_gateway import get_checkout_options
 from services.subscriptions import get_active_subscription
 
+BALTIGOFLIX_OFFER_IMAGE = "https://cdn-checkout.cakto.com.br/images/8f71ba5b-ae9d-45d7-a959-dc749fb51543.jpg"
+
 
 def _keyboard(user_id: int) -> InlineKeyboardMarkup:
     rows = [
@@ -37,6 +39,10 @@ def _text(title: str = "") -> str:
         "• 📲 Baixar episódios direto no Telegram\n"
         "• 🎬 Assistir quando quiser, sem abrir site\n"
         "• ⚡ Receber o arquivo protegido no seu privado\n\n"
+        "🍿 <b>E não para por aí:</b>\n"
+        "• 📺 Libera também o acesso completo à BaltigoFlix\n"
+        "• 🎞 Filmes, séries, canais, esportes e conteúdo premium\n"
+        "• 🚀 Tudo em um só acesso, direto no seu aparelho\n\n"
         "━━━━━━━━━━━━━━━━\n\n"
         "💎 <b>Escolha um plano abaixo para liberar agora.</b>\n"
         "Depois do pagamento, toque em <b>🔄 Já paguei / verificar</b>."
@@ -46,12 +52,20 @@ def _text(title: str = "") -> str:
 async def send_offline_paywall(query, user, title: str = "") -> None:
     await query.answer("🔒 Offline exclusivo para assinantes.", show_alert=True)
     if query.message:
-        await query.message.reply_text(
-            _text(title),
-            parse_mode="HTML",
-            reply_markup=_keyboard(user.id),
-            disable_web_page_preview=True,
-        )
+        try:
+            await query.message.reply_photo(
+                photo=BALTIGOFLIX_OFFER_IMAGE,
+                caption=_text(title),
+                parse_mode="HTML",
+                reply_markup=_keyboard(user.id),
+            )
+        except Exception:
+            await query.message.reply_text(
+                _text(title),
+                parse_mode="HTML",
+                reply_markup=_keyboard(user.id),
+                disable_web_page_preview=True,
+            )
 
 
 async def answer_subscription_check(query, user_id: int) -> None:
