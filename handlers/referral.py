@@ -17,7 +17,7 @@ def _bot_username() -> str:
 
 
 def _affiliate_webapp_url(user_id: int) -> str:
-    base = (WEBAPP_BASE_URL or "").strip().rstrip("/")
+    base = (WEBAPP_BASE_URL or "https://rough-double-remarkable-north.trycloudflare.com/app").strip().rstrip("/")
     if not base:
         return ""
     return f"{base}/affiliate?user_id={int(user_id)}&bot={quote(_bot_username())}"
