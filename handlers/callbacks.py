@@ -633,6 +633,30 @@ def _episode_list_text(title: str, offset: int, total: int):
     )
 
 
+def _season_list_text(title: str, season: int, total: int, page: int, total_pages: int, offline: bool = False) -> str:
+    safe_title = html.escape((title or "Sem título").strip())
+    action = "Baixar offline" if offline else "Episódios"
+    footer = "Toque em um episódio para o bot baixar e enviar no Telegram." if offline else "Escolha um episódio abaixo:"
+    return (
+        f"📚 <b>{action}</b>\n\n"
+        f"<b>{safe_title}</b>\n"
+        f"<b>Temporada:</b> {season}\n"
+        f"<b>Total de episódios:</b> {total}\n"
+        f"<b>Página:</b> {page}/{total_pages}\n\n"
+        f"{footer}"
+    )
+
+
+def _season_picker_text(title: str, current_season: int, seasons: list[int]) -> str:
+    safe_title = html.escape((title or "Sem título").strip())
+    return (
+        f"📚 <b>{safe_title}</b>\n\n"
+        f"<b>Temporada atual:</b> {current_season}\n"
+        f"<b>Temporadas:</b> {len(seasons)}\n\n"
+        "Escolha a temporada que deseja abrir."
+    )
+
+
 def _display_server_name(server: str) -> str:
     server = (server or "").upper().strip()
 
@@ -1004,6 +1028,126 @@ def _episodes_keyboard(anime_id: str, offset: int, items: list, total: int):
     return InlineKeyboardMarkup(rows)
 
 
+def _episode_button_label(item: dict) -> str:
+    label = str(item.get("label") or "").strip()
+    if label:
+        return label
+    season = item.get("season")
+    episode_number = item.get("episode_number")
+    if season and episode_number and int(season) > 1:
+        return f"T{int(season):02d}E{int(episode_number):02d}"
+    return str(item.get("episode", "?"))
+
+
+def _season_episode_value(item: dict) -> str:
+    return str(item.get("episode") or item.get("episode_number") or "?")
+
+
+def _seasons_from_payload(payload: dict) -> list[int]:
+    seasons = payload.get("seasons") or []
+    if not seasons:
+        seasons = sorted({
+            int(item.get("season") or 1)
+            for item in (payload.get("all_items") or payload.get("items") or [])
+            if str(item.get("season") or "1").isdigit()
+        })
+    return seasons or [1]
+
+
+def _slice_season_payload(payload: dict, season: int | None, offset: int, limit: int):
+    all_items = payload.get("all_items") or payload.get("items") or []
+    seasons = _seasons_from_payload(payload)
+    selected_season = int(season or (seasons[0] if len(seasons) > 1 else 0) or 0)
+
+    if selected_season:
+        season_items = [
+            item for item in all_items
+            if int(item.get("season") or selected_season) == selected_season
+        ]
+    else:
+        season_items = list(all_items)
+
+    total = len(season_items)
+    page_items = season_items[offset: offset + limit]
+    return selected_season, seasons, page_items, total
+
+
+def _episodes_keyboard(anime_id: str, offset: int, items: list, total: int, season: int | None = None, seasons: list[int] | None = None):
+    rows = []
+    current = []
+    seasons = seasons or []
+
+    if season:
+        rows.append([
+            InlineKeyboardButton(
+                f"📚 Temporada {int(season):02d}",
+                callback_data=f"spseason|{anime_id}|{int(season)}|{offset}",
+            )
+        ])
+
+    for item in items:
+        ep = _season_episode_value(item)
+        current.append(
+            InlineKeyboardButton(
+                _episode_button_label(item),
+                callback_data=f"ep|{anime_id}|{ep}",
+            )
+        )
+        if len(current) == 5:
+            rows.append(current)
+            current = []
+
+    if current:
+        rows.append(current)
+
+    total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
+    current_page = (offset // EPISODES_PER_PAGE) + 1
+    last_offset = max(0, (total_pages - 1) * EPISODES_PER_PAGE)
+
+    nav_row_1 = []
+    nav_row_2 = []
+
+    if current_page > 1:
+        first_callback = f"epss|{anime_id}|{int(season)}|0" if season else f"eps|{anime_id}|0"
+        nav_row_1.append(InlineKeyboardButton("⏪ Primeira", callback_data=first_callback))
+        prev_offset = max(0, offset - EPISODES_PER_PAGE)
+        prev_callback = f"epss|{anime_id}|{int(season)}|{prev_offset}" if season else f"eps|{anime_id}|{prev_offset}"
+        nav_row_1.append(InlineKeyboardButton("⬅️ Anterior", callback_data=prev_callback))
+
+    if current_page < total_pages:
+        next_offset = offset + EPISODES_PER_PAGE
+        next_callback = f"epss|{anime_id}|{int(season)}|{next_offset}" if season else f"eps|{anime_id}|{next_offset}"
+        last_callback = f"epss|{anime_id}|{int(season)}|{last_offset}" if season else f"eps|{anime_id}|{last_offset}"
+        nav_row_2.append(InlineKeyboardButton("Próxima ➡️", callback_data=next_callback))
+        nav_row_2.append(InlineKeyboardButton("Última ⏩", callback_data=last_callback))
+
+    if nav_row_1:
+        rows.append(nav_row_1)
+    if nav_row_2:
+        rows.append(nav_row_2)
+
+    rows.append([InlineKeyboardButton("🔙 Voltar", callback_data=f"anime|{anime_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _season_picker_keyboard(anime_id: str, seasons: list[int], current_season: int, offset: int, offline: bool = False):
+    rows = []
+    current = []
+    prefix = "offepss" if offline else "epss"
+    for season in seasons:
+        label = f"✅ T{int(season):02d}" if int(season) == int(current_season) else f"T{int(season):02d}"
+        current.append(InlineKeyboardButton(label, callback_data=f"{prefix}|{anime_id}|{int(season)}|0"))
+        if len(current) == 4:
+            rows.append(current)
+            current = []
+    if current:
+        rows.append(current)
+    rows.append([
+        InlineKeyboardButton("🔙 Voltar aos episódios", callback_data=f"{prefix}|{anime_id}|{int(current_season)}|{offset}")
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
 def _offline_menu_text(title: str) -> str:
     safe_title = html.escape((title or "Sem t\u00edtulo").strip())
     return (
@@ -1094,6 +1238,59 @@ def _download_episodes_keyboard(anime_id: str, offset: int, items: list, total: 
         next_offset = offset + EPISODES_PER_PAGE
         nav_row_2.append(InlineKeyboardButton("Pr\u00f3xima \u27a1\ufe0f", callback_data=f"offeps|{anime_id}|{next_offset}"))
         nav_row_2.append(InlineKeyboardButton("\u00daltima \u23e9", callback_data=f"offeps|{anime_id}|{last_offset}"))
+
+    if nav_row_1:
+        rows.append(nav_row_1)
+    if nav_row_2:
+        rows.append(nav_row_2)
+
+    rows.append([InlineKeyboardButton("\U0001f519 Voltar", callback_data=f"off|{anime_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _download_episodes_keyboard(anime_id: str, offset: int, items: list, total: int, season: int | None = None, seasons: list[int] | None = None):
+    rows = []
+    current = []
+    seasons = seasons or []
+
+    if season:
+        rows.append([
+            InlineKeyboardButton(
+                f"📚 Temporada {int(season):02d}",
+                callback_data=f"offspseason|{anime_id}|{int(season)}|{offset}",
+            )
+        ])
+
+    for item in items:
+        ep = _season_episode_value(item)
+        current.append(InlineKeyboardButton(_episode_button_label(item), callback_data=f"dl|{anime_id}|{ep}"))
+        if len(current) == 5:
+            rows.append(current)
+            current = []
+
+    if current:
+        rows.append(current)
+
+    total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
+    current_page = (offset // EPISODES_PER_PAGE) + 1
+    last_offset = max(0, (total_pages - 1) * EPISODES_PER_PAGE)
+
+    nav_row_1 = []
+    nav_row_2 = []
+
+    if current_page > 1:
+        first_callback = f"offepss|{anime_id}|{int(season)}|0" if season else f"offeps|{anime_id}|0"
+        nav_row_1.append(InlineKeyboardButton("⏪ Primeira", callback_data=first_callback))
+        prev_offset = max(0, offset - EPISODES_PER_PAGE)
+        prev_callback = f"offepss|{anime_id}|{int(season)}|{prev_offset}" if season else f"offeps|{anime_id}|{prev_offset}"
+        nav_row_1.append(InlineKeyboardButton("⬅️ Anterior", callback_data=prev_callback))
+
+    if current_page < total_pages:
+        next_offset = offset + EPISODES_PER_PAGE
+        next_callback = f"offepss|{anime_id}|{int(season)}|{next_offset}" if season else f"offeps|{anime_id}|{next_offset}"
+        last_callback = f"offepss|{anime_id}|{int(season)}|{last_offset}" if season else f"offeps|{anime_id}|{last_offset}"
+        nav_row_2.append(InlineKeyboardButton("Próxima ➡️", callback_data=next_callback))
+        nav_row_2.append(InlineKeyboardButton("Última ⏩", callback_data=last_callback))
 
     if nav_row_1:
         rows.append(nav_row_1)
@@ -1443,7 +1640,7 @@ def _action_signature(data: str) -> str:
     if not data:
         return ""
 
-    prefixes = ("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|")
+    prefixes = ("ep|", "eps|", "epss|", "spseason|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|", "offepss|", "offspseason|")
     for prefix in prefixes:
         if data.startswith(prefix):
             return data
@@ -1989,6 +2186,110 @@ async def _render_download_episodes_page(
     return await _safe_edit_text(query, text, keyboard)
 
 
+async def _render_episodes_page(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    anime_id: str,
+    offset: int,
+    season: int | None = None,
+    caption_only: bool = False,
+):
+    anime = await _get_cached_anime(context, anime_id)
+    payload = await _get_cached_episodes(anime_id, 0, 3000)
+    selected_season, seasons, items, total = _slice_season_payload(payload, season, offset, EPISODES_PER_PAGE)
+
+    display_title = _format_title_with_version(
+        _pick_display_title(anime, anime.get("title") or "Sem título"),
+        _resolve_is_dubbed(context, anime_id, anime=anime),
+    )
+
+    if selected_season:
+        current_page = (offset // EPISODES_PER_PAGE) + 1
+        total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
+        text = _season_list_text(display_title, selected_season, total, current_page, total_pages)
+    else:
+        text = _episode_list_text(display_title, offset, total)
+
+    keyboard = _episodes_keyboard(
+        anime_id=anime_id,
+        offset=offset,
+        items=items,
+        total=total,
+        season=selected_season or None,
+        seasons=seasons,
+    )
+
+    image_url = _anime_secondary_image(anime)
+    if image_url:
+        return await _safe_edit_photo(query, image_url, text, keyboard, caption_only=caption_only)
+
+    return await _safe_edit_text(query, text, keyboard)
+
+
+async def _render_download_episodes_page(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    anime_id: str,
+    offset: int,
+    season: int | None = None,
+    caption_only: bool = False,
+):
+    anime = await _get_cached_anime(context, anime_id)
+    payload = await _get_cached_episodes(anime_id, 0, 3000)
+    selected_season, seasons, items, total = _slice_season_payload(payload, season, offset, EPISODES_PER_PAGE)
+
+    display_title = _format_title_with_version(
+        _pick_display_title(anime, anime.get("title") or "Sem título"),
+        _resolve_is_dubbed(context, anime_id, anime=anime),
+    )
+
+    if selected_season:
+        current_page = (offset // EPISODES_PER_PAGE) + 1
+        total_pages = max(1, ((total - 1) // EPISODES_PER_PAGE) + 1)
+        text = _season_list_text(display_title, selected_season, total, current_page, total_pages, offline=True)
+    else:
+        text = _download_episode_list_text(display_title, offset, total)
+
+    keyboard = _download_episodes_keyboard(
+        anime_id=anime_id,
+        offset=offset,
+        items=items,
+        total=total,
+        season=selected_season or None,
+        seasons=seasons,
+    )
+
+    image_url = _anime_secondary_image(anime)
+    if image_url:
+        return await _safe_edit_photo(query, image_url, text, keyboard, caption_only=caption_only)
+
+    return await _safe_edit_text(query, text, keyboard)
+
+
+async def _render_season_picker_page(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    anime_id: str,
+    season: int,
+    offset: int,
+    offline: bool = False,
+):
+    anime = await _get_cached_anime(context, anime_id)
+    payload = await _get_cached_episodes(anime_id, 0, 3000)
+    seasons = _seasons_from_payload(payload)
+    display_title = _format_title_with_version(
+        _pick_display_title(anime, anime.get("title") or "Sem título"),
+        _resolve_is_dubbed(context, anime_id, anime=anime),
+    )
+    text = _season_picker_text(display_title, season, seasons)
+    keyboard = _season_picker_keyboard(anime_id, seasons, season, offset, offline=offline)
+
+    image_url = _anime_secondary_image(anime)
+    if image_url:
+        return await _safe_edit_photo(query, image_url, text, keyboard, caption_only=False)
+    return await _safe_edit_text(query, text, keyboard)
+
+
 async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
@@ -2006,7 +2307,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if (
-        data.startswith(("off|", "offeps|", "dl|"))
+        data.startswith(("off|", "offeps|", "offepss|", "offspseason|", "dl|"))
         and user.id not in ADMIN_IDS
         and not is_active_subscriber(user.id)
     ):
@@ -2052,7 +2353,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     _set_inflight_action(message.chat.id, message.message_id, current_action)
 
-                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|", "off|", "offeps|")):
+                if data.startswith(("ep|", "eps|", "epss|", "spseason|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|", "off|", "offeps|", "offepss|", "offspseason|")):
                     await _set_loading_state(query)
 
                 if data.startswith("ql|"):
@@ -2146,6 +2447,34 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     if not ok:
                         await _safe_answer_query(query, "NÃ£o consegui abrir o modo offline agora.", show_alert=False)
+                    return
+
+                if data.startswith("offspseason|"):
+                    _, anime_id, season_str, offset_str = data.split("|", 3)
+                    ok = await _render_season_picker_page(
+                        query,
+                        context,
+                        anime_id,
+                        int(season_str),
+                        int(offset_str),
+                        offline=True,
+                    )
+                    if not ok:
+                        await _safe_answer_query(query, "Não consegui abrir as temporadas offline.", show_alert=False)
+                    return
+
+                if data.startswith("offepss|"):
+                    _, anime_id, season_str, offset_str = data.split("|", 3)
+                    ok = await _render_download_episodes_page(
+                        query,
+                        context,
+                        anime_id,
+                        int(offset_str),
+                        season=int(season_str),
+                        caption_only=False,
+                    )
+                    if not ok:
+                        await _safe_answer_query(query, "Não consegui abrir os episódios offline.", show_alert=False)
                     return
 
                 if data.startswith("offeps|"):
@@ -2579,6 +2908,34 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     if not ok:
                         await _safe_answer_query(query, "⚠️ Não consegui abrir essa versão.", show_alert=False)
+                    return
+
+                if data.startswith("spseason|"):
+                    _, anime_id, season_str, offset_str = data.split("|", 3)
+                    ok = await _render_season_picker_page(
+                        query,
+                        context,
+                        anime_id,
+                        int(season_str),
+                        int(offset_str),
+                        offline=False,
+                    )
+                    if not ok:
+                        await _safe_answer_query(query, "Não consegui abrir as temporadas.", show_alert=False)
+                    return
+
+                if data.startswith("epss|"):
+                    _, anime_id, season_str, offset_str = data.split("|", 3)
+                    ok = await _render_episodes_page(
+                        query,
+                        context,
+                        anime_id,
+                        int(offset_str),
+                        season=int(season_str),
+                        caption_only=False,
+                    )
+                    if not ok:
+                        await _safe_answer_query(query, "Não consegui abrir os episódios.", show_alert=False)
                     return
 
                 if data.startswith("eps|"):
