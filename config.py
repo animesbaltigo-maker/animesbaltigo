@@ -11,11 +11,11 @@ try:
 except Exception:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-API_ID = int(os.getenv("API_ID", "") or "0")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8675150552:AAHoUu64RoMPHNdaChP9RQGF0iz-tk7Crbo").strip()
+API_ID = int(os.getenv("API_ID", "0") or "0")
 API_HASH = os.getenv("API_HASH", "").strip()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "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").strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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").strip()
 
 SOURCE_SITE_BASE = os.getenv("SOURCE_SITE_BASE", "https://animefire.io").strip().rstrip("/")
 
@@ -40,6 +40,13 @@ EPISODE_LOOKUP_LIMIT = int(os.getenv("EPISODE_LOOKUP_LIMIT", "400"))
 ANTI_FLOOD_SECONDS = float(os.getenv("ANTI_FLOOD_SECONDS", "1.2"))
 API_CACHE_TTL_SECONDS = int(os.getenv("API_CACHE_TTL_SECONDS", "900"))
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "45"))
+UPSTREAM_PROXY_URL = (
+    os.getenv("UPSTREAM_PROXY_URL", "").strip()
+    or os.getenv("SCRAPER_PROXY_URL", "").strip()
+    or os.getenv("HTTPS_PROXY", "").strip()
+    or os.getenv("HTTP_PROXY", "").strip()
+    or os.getenv("ALL_PROXY", "").strip()
+)
 VIDEO_DOWNLOAD_QUEUE_LIMIT = int(os.getenv("VIDEO_DOWNLOAD_QUEUE_LIMIT", "20"))
 VIDEO_DOWNLOAD_WORKERS = int(os.getenv("VIDEO_DOWNLOAD_WORKERS", "2"))
 VIDEO_DOWNLOAD_CACHE_DIR = os.getenv(
@@ -47,6 +54,11 @@ VIDEO_DOWNLOAD_CACHE_DIR = os.getenv(
     str(DATA_DIR / "video_cache"),
 ).strip()
 VIDEO_DOWNLOAD_MAX_MB = int(os.getenv("VIDEO_DOWNLOAD_MAX_MB", "1900"))
+VIDEO_DOWNLOAD_TRUST_ENV = os.getenv("VIDEO_DOWNLOAD_TRUST_ENV", "0").strip().lower() in {"1", "true", "yes", "on", "sim"}
+VIDEO_DOWNLOAD_CHUNK_MB = int(os.getenv("VIDEO_DOWNLOAD_CHUNK_MB", "4"))
+VIDEO_DOWNLOAD_PART_MB = int(os.getenv("VIDEO_DOWNLOAD_PART_MB", "8"))
+VIDEO_DOWNLOAD_PARALLEL = os.getenv("VIDEO_DOWNLOAD_PARALLEL", "0").strip().lower() in {"1", "true", "yes", "on", "sim"}
+VIDEO_DOWNLOAD_PARALLEL_WORKERS = int(os.getenv("VIDEO_DOWNLOAD_PARALLEL_WORKERS", "4"))
 VIDEO_CACHE_TTL_HOURS = int(os.getenv("VIDEO_CACHE_TTL_HOURS", "1"))
 VIDEO_CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("VIDEO_CACHE_CLEANUP_INTERVAL_SECONDS", "600"))
 VIDEO_UPLOAD_MAX_MB = int(os.getenv("VIDEO_UPLOAD_MAX_MB", "49"))
@@ -57,8 +69,16 @@ TELETHON_PARALLEL_UPLOAD_WORKERS = int(os.getenv("TELETHON_PARALLEL_UPLOAD_WORKE
 TELETHON_SESSION_NAME = os.getenv("TELETHON_SESSION_NAME", str(DATA_DIR / "anime_uploader_bot")).strip()
 VIDEO_DOWNLOAD_PROTECT_CONTENT = os.getenv("VIDEO_DOWNLOAD_PROTECT_CONTENT", "1").strip() == "1"
 
-BOT_BRAND = os.getenv("BOT_BRAND", "Anime Brasil").strip()
+BOT_BRAND = os.getenv("BOT_BRAND", os.getenv("OT_BRAND", "Anime Brasil")).strip()
 WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL", "").strip().rstrip("/")
+_SUBSCRIPTIONS_DB_RAW = Path(
+    os.getenv("SUBSCRIPTIONS_DB_PATH", "").strip()
+    or os.getenv("BALTIGO_SUBSCRIPTIONS_DB_PATH", "").strip()
+    or str(DATA_DIR / "offline_subscriptions.sqlite3")
+)
+SUBSCRIPTIONS_DB_PATH = str(
+    _SUBSCRIPTIONS_DB_RAW if _SUBSCRIPTIONS_DB_RAW.is_absolute() else BASE_DIR / _SUBSCRIPTIONS_DB_RAW
+)
 BALTIGOFLIX_SUBSCRIBE_URL = os.getenv("BALTIGOFLIX_SUBSCRIBE_URL", "http://baltigoflix.com.br/").strip()
 BALTIGOFLIX_SUPPORT_URL = os.getenv("BALTIGOFLIX_SUPPORT_URL", "https://t.me/SourceBaltigo_Bot").strip()
 CAKTO_CHECKOUT_URL = os.getenv("CAKTO_CHECKOUT_URL", "").strip()
@@ -70,8 +90,8 @@ CAKTO_BRONZE_CHECKOUT_URL = os.getenv("CAKTO_BRONZE_CHECKOUT_URL", CAKTO_MENSAL_
 CAKTO_OURO_CHECKOUT_URL = os.getenv("CAKTO_OURO_CHECKOUT_URL", CAKTO_TRIMESTRAL_CHECKOUT_URL).strip()
 CAKTO_DIAMANTE_CHECKOUT_URL = os.getenv("CAKTO_DIAMANTE_CHECKOUT_URL", CAKTO_SEMESTRAL_CHECKOUT_URL).strip()
 CAKTO_RUBI_CHECKOUT_URL = os.getenv("CAKTO_RUBI_CHECKOUT_URL", CAKTO_ANUAL_CHECKOUT_URL).strip()
-CAKTO_WEBHOOK_SECRET = os.getenv("CAKTO_WEBHOOK_SECRET", "0ce52ce5-aa98-4aff-be81-23ccbb85f741").strip()
-CAKTO_CLIENT_ID = os.getenv("CAKTO_CLIENT_ID", "2j5rsXTfq6C7OW3cJJGl6CAUkQBotG5n2u1q4JnL").strip()
-CAKTO_CLIENT_SECRET = os.getenv("CAKTO_CLIENT_SECRET", "Cxokh3ErCGWEbLzxsDDUZ2wvkBUB5skAVirWWaPofKr9JFx5ctbKbPv2axSEeUtvwMMmF1aaiETPTLjcf6wSp4CyTpZ7A7KJQg1A0lMoBw01jwkIqTbUEOn1lDBLXs5Z").strip()
+CAKTO_WEBHOOK_SECRET = os.getenv("CAKTO_WEBHOOK_SECRET", "").strip()
+CAKTO_CLIENT_ID = os.getenv("CAKTO_CLIENT_ID", "").strip()
+CAKTO_CLIENT_SECRET = os.getenv("CAKTO_CLIENT_SECRET", "").strip()
 CAKTO_API_BASE_URL = os.getenv("CAKTO_API_BASE_URL", "https://api.cakto.com.br").strip().rstrip("/")
 CAKTO_ORDER_SYNC_LIMIT = int(os.getenv("CAKTO_ORDER_SYNC_LIMIT", "100") or "100")
