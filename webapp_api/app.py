@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import ADMIN_IDS, BOT_USERNAME, CAKTO_WEBHOOK_SECRET, STICKER_DIVISOR
+from config import ADMIN_IDS, BOT_USERNAME, CAKTO_WEBHOOK_SECRET, STICKER_DIVISOR, UPSTREAM_PROXY_URL
 from core.http_client import get_http_client
 from services.animefire_client import (
     get_anime_details,
@@ -147,6 +147,8 @@ def _get_proxy_transport() -> httpx.AsyncHTTPTransport:
         "http2": False,
         "limits": _get_proxy_limits(),
     }
+    if UPSTREAM_PROXY_URL:
+        kwargs["proxy"] = UPSTREAM_PROXY_URL
     if os.getenv("HTTP_FORCE_IPV4", "1").strip() != "0":
         kwargs["local_address"] = "0.0.0.0"
     return httpx.AsyncHTTPTransport(**kwargs)
