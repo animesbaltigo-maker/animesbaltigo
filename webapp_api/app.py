@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 import unicodedata
@@ -140,6 +141,17 @@ def _get_proxy_limits() -> httpx.Limits:
     )
 
 
+def _get_proxy_transport() -> httpx.AsyncHTTPTransport:
+    kwargs = {
+        "http1": True,
+        "http2": False,
+        "limits": _get_proxy_limits(),
+    }
+    if os.getenv("HTTP_FORCE_IPV4", "1").strip() != "0":
+        kwargs["local_address"] = "0.0.0.0"
+    return httpx.AsyncHTTPTransport(**kwargs)
+
+
 class ProgressPayload(BaseModel):
     user_id: str
     anime_id: str
@@ -184,7 +196,7 @@ async def get_proxy_client() -> httpx.AsyncClient:
         _PROXY_CLIENT = httpx.AsyncClient(
             timeout=PROXY_TIMEOUT,
             follow_redirects=True,
-            limits=_get_proxy_limits(),
+            transport=_get_proxy_transport(),
             http2=False,  # many CDNs behave better with HTTP/1.1
         )
     return _PROXY_CLIENT
@@ -1188,39 +1200,6 @@ async def api_cakto_offline_webhook(request: Request):
 # =============================================================================
 # AFFILIATE WEBAPP / GATEWAY
 # =============================================================================
-
-@app.get("/affiliate")
-async def affiliate_root():
-    return FileResponse(AFFILIATE_APP_DIR / "index.html")
-
-
-@app.get("/affiliate/")
-async def affiliate_root_slash():
-    return FileResponse(AFFILIATE_APP_DIR / "index.html")
-
-
-@app.get("/app/affiliate")
-async def affiliate_app_alias():
-    index_path = AFFILIATE_APP_DIR / "index.html"
-    if not index_path.exists():
-        raise HTTPException(status_code=404, detail="Affiliate frontend not found")
-    response = FileResponse(index_path)
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
-
-
-@app.get("/app/affiliate/")
-async def affiliate_app_alias_slash():
-    index_path = AFFILIATE_APP_DIR / "index.html"
-    if not index_path.exists():
-        raise HTTPException(status_code=404, detail="Affiliate frontend not found")
-    response = FileResponse(index_path)
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
 
 @app.get("/affiliate")
 async def affiliate_root():
