@@ -2059,3 +2059,69 @@ async def preload_popular_cache():
             await get_episodes(anime_id, 0, 3000)
         except Exception as error:
             print(f"[WARMUP] erro_em_{anime_id}={repr(error)}")
+
+
+_animefire_search_anime = search_anime
+_animefire_get_anime_details = get_anime_details
+_animefire_get_episodes = get_episodes
+_animefire_get_episode_player = get_episode_player
+_animefire_get_random_anime_by_genre = get_random_anime_by_genre
+_animefire_invalidate_episode_caches = invalidate_episode_caches
+
+
+def _use_sushi_source() -> bool:
+    try:
+        from config import ANIME_SOURCE, SOURCE_SITE_BASE
+
+        return ANIME_SOURCE == "sushi" or "sushianimes" in SOURCE_SITE_BASE.lower()
+    except Exception:
+        return False
+
+
+async def search_anime(query: str, *args, **kwargs):
+    if _use_sushi_source():
+        from services import sushianimes_client
+
+        return await sushianimes_client.search_anime(query, *args, **kwargs)
+    return await _animefire_search_anime(query)
+
+
+async def get_anime_details(anime_id: str):
+    if _use_sushi_source():
+        from services import sushianimes_client
+
+        return await sushianimes_client.get_anime_details(anime_id)
+    return await _animefire_get_anime_details(anime_id)
+
+
+async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
+    if _use_sushi_source():
+        from services import sushianimes_client
+
+        return await sushianimes_client.get_episodes(anime_id, offset, limit)
+    return await _animefire_get_episodes(anime_id, offset, limit)
+
+
+async def get_episode_player(anime_id: str, episode: str, preferred_quality: str = "HD"):
+    if _use_sushi_source():
+        from services import sushianimes_client
+
+        return await sushianimes_client.get_episode_player(anime_id, episode, preferred_quality)
+    return await _animefire_get_episode_player(anime_id, episode, preferred_quality)
+
+
+async def get_random_anime_by_genre(genre_key: str, exclude_anime_id: str | None = None) -> dict:
+    if _use_sushi_source():
+        from services import sushianimes_client
+
+        return await sushianimes_client.get_random_anime_by_genre(genre_key, exclude_anime_id)
+    return await _animefire_get_random_anime_by_genre(genre_key, exclude_anime_id)
+
+
+def invalidate_episode_caches(anime_id: str, episode: str) -> None:
+    if _use_sushi_source():
+        from services import sushianimes_client
+
+        sushianimes_client.invalidate_episode_caches(anime_id, episode)
+        return
+    _animefire_invalidate_episode_caches(anime_id, episode)
