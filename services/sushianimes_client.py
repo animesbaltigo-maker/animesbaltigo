@@ -53,6 +53,11 @@ def _cache_set(cache: dict, key: str, data) -> None:
 
 def _clean(value: str | None) -> str:
     text = html.unescape(str(value or ""))
+    if "Ã" in text or "Â" in text:
+        try:
+            text = text.encode("latin-1").decode("utf-8")
+        except UnicodeError:
+            pass
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -216,6 +221,14 @@ def _parse_title(soup: BeautifulSoup, fallback: str) -> str:
 
 
 def _parse_description(soup: BeautifulSoup) -> str:
+    for block in soup.select(".detail-attr"):
+        label = _clean(block.select_one(".attr").get_text(" ", strip=True) if block.select_one(".attr") else "")
+        if re.search(r"sinopse", label, re.I):
+            text_node = block.select_one(".text-content") or block.select_one(".text")
+            text = _clean(text_node.get_text(" ", strip=True) if text_node else "")
+            if text and len(text) > 30:
+                return text
+
     for selector in (".sinopse", ".synopsis", ".description", "[itemprop='description']"):
         node = soup.select_one(selector)
         text = _clean(node.get_text(" ", strip=True) if node else "")
@@ -225,6 +238,26 @@ def _parse_description(soup: BeautifulSoup) -> str:
     text = _meta_content(soup, "og:description", "description")
     text = re.sub(r"(?i)^assista todas as temporadas e episódios de .*?online,\s*", "", text)
     return _clean(text)
+
+
+def _style_url(value: str | None) -> str:
+    match = re.search(r"url\((['\"]?)(.*?)\1\)", value or "", re.I)
+    return _clean(match.group(2) if match else "")
+
+
+def _parse_genres(soup: BeautifulSoup) -> list[str]:
+    genres: list[str] = []
+    seen: set[str] = set()
+    for selector in (".category-list a", "a[href*='/genero/']", "a[href*='/categoria/']", ".genres a", ".genre a"):
+        for anchor in soup.select(selector):
+            text = _clean(anchor.get_text(" ", strip=True))
+            if not text:
+                continue
+            key = text.lower()
+            if key not in seen:
+                seen.add(key)
+                genres.append(text)
+    return genres
 
 
 def _parse_episodes_from_detail(soup: BeautifulSoup, anime_id: str) -> list[dict]:
@@ -244,7 +277,16 @@ def _parse_episodes_from_detail(soup: BeautifulSoup, anime_id: str) -> list[dict
 
         text = _clean(anchor.get_text(" ", strip=True))
         text = re.sub(r"(?i)^continuar\s*", "", text).strip()
-        title = re.sub(r"^\d+\D*\s*epis[oó]dio\s*", "", text, flags=re.I).strip()
+        desc_node = anchor.select_one(".epx-desc")
+        title_node = anchor.select_one(".epx-title")
+        title = _clean(desc_node.get_text(" ", strip=True) if desc_node else "")
+        if not title:
+            title = re.sub(r"^\d+\D*\s*epis[oó]dio\s*", "", text, flags=re.I).strip()
+        episode_label = _clean(title_node.get_text(" ", strip=True) if title_node else "")
+        if not episode_label:
+            episode_label = _clean(anchor.get("title") or "") or _episode_label({"season": season, "episode_number": episode})
+        thumb_node = anchor.select_one(".epx-thumb")
+        thumb = _style_url(thumb_node.get("style") if thumb_node else "")
         key = (season, episode)
         by_key[key] = {
             "episode": _episode_key(season, episode),
@@ -252,6 +294,9 @@ def _parse_episodes_from_detail(soup: BeautifulSoup, anime_id: str) -> list[dict
             "episode_number": episode,
             "season": season,
             "title": title,
+            "episode_label": episode_label,
+            "thumb": thumb,
+            "image": thumb,
             "url": href,
             "base_slug": base_slug,
             "label": _episode_label({"season": season, "episode_number": episode}),
@@ -285,6 +330,8 @@ async def get_anime_details(anime_id: str):
     if match:
         year = match.group(1)
     status = "Em Progresso" if re.search(r"Em Progresso", text, re.I) else ""
+    if re.search(r"\bCompleto\b", text, re.I):
+        status = "Completo"
     season_name = ""
     match = re.search(r"Temporada\s+([A-Za-zÀ-ÿ]+)", text, re.I)
     if match:
@@ -306,7 +353,7 @@ async def get_anime_details(anime_id: str):
         "episodes": len(episodes_payload) or None,
         "season": season_name,
         "season_year": year,
-        "genres": [],
+        "genres": _parse_genres(soup),
         "studio": "SushiAnimes",
         "source": "sushianimes",
         "seasons": seasons,
@@ -428,6 +475,8 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
         "season": int(item.get("season") or season),
         "episode_number": int(item.get("episode_number") or episode_number),
         "episode_title": item.get("title") or "",
+        "title": item.get("title") or "",
+        "thumb": item.get("thumb") or item.get("image") or "",
     }
     _cache_set(_PLAYER_CACHE, cache_key, data)
     return data
