@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import httpx
 
@@ -38,6 +39,19 @@ _LIMITS = httpx.Limits(
     max_keepalive_connections=50,
 )
 
+_FORCE_IPV4 = os.getenv("HTTP_FORCE_IPV4", "1").strip() != "0"
+
+
+def _build_transport() -> httpx.AsyncHTTPTransport:
+    kwargs = {
+        "http1": True,
+        "http2": False,
+        "limits": _LIMITS,
+    }
+    if _FORCE_IPV4:
+        kwargs["local_address"] = "0.0.0.0"
+    return httpx.AsyncHTTPTransport(**kwargs)
+
 
 async def get_http_client() -> httpx.AsyncClient:
     global _CLIENT
@@ -50,7 +64,7 @@ async def get_http_client() -> httpx.AsyncClient:
                 headers=_HEADERS,
                 follow_redirects=True,
                 timeout=_TIMEOUT,
-                limits=_LIMITS,
+                transport=_build_transport(),
                 http2=False,
             )
     return _CLIENT
