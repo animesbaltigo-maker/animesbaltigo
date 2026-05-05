@@ -583,6 +583,8 @@ def _shape_details(data: dict, fallback_id: str = "") -> dict:
         "status": data.get("status") or "",
         "episodes": data.get("episodes"),
         "year": data.get("season_year"),
+        "season": data.get("season") or "",
+        "seasons": data.get("seasons") or [],
         "studio": _clean(data.get("studio") or ""),
         "alt_titles": _clean_alt_titles(data.get("alt_titles") or []),
     }
@@ -612,7 +614,7 @@ def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict
         "videos": videos,
         "quality": item.get("quality") or quality.upper(),
         "available_qualities": available_qualities,
-        "title": item.get("title") or "",
+        "title": item.get("title") or item.get("episode_title") or "",
         "description": _clean_description(item.get("description") or ""),
         "thumb": item.get("thumb") or item.get("image") or "",
         "is_dubbed": bool(item.get("is_dubbed")),
