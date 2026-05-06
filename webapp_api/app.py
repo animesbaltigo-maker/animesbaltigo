@@ -51,7 +51,7 @@ from services.affiliate_db import (
     update_setting,
 )
 
-BASE_URL = SOURCE_SITE_BASE or "https://sushianimes.com.br"
+BASE_URL = SOURCE_SITE_BASE or "https://animeplay.cloud"
 
 HEADERS = {
     "User-Agent": (
@@ -66,6 +66,14 @@ HEADERS = {
 
 def _is_sushi_source() -> bool:
     return ANIME_SOURCE == "sushi" or "sushianimes" in BASE_URL.lower()
+
+
+def _is_animeplay_source() -> bool:
+    return ANIME_SOURCE == "animeplay" or "animeplay.cloud" in BASE_URL.lower()
+
+
+def _is_anime_wp_source() -> bool:
+    return _is_sushi_source() or _is_animeplay_source()
 
 HOME_SECTION_LIMIT = 12
 GRID_PAGE_LIMIT = 24
@@ -377,6 +385,8 @@ def _section_conf(section: str) -> dict[str, str] | None:
 def _section_url(slug: str, page: int) -> str:
     if _is_sushi_source():
         return BASE_URL
+    if _is_animeplay_source():
+        return BASE_URL if page <= 1 else f"{BASE_URL}/page/{page}"
     if page <= 1:
         return f"{BASE_URL}/{slug}"
     return f"{BASE_URL}/{slug}/{page}"
@@ -430,7 +440,7 @@ async def _get(url: str) -> str:
 
 def _extract_slug_from_href(href: str) -> str:
     href = (href or "").strip()
-    if _is_sushi_source():
+    if _is_anime_wp_source():
         match = re.search(r"/anime/([^/?#]+?)(?:/)?(?:\?.*)?$", href)
         if not match:
             return ""
@@ -449,6 +459,15 @@ def _title_from_slug(slug: str) -> str:
 
 
 def _extract_last_page(page_html: str, slug: str) -> int:
+    if _is_animeplay_source():
+        soup = BeautifulSoup(page_html, "html.parser")
+        max_page = 1
+        for anchor in soup.select("a[href*='/page/']"):
+            href = anchor.get("href") or ""
+            match = re.search(r"/page/(\d+)", href)
+            if match:
+                max_page = max(max_page, int(match.group(1)))
+        return max_page
     if _is_sushi_source():
         soup = BeautifulSoup(page_html, "html.parser")
         max_page = 1
@@ -472,7 +491,7 @@ def _extract_last_page(page_html: str, slug: str) -> int:
 def _extract_listing_cards(page_html: str) -> list[dict]:
     soup = BeautifulSoup(page_html, "html.parser")
     found: dict[str, dict] = {}
-    selector = "a[href*='/anime/']" if _is_sushi_source() else "a[href*='/animes/']"
+    selector = "a[href*='/anime/']" if _is_anime_wp_source() else "a[href*='/animes/']"
     for anchor in soup.select(selector):
         href = (anchor.get("href") or "").strip()
         anime_id = _extract_slug_from_href(href)
