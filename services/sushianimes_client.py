@@ -406,15 +406,64 @@ def _decode_js_string(value: str) -> str:
         return value.strip('"').replace("\\/", "/").replace("\\u0026", "&")
 
 
+def _normalize_player_url(value: str, base_url: str = "") -> str:
+    value = html.unescape(_decode_js_string(str(value or "").strip()))
+    value = value.replace("\\/", "/").strip()
+    if not value:
+        return ""
+    if value.startswith("//"):
+        value = "https:" + value
+    if base_url:
+        value = urljoin(base_url, value)
+    return value
+
+
+def _is_video_url(value: str) -> bool:
+    return bool(re.search(r"\.(mp4|webm|m3u8)(?:\?|$)", value or "", flags=re.IGNORECASE))
+
+
+def _extract_player_urls_from_html(raw_html: str, base_url: str = "") -> list[str]:
+    if not raw_html:
+        return []
+
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def push(value: str) -> None:
+        url = _normalize_player_url(value, base_url)
+        if not url or url in seen:
+            return
+        if _is_video_url(url) or re.search(r"/(embed|player|watch)/|iframe|blogger\.com/video", url, flags=re.IGNORECASE):
+            seen.add(url)
+            found.append(url)
+
+    soup = BeautifulSoup(raw_html, "html.parser")
+    for tag in soup.find_all(["source", "video", "iframe"]):
+        for attr in ("src", "data-src", "data-video", "data-file"):
+            value = tag.get(attr)
+            if value:
+                push(value)
+
+    patterns = [
+        r"playerEmbed\s*=\s*(\"(?:\\.|[^\"])+\"|'(?:\\.|[^'])+')",
+        r'''(?:file|src|video|stream|url|hls|playlist)\s*[:=]\s*["']([^"']+)["']''',
+        r'''https?:\\/\\/[^\s"'<>]+?\.(?:mp4|webm|m3u8)(?:\?[^\s"'<>]*)?''',
+        r'''https?://[^\s"'<>]+?\.(?:mp4|webm|m3u8)(?:\?[^\s"'<>]*)?''',
+        r'''src=["']([^"']+)["']''',
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, raw_html, flags=re.IGNORECASE):
+            push(match if isinstance(match, str) else next((m for m in match if m), ""))
+
+    return sorted(found, key=lambda url: 0 if _is_video_url(url) else 1)
+
+
 async def _resolve_episode_embed(episode_url: str, embed_id: str) -> str:
     text = await _post_text(f"{BASE_URL}/ajax/embed", {"id": embed_id}, referer=episode_url)
-    match = re.search(r"playerEmbed\s*=\s*(\"(?:\\.|[^\"])+\")", text)
-    if not match:
-        match = re.search(r"src=[\"']([^\"']+(?:\.mp4|\.m3u8)[^\"']*)", text)
-        if match:
-            return html.unescape(match.group(1)).replace("\\/", "/")
-        raise RuntimeError("Sushi nao retornou playerEmbed.")
-    return _decode_js_string(match.group(1))
+    urls = _extract_player_urls_from_html(text, base_url=episode_url)
+    if urls:
+        return urls[0]
+    raise RuntimeError("Sushi nao retornou uma URL de player reproduzivel.")
 
 
 async def get_episode_player(anime_id: str, episode: str, preferred_quality: str = "HD"):
@@ -440,18 +489,35 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
     episode_url = item.get("url")
     page_html = await _request_text(episode_url, referer=_anime_url(anime_id))
     soup = BeautifulSoup(page_html, "html.parser")
-    play_button = soup.select_one(".play-btn[data-embed], .play-btn[data-id]")
-    embed_id = ""
-    if play_button:
-        embed_id = play_button.get("data-embed") or play_button.get("data-id") or ""
-    if not embed_id:
-        match = re.search(r'data-embed=["\']([^"\']+)["\']|data-id=["\']([^"\']+)["\']', page_html)
-        if match:
-            embed_id = match.group(1) or match.group(2)
-    if not embed_id:
-        raise RuntimeError("Nao encontrei o id do embed no Sushi.")
+    direct_urls = _extract_player_urls_from_html(page_html, base_url=episode_url)
+    embed_ids: list[str] = []
+    seen_embed_ids: set[str] = set()
 
-    video = (await _resolve_episode_embed(episode_url, embed_id)).strip()
+    def push_embed(value: str) -> None:
+        value = str(value or "").strip()
+        if value and value not in seen_embed_ids:
+            seen_embed_ids.add(value)
+            embed_ids.append(value)
+
+    for tag in soup.select(".play-btn[data-embed], .play-btn[data-id], [data-embed], [data-id]"):
+        push_embed(tag.get("data-embed") or tag.get("data-id") or "")
+    for match in re.findall(r'''data-(?:embed|id)=["']([^"']+)["']''', page_html, flags=re.IGNORECASE):
+        push_embed(match)
+
+    video = direct_urls[0] if direct_urls else ""
+    if not video:
+        last_error: Exception | None = None
+        for embed_id in embed_ids:
+            try:
+                video = (await _resolve_episode_embed(episode_url, embed_id)).strip()
+            except Exception as error:
+                last_error = error
+                continue
+            if video:
+                break
+        if not video:
+            raise last_error or RuntimeError("Nao encontrei player reproduzivel no Sushi.")
+
     quality = "HD" if (preferred_quality or "").upper() in {"HD", "FULLHD", "FHD"} else "SD"
     videos = {"HD": video, "SD": video}
 
@@ -466,7 +532,8 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
         "video": video,
         "videos": videos,
         "base_slug": anime_id,
-        "server": "ANIPLAY",
+        "server": "SUSHI",
+        "player_type": "video" if _is_video_url(video) else "iframe",
         "quality": quality,
         "available_qualities": ["HD", "SD"],
         "prev_episode": prev_episode,
