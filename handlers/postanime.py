@@ -25,10 +25,12 @@ from services.animefire_client import get_anime_details, search_anime
 
 
 POSTED_ANIME_JSON_PATH = Path(DATA_DIR) / "animes_postados.json"
+ANILIST_LINKS_JSON_PATH = Path(DATA_DIR) / "anilist_anime_links.json"
 POSTALL_DELAY_SECONDS = 15
 POSTALL_DEFAULT_LIMIT = 10
 POSTALL_MAX_LIMIT = 50
 POSTALL_MAX_PAGES = 43
+POSTALL_LOCK = asyncio.Lock()
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODELS = ("llama-3.1-8b-instant", "llama-3.3-70b-versatile")
@@ -147,6 +149,14 @@ def _slug_title(slug: str) -> str:
     return slug.title() if slug else "Anime"
 
 
+def _clean_group_search_title(title: str) -> str:
+    title = str(title or "")
+    title = re.sub(r"\s+[–-]\s+todos\s+os\s+epis[oó]dios.*$", "", title, flags=re.I)
+    title = re.sub(r"\s*\((legendado|dublado)\)\s*$", "", title, flags=re.I)
+    title = re.sub(r"\s+(legendado|dublado)\s*$", "", title, flags=re.I)
+    return re.sub(r"\s+", " ", title).strip()
+
+
 def _normal_post_key(anime_id: str, title: str = "") -> str:
     raw = (anime_id or title or "").lower()
     raw = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
@@ -177,6 +187,48 @@ def _save_posted_keys(keys: set[str]) -> None:
         json.dumps(sorted(keys), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def _load_anilist_links() -> dict:
+    try:
+        if not ANILIST_LINKS_JSON_PATH.exists():
+            return {}
+        data = json.loads(ANILIST_LINKS_JSON_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_anilist_link(anime: dict, group_item: dict | None = None) -> None:
+    anilist_id = anime.get("anilist_id")
+    if not anilist_id:
+        return
+
+    group_item = group_item or {}
+    anime_id = anime.get("id") or group_item.get("default_anime_id") or group_item.get("id")
+    if not anime_id:
+        return
+
+    data = _load_anilist_links()
+    data[str(anilist_id)] = {
+        "id": anime_id,
+        "default_anime_id": group_item.get("default_anime_id") or anime_id,
+        "title": group_item.get("title") or anime.get("title") or "",
+        "variants": group_item.get("variants") or [],
+    }
+
+    ANILIST_LINKS_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ANILIST_LINKS_JSON_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _post_deep_link_payload(anime: dict) -> str:
+    anilist_id = anime.get("anilist_id")
+    if anilist_id:
+        return f"anime_al_{anilist_id}"
+    return f"anime_{anime.get('id', '')}"
 
 
 def _anilist_media_url(anime: dict) -> str:
@@ -217,7 +269,6 @@ def _genres_text(anime: dict) -> str:
 
 
 def _build_keyboard(anime: dict) -> InlineKeyboardMarkup:
-    anime_id = anime["id"]
     anilist_url = anime.get("anilist_url") or ""
     trailer_url = ""
     trailer_id = anime.get("trailer_id") or ""
@@ -230,7 +281,7 @@ def _build_keyboard(anime: dict) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 "▶️ Assistir agora",
-                url=f"https://t.me/{BOT_USERNAME}?start=anime_{anime_id}",
+                url=f"https://t.me/{BOT_USERNAME}?start={_post_deep_link_payload(anime)}",
             )
         ]
     ]
@@ -247,7 +298,11 @@ def _build_keyboard(anime: dict) -> InlineKeyboardMarkup:
 
 
 def _build_caption(anime: dict, ai_description: str) -> str:
-    title_1 = html.escape(_pick_main_title(anime))
+    title_1 = _pick_main_title(anime)
+    title_1 = re.sub(r"\s+[–-]\s+todos\s+os\s+epis[oó]dios.*$", "", title_1, flags=re.I)
+    title_1 = re.sub(r"\s*\((legendado|dublado)\)\s*$", "", title_1, flags=re.I)
+    title_1 = re.sub(r"\s+(legendado|dublado)\s*$", "", title_1, flags=re.I)
+    title_1 = html.escape(title_1.strip() or _pick_main_title(anime))
     title_2 = html.escape(_pick_second_title(anime))
     full_title = f"{title_1} | {title_2}" if title_2 else title_1
 
@@ -406,8 +461,45 @@ async def _send_anime_post(context: ContextTypes.DEFAULT_TYPE, anime: dict) -> N
 
 async def _post_one_anime(context: ContextTypes.DEFAULT_TYPE, anime_id: str) -> dict:
     anime = await get_anime_details(anime_id)
+    group_item = await _resolve_group_for_post(anime_id, anime)
+    default_id = group_item.get("default_anime_id") or group_item.get("id")
+    if default_id and default_id != anime_id:
+        try:
+            anime = await get_anime_details(default_id)
+            anime_id = default_id
+        except Exception:
+            pass
+    _save_anilist_link(anime, group_item)
     await _send_anime_post(context, anime)
     return anime
+
+
+async def _resolve_group_for_post(anime_id: str, anime: dict) -> dict:
+    title = anime.get("title") or anime.get("title_romaji") or anime_id.replace("-", " ").title()
+    search_title = _clean_group_search_title(title) or title
+    try:
+        results = await search_anime(search_title)
+    except Exception:
+        results = []
+
+    for item in results:
+        default_id = item.get("default_anime_id") or item.get("id")
+        if default_id == anime_id:
+            return item
+        for variant in item.get("variants") or []:
+            if variant.get("id") == anime_id:
+                return item
+
+    return {
+        "id": anime_id,
+        "default_anime_id": anime_id,
+        "title": title,
+        "variants": [{
+            "id": anime_id,
+            "title": title,
+            "is_dubbed": bool(anime.get("is_dubbed")),
+        }],
+    }
 
 
 def _archive_url(page: int) -> str:
@@ -536,31 +628,10 @@ async def postanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def postall(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id if update.effective_user else None
-
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text(
-            "❌ <b>Você não tem permissão para usar este comando.</b>",
-            parse_mode="HTML",
-        )
-        return
-
-    raw_limit = context.args[0] if context.args else str(POSTALL_DEFAULT_LIMIT)
-    try:
-        limit = int(raw_limit)
-    except ValueError:
-        limit = POSTALL_DEFAULT_LIMIT
-    limit = max(1, min(limit, POSTALL_MAX_LIMIT))
-
-    msg = await update.effective_message.reply_text(
-        f"📚 <b>Buscando {limit} anime(s) novos no catálogo...</b>",
-        parse_mode="HTML",
-    )
-
+async def _run_postall_batch(context: ContextTypes.DEFAULT_TYPE, msg, limit: int) -> None:
     posted_keys = _load_posted_keys()
 
-    try:
+    async with POSTALL_LOCK:
         queue = await _collect_next_catalog_items(limit, posted_keys)
         if not queue:
             await msg.edit_text(
@@ -601,9 +672,46 @@ async def postall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
 
-    except Exception as exc:
-        print("ERRO POSTALL GERAL:", repr(exc))
-        await msg.edit_text(
-            "❌ <b>Não consegui montar a fila do postall.</b>",
+
+async def postall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id if update.effective_user else None
+
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text(
+            "❌ <b>Você não tem permissão para usar este comando.</b>",
             parse_mode="HTML",
         )
+        return
+
+    if POSTALL_LOCK.locked():
+        await update.effective_message.reply_text(
+            "⏳ <b>Já tem um postall rodando.</b>\n"
+            "Quando ele terminar, você pode iniciar outro lote.",
+            parse_mode="HTML",
+        )
+        return
+
+    raw_limit = context.args[0] if context.args else str(POSTALL_DEFAULT_LIMIT)
+    try:
+        limit = int(raw_limit)
+    except ValueError:
+        limit = POSTALL_DEFAULT_LIMIT
+    limit = max(1, min(limit, POSTALL_MAX_LIMIT))
+
+    msg = await update.effective_message.reply_text(
+        f"📚 <b>Postall iniciado em segundo plano.</b>\n"
+        f"Vou postar <b>{limit}</b> anime(s) novos e o bot continua respondendo normalmente.",
+        parse_mode="HTML",
+    )
+
+    async def runner():
+        try:
+            await _run_postall_batch(context, msg, limit)
+        except Exception as exc:
+            print("ERRO POSTALL GERAL:", repr(exc))
+            await msg.edit_text(
+                "❌ <b>Não consegui montar a fila do postall.</b>",
+                parse_mode="HTML",
+            )
+
+    context.application.create_task(runner())
