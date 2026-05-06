@@ -28,7 +28,7 @@ POSTED_ANIME_JSON_PATH = Path(DATA_DIR) / "animes_postados.json"
 POSTALL_DELAY_SECONDS = 15
 POSTALL_DEFAULT_LIMIT = 10
 POSTALL_MAX_LIMIT = 50
-POSTALL_MAX_PAGES = 120
+POSTALL_MAX_PAGES = 43
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODELS = ("llama-3.1-8b-instant", "llama-3.3-70b-versatile")
@@ -247,24 +247,27 @@ def _build_keyboard(anime: dict) -> InlineKeyboardMarkup:
 
 
 def _build_caption(anime: dict, ai_description: str) -> str:
-    title_1 = html.escape(_pick_main_title(anime)).upper()
+    title_1 = html.escape(_pick_main_title(anime))
     title_2 = html.escape(_pick_second_title(anime))
     full_title = f"{title_1} | {title_2}" if title_2 else title_1
 
     genres = html.escape(_genres_text(anime))
-    episodes = html.escape(str(anime.get("episodes") or "?"))
     status = html.escape(_format_status(anime.get("status")))
-    year = html.escape(str(anime.get("year") or anime.get("release_year") or "N/A"))
+    year = html.escape(str(
+        anime.get("year")
+        or anime.get("release_year")
+        or anime.get("season_year")
+        or anime.get("seasonYear")
+        or "N/A"
+    ))
     description = html.escape(_truncate_text(ai_description, 430))
 
     return (
-        f"🎬 <b>{full_title}</b>\n\n"
-        f"<i>{description}</i>\n\n"
-        f"<b>Gênero:</b> <i>{genres}</i>\n"
-        f"<b>Ano:</b> <i>{year}</i>\n"
-        f"<b>Status:</b> <i>{status}</i>\n"
-        f"<b>Episódios:</b> <i>{episodes}</i>\n\n"
-        f"🔥 <i>Assista direto pelo bot, do jeito mais simples e completo.</i>"
+        f"<b>{full_title}</b>\n\n"
+        f"<b>Gênero(s):</b> <i>{genres}</i>\n"
+        f"<b>Status:</b> <i>{status}.</i>\n"
+        f"<b>Ano:</b> <i>{year}.</i>\n\n"
+        f"💬 <i>{description}</i>"
     )
 
 
@@ -409,8 +412,6 @@ async def _post_one_anime(context: ContextTypes.DEFAULT_TYPE, anime_id: str) -> 
 
 def _archive_url(page: int) -> str:
     base = SOURCE_SITE_BASE.rstrip("/")
-    if page <= 1:
-        return f"{base}/anime"
     return f"{base}/anime/page/{page}"
 
 
