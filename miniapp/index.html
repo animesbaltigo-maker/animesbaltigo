@@ -578,7 +578,26 @@
 
     document.getElementById("globalSearch").onsubmit=e=>{ e.preventDefault(); runSearch(searchInput.value); searchInput.blur(); };
     searchInput.addEventListener("input",()=>{ clearTimeout(searchTimer); const q=searchInput.value; if(text(q).length>=3) searchTimer=setTimeout(()=>runSearch(q),650); });
-    function boot(){ const h=decodeURIComponent(location.hash||""); let m=h.match(/^#anime\/(.+)$/); if(m)return openAnime(m[1]); m=h.match(/^#watch\/([^/]+)\/(.+)$/); if(m)return openPlayer(m[1],m[2]); m=h.match(/^#section\/([^/]+)\/?(\d+)?$/); if(m)return openSection(m[1],+(m[2]||1)); m=h.match(/^#search\/([^/]+)\/?(\d+)?$/); if(m)return runSearch(m[1],+(m[2]||1)); if(h==="#history")return showHistory(); if(h==="#favorites")return showFavorites(); showHome(); }
+    function boot(){
+      const h=decodeURIComponent(location.hash||"");
+      let m=h.match(/^#anime\/(.+)$/); if(m)return openAnime(m[1]);
+      m=h.match(/^#watch\/([^/]+)\/(.+)$/); if(m)return openPlayer(m[1],m[2]);
+      m=h.match(/^#section\/([^/]+)\/?(\d+)?$/); if(m)return openSection(m[1],+(m[2]||1));
+      m=h.match(/^#search\/([^/]+)\/?(\d+)?$/); if(m)return runSearch(m[1],+(m[2]||1));
+      if(h==="#history")return showHistory();
+      if(h==="#favorites")return showFavorites();
+      const qs = new URLSearchParams(location.search || "");
+      const anime = qs.get("anime") || qs.get("anime_id") || qs.get("id");
+      const episode = qs.get("episode") || qs.get("ep");
+      const query = qs.get("q") || qs.get("search");
+      const section = qs.get("section");
+      const page = +(qs.get("page") || 1);
+      if(anime && episode) return openPlayer(anime, episode);
+      if(anime) return openAnime(anime);
+      if(query) return runSearch(query, page);
+      if(section) return openSection(section, page);
+      showHome();
+    }
     window.addEventListener("hashchange",boot);
     Object.assign(window,{showHome,openAnime,openPlayer,openSection,runSearch,showHistory,showFavorites,clearHistory,toggleFavoriteCurrent,toggleSynopsis,openTrailer,setHero,toggleEpisodeWatched,playerFailed});
     boot();
