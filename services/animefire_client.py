@@ -2069,17 +2069,42 @@ _animefire_get_random_anime_by_genre = get_random_anime_by_genre
 _animefire_invalidate_episode_caches = invalidate_episode_caches
 
 
-def _use_sushi_source() -> bool:
+_BLOCKED_CLOUDFLARE_SOURCES = {"animesonline", "animeq", "animesdrive"}
+
+
+def _source_name() -> str:
     try:
         from config import ANIME_SOURCE, SOURCE_SITE_BASE
 
-        return ANIME_SOURCE == "sushi" or "sushianimes" in SOURCE_SITE_BASE.lower()
+        source = (ANIME_SOURCE or "").strip().lower()
+        base = (SOURCE_SITE_BASE or "").strip().lower()
+        if source:
+            return source
+        if "animeplay.cloud" in base:
+            return "animeplay"
+        if "sushianimes" in base:
+            return "sushi"
+        return "animefire"
     except Exception:
-        return False
+        return "animefire"
+
+
+def _raise_blocked_source(source: str) -> None:
+    raise RuntimeError(
+        f"A fonte {source} esta protegida por Cloudflare Challenge e nao abriu via HTTP comum. "
+        "Use animeplay.cloud ou uma fonte sem challenge para o bot."
+    )
 
 
 async def search_anime(query: str, *args, **kwargs):
-    if _use_sushi_source():
+    source = _source_name()
+    if source in _BLOCKED_CLOUDFLARE_SOURCES:
+        _raise_blocked_source(source)
+    if source == "animeplay":
+        from services import animeplay_client
+
+        return await animeplay_client.search_anime(query, *args, **kwargs)
+    if source == "sushi":
         from services import sushianimes_client
 
         return await sushianimes_client.search_anime(query, *args, **kwargs)
@@ -2087,7 +2112,14 @@ async def search_anime(query: str, *args, **kwargs):
 
 
 async def get_anime_details(anime_id: str):
-    if _use_sushi_source():
+    source = _source_name()
+    if source in _BLOCKED_CLOUDFLARE_SOURCES:
+        _raise_blocked_source(source)
+    if source == "animeplay":
+        from services import animeplay_client
+
+        return await animeplay_client.get_anime_details(anime_id)
+    if source == "sushi":
         from services import sushianimes_client
 
         return await sushianimes_client.get_anime_details(anime_id)
@@ -2095,7 +2127,14 @@ async def get_anime_details(anime_id: str):
 
 
 async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
-    if _use_sushi_source():
+    source = _source_name()
+    if source in _BLOCKED_CLOUDFLARE_SOURCES:
+        _raise_blocked_source(source)
+    if source == "animeplay":
+        from services import animeplay_client
+
+        return await animeplay_client.get_episodes(anime_id, offset, limit)
+    if source == "sushi":
         from services import sushianimes_client
 
         return await sushianimes_client.get_episodes(anime_id, offset, limit)
@@ -2103,7 +2142,14 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
 
 
 async def get_episode_player(anime_id: str, episode: str, preferred_quality: str = "HD"):
-    if _use_sushi_source():
+    source = _source_name()
+    if source in _BLOCKED_CLOUDFLARE_SOURCES:
+        _raise_blocked_source(source)
+    if source == "animeplay":
+        from services import animeplay_client
+
+        return await animeplay_client.get_episode_player(anime_id, episode, preferred_quality)
+    if source == "sushi":
         from services import sushianimes_client
 
         return await sushianimes_client.get_episode_player(anime_id, episode, preferred_quality)
@@ -2111,7 +2157,14 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
 
 
 async def get_random_anime_by_genre(genre_key: str, exclude_anime_id: str | None = None) -> dict:
-    if _use_sushi_source():
+    source = _source_name()
+    if source in _BLOCKED_CLOUDFLARE_SOURCES:
+        _raise_blocked_source(source)
+    if source == "animeplay":
+        from services import animeplay_client
+
+        return await animeplay_client.get_random_anime_by_genre(genre_key, exclude_anime_id)
+    if source == "sushi":
         from services import sushianimes_client
 
         return await sushianimes_client.get_random_anime_by_genre(genre_key, exclude_anime_id)
@@ -2119,7 +2172,15 @@ async def get_random_anime_by_genre(genre_key: str, exclude_anime_id: str | None
 
 
 def invalidate_episode_caches(anime_id: str, episode: str) -> None:
-    if _use_sushi_source():
+    source = _source_name()
+    if source in _BLOCKED_CLOUDFLARE_SOURCES:
+        return
+    if source == "animeplay":
+        from services import animeplay_client
+
+        animeplay_client.invalidate_episode_caches(anime_id, episode)
+        return
+    if source == "sushi":
         from services import sushianimes_client
 
         sushianimes_client.invalidate_episode_caches(anime_id, episode)
