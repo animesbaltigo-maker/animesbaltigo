@@ -25,6 +25,33 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
 
 
+def _media_url_from_node(node) -> str:
+    if not node:
+        return ""
+    candidates = []
+    parent = getattr(node, "parent", None)
+    grandparent = getattr(parent, "parent", None)
+    for current in (node, parent, grandparent):
+        if not current:
+            continue
+        if getattr(current, "select", None):
+            for img in current.select("img"):
+                candidates.extend([img.get("data-src"), img.get("data-lazy-src"), img.get("src")])
+                srcset = img.get("srcset") or ""
+                if srcset:
+                    candidates.append(srcset.split(",", 1)[0].strip().split(" ", 1)[0])
+            for media in current.select("[data-src], [data-lazy-src], [data-bg], [style*='background']"):
+                candidates.extend([media.get("data-src"), media.get("data-lazy-src"), media.get("data-bg")])
+                match = re.search(r"url\((['\"]?)(.*?)\1\)", media.get("style") or "", re.I)
+                if match:
+                    candidates.append(match.group(2))
+    for value in candidates:
+        value = _clean(str(value or "")).replace("\\/", "/")
+        if value and re.search(r"\.(?:webp|jpe?g|png|gif|avif)(?:\?|$)", value, re.I):
+            return urljoin(BASE_URL, value)
+    return ""
+
+
 async def _get(url: str) -> str:
     client = await get_http_client()
     r = await client.get(url, headers=_HTTP_HEADERS)
@@ -63,10 +90,7 @@ def _extract_episode_links_from_home(html: str) -> list[dict]:
             if not title:
                 title = anime_id.replace("-", " ").title()
 
-            thumb = ""
-            img = a.find("img")
-            if img:
-                thumb = (img.get("data-src") or img.get("src") or "").strip()
+            thumb = _media_url_from_node(a)
 
             results.append({
                 "anime_id": anime_id,
