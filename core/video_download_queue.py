@@ -30,6 +30,7 @@ from config import (
     VIDEO_DOWNLOAD_TRUST_ENV,
     VIDEO_DOWNLOAD_WORKERS,
     VIDEO_UPLOAD_MAX_MB,
+    SOURCE_SITE_BASE,
 )
 from core.telethon_uploader import send_file_with_telethon, telethon_configured
 from services.subscriptions import is_active_subscriber
@@ -41,8 +42,8 @@ HEADERS = {
         "Chrome/122.0.0.0 Safari/537.36"
     ),
     "Accept": "*/*",
-    "Referer": "https://animefire.io/",
-    "Origin": "https://animefire.io",
+    "Referer": f"{SOURCE_SITE_BASE.rstrip('/')}/",
+    "Origin": SOURCE_SITE_BASE.rstrip("/"),
 }
 
 FORCE_IPV4 = os.getenv("HTTP_FORCE_IPV4", "1").strip() != "0"
