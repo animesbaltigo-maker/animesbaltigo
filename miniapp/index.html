@@ -349,7 +349,7 @@
       const open = kind === "episode" && episode ? `openPlayer('${esc(animeId)}','${esc(episode)}')` : `openAnime('${esc(animeId)}')`;
       return `<article class="card" role="button" tabindex="0" onclick="${open}" onkeydown="cardKey(event,()=>${open})">
         ${imageTag(item,title,kind==="episode")}
-        <span class="badge">${isDub(item) ? "DUB" : "LEG"}</span>
+        ${isDub(item) ? `<span class="badge">DUB</span>` : ""}
         ${episode ? `<span class="ep-badge">${esc(formatEp(item))}</span>` : ""}
         <span class="card-play"><span><i class="fa-solid fa-play"></i></span></span>
         <div class="card-body"><div class="card-title">${esc(title)}</div><div class="card-meta">${esc(cardMeta(item,kind))}</div></div>
@@ -400,7 +400,7 @@
           <div class="kicker"><b>Anime</b>${genres[0] ? `<span>${esc(genres[0])}</span>` : ""}</div>
           <h1 class="hero-title">${esc(title)}</h1>
           <p class="hero-desc">${esc(item.description_short || item.description || cardMeta(item,"episode"))}</p>
-          <div class="hero-meta"><span class="pill brand">${isDub(item)?"Dublado":"Legendado"}</span>${item.score?`<span class="pill">${esc(item.score)}</span>`:""}${item.episode?`<span class="pill">${esc(formatEp(item))}</span>`:""}</div>
+          <div class="hero-meta">${isDub(item)?`<span class="pill brand">Dublado</span>`:""}${item.score?`<span class="pill">${esc(item.score)}</span>`:""}${item.episode?`<span class="pill">${esc(formatEp(item))}</span>`:""}</div>
         </div>
         ${heroItems.length>1?`<div class="hero-controls"><button class="hero-arrow" aria-label="Anterior" onclick="event.stopPropagation();setHero(heroIndex-1)"><i class="fa-solid fa-angle-left"></i></button><button class="hero-arrow" aria-label="Próximo" onclick="event.stopPropagation();setHero(heroIndex+1)"><i class="fa-solid fa-angle-right"></i></button></div><div class="hero-dots">${heroItems.map((_,i)=>`<button class="dot ${i===heroIndex?"active":""}" aria-label="Destaque ${i+1}" onclick="event.stopPropagation();setHero(${i})"></button>`).join("")}</div>`:""}
       </section>`;
@@ -505,7 +505,7 @@
         ["Ano", a.year || a.season_year],
         ["Status", status],
         ["DuraÃ§Ã£o", a.duration || (eps.length ? "24 min" : "")],
-        ["Ãudio", isDub(a) ? "Dublado" : "Legendado"],
+        ["Ãudio", isDub(a) ? "Dublado" : ""],
         ["Temporada", useful(a.season)],
         ["EstÃºdio", useful(a.studio)]
       ].filter(([,v]) => useful(v));
@@ -516,7 +516,7 @@
           <div class="tags">${age?`<span class="age">${esc(age.replace(/[^0-9+]/g,"") || age)}</span>`:""}${(a.genres||[]).filter(useful).slice(0,8).map(g=>`<span class="genre">${esc(g)}</span>`).join("")}</div>
           <h1 class="detail-title">${esc(a.title)}</h1>${(a.alt_titles||[])[0]?`<div class="alt-title">${esc(a.alt_titles[0])}</div>`:""}
           <div class="actions">${variantButtons}${trailer?`<button class="btn primary" onclick="openTrailer('${esc(trailer)}')"><i class="fa-solid fa-play"></i> Trailer</button>`:""}<button class="btn ${fav?"active":""}" id="favBtn" onclick="toggleFavoriteCurrent()"><i class="fa-solid fa-heart"></i> ${fav?"Favoritado":"Favoritar"}</button></div>
-          <div class="stats">${stat("Episódios",eps.length||a.episodes||"-")}${stat("AniList",a.anilist_episodes||"-")}${stat("Score",a.score||"-")}${stat("Ano",a.year||"-")}${stat("Status",a.status||"-")}${stat("Duração",a.duration||"24 min")}${stat("Áudio",isDub(a)?"Dublado":"Legendado")}${stat("Temporada",a.season||"-")}${stat("Estúdio",a.studio||"-")}</div>
+          <div class="stats">${stat("Episódios",eps.length||a.episodes||"-")}${stat("AniList",a.anilist_episodes||"-")}${stat("Score",a.score||"-")}${stat("Ano",a.year||"-")}${stat("Status",a.status||"-")}${stat("Duração",a.duration||"24 min")}${stat("Áudio",isDub(a)?"Dublado":"")}${stat("Temporada",a.season||"-")}${stat("Estúdio",a.studio||"-")}</div>
           <div class="progress-box"><div class="progress-label"><span>${watched} de ${eps.length} episódios assistidos</span><span>${pct}%</span></div><div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div></div>
           ${a.description?`<div class="syn-title">Sinopse</div><p class="syn ${canMore?"collapsed":""}" id="synopsis">${esc(a.description)}</p>${canMore?`<button class="btn ghost small" id="moreBtn" onclick="toggleSynopsis()">Mostrar mais</button>`:""}`:""}
         </section>
@@ -641,7 +641,7 @@
     function showFavorites(){ setActiveNav("favorites"); history.replaceState(null,"","#favorites"); const items=getFavorites(); mount(`<div class="list-page-head"><h1 class="section-title">Favoritos</h1><button class="btn ghost small" onclick="showHome()">Início</button></div>${items.length?`<div class="grid">${items.map(i=>card(i)).join("")}</div>`:emptyBox("Nenhum favorito ainda","Use o botão Favoritar na página do anime.")}`); }
     function getHistory(){ return JSON.parse(localStorage.getItem("baltigo:history")||"[]").sort((a,b)=>(b.last_at||0)-(a.last_at||0)); }
     function saveHistory(anime,ep,item,progress=0,duration=0){ const list=getHistory().filter(h=>!(h.anime_id===anime.id && h.episode===epKey(ep))); list.unshift({anime_id:anime.id,title:anime.title,cover_url:imgUrl(anime),is_dubbed:isDub(anime),episode:epKey(ep),episode_number:epNo(ep),season:seasonOf(ep),episode_title:ep.title||item.title||"",progress,duration,last_at:Date.now()}); localStorage.setItem("baltigo:history",JSON.stringify(list.slice(0,80))); }
-    function historyCard(h){ return `<article class="card" onclick="openPlayer('${esc(h.anime_id)}','${esc(h.episode)}')">${imageTag(h,h.title,true)}<span class="badge">${h.is_dubbed?"DUB":"LEG"}</span><span class="ep-badge">${esc(formatEp(h))}</span><div class="card-body"><div class="card-title">${esc(h.title)}</div><div class="card-meta">${esc(h.episode_title || "Continuar episódio")}</div></div></article>`; }
+    function historyCard(h){ return `<article class="card" onclick="openPlayer('${esc(h.anime_id)}','${esc(h.episode)}')">${imageTag(h,h.title,true)}${h.is_dubbed?`<span class="badge">DUB</span>`:""}<span class="ep-badge">${esc(formatEp(h))}</span><div class="card-body"><div class="card-title">${esc(h.title)}</div><div class="card-meta">${esc(h.episode_title || "Continuar episódio")}</div></div></article>`; }
     function showHistory(){ setActiveNav("history"); history.replaceState(null,"","#history"); const items=getHistory(); mount(`<div class="list-page-head"><h1 class="section-title">Histórico</h1><div class="actions">${items.length?`<button class="btn danger small" onclick="clearHistory()">Limpar histórico</button>`:""}<button class="btn ghost small" onclick="showHome()">Início</button></div></div>${items.length?`<div class="grid wide">${items.map(historyCard).join("")}</div>`:emptyBox("Sem histórico","Abra um episódio para continuar assistindo depois.")}`); }
     function clearHistory(){ if(confirm("Limpar todo o histórico de episódios assistidos?")){ localStorage.removeItem("baltigo:history"); showHistory(); } }
 
