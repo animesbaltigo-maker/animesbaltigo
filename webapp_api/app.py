@@ -630,6 +630,8 @@ def _shape_episode_payload(anime_id: str, episode: str, quality: str, item: dict
         "episode": episode,
         "video": video,
         "videos": videos,
+        "player_type": item.get("player_type") or ("video" if re.search(r"\.(mp4|webm|m3u8)(?:\?|$)", video or "", re.I) else "iframe" if video else ""),
+        "server": item.get("server") or "",
         "quality": item.get("quality") or quality.upper(),
         "available_qualities": available_qualities,
         "title": item.get("title") or item.get("episode_title") or "",
