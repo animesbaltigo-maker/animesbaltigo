@@ -182,7 +182,7 @@
     let homeData = null, heroItems = [], heroIndex = 0, heroTimer = null, heroPaused = false;
     let currentAnime = null, currentEpisodes = [], currentSeason = 1, currentView = localStorage.getItem("baltigo:view") || "list";
     let currentSort = localStorage.getItem("baltigo:sort") || "asc", currentQuery = "", currentFilter = "all";
-    let searchTimer = null, listState = {};
+    let searchTimer = null, listState = {}, variantMemory = {};
 
     function initTelegram(){
       const tg = window.Telegram && window.Telegram.WebApp;
@@ -262,6 +262,13 @@
     function cssImageFor(item, fallbackItem){ return cssImage(proxiedImageUrl(bestImage(item, fallbackItem))); }
     function animeIdOf(item){ return item?.anime_id || item?.default_anime_id || (String(item?.id || "").split("__ep__")[0]); }
     function isDub(item){ return !!item?.is_dubbed || /\bdublado\b/i.test(`${item?.title||""} ${item?.id||""}`); }
+    function rememberVariants(item){
+      const variants = Array.isArray(item?.variants) ? item.variants.filter(v=>animeIdOf(v)) : [];
+      if(!variants.length) return animeIdOf(item);
+      variants.forEach(v=>variantMemory[animeIdOf(v)] = variants);
+      variantMemory[animeIdOf(item)] = variants;
+      return animeIdOf(item);
+    }
     function useful(value){
       const raw = text(value);
       return raw && !/^(n\/a|na|none|null|-|undefined)$/i.test(raw) ? raw : "";
@@ -338,6 +345,7 @@
       const animeId = animeIdOf(item);
       const episode = item.episode || "";
       const title = text(item.title || item.name || animeId?.replaceAll("-"," ") || "Anime");
+      rememberVariants(item);
       const open = kind === "episode" && episode ? `openPlayer('${esc(animeId)}','${esc(episode)}')` : `openAnime('${esc(animeId)}')`;
       return `<article class="card" role="button" tabindex="0" onclick="${open}" onkeydown="cardKey(event,()=>${open})">
         ${imageTag(item,title,kind==="episode")}
@@ -470,7 +478,8 @@
       setActiveNav(""); history.replaceState(null,"",`#anime/${animeId}`); loading("Abrindo anime");
       try{
         const payload = await api(`/api/anime/${encodeURIComponent(animeId)}`);
-        currentAnime = normalizeAnime(payload.item || {});
+        const rememberedVariants = variantMemory[animeId] || variantMemory[(payload.item||{}).id] || [];
+        currentAnime = normalizeAnime({...payload.item, variants: rememberedVariants});
         currentEpisodes = normalizeEpisodes(payload.episodes || []);
         currentSeason = (currentAnime.seasons?.[0] || seasonsFrom(currentEpisodes)[0] || 1);
         currentQuery = ""; currentFilter = "all";
@@ -488,6 +497,8 @@
       const trailer = trailerUrl(a), canMore = (a.description||"").length > 260;
       const status = useful(a.status);
       const age = useful(a.age_rating || a.rating || a.classification);
+      const variants = (a.variants || []).filter(v=>animeIdOf(v) && animeIdOf(v)!==a.id);
+      const variantButtons = variants.map(v=>`<button class="btn ghost small" onclick="openAnime('${esc(animeIdOf(v))}')">${isDub(v)?"🇧🇷 Dublado":"🇯🇵 Legendado"}</button>`).join("");
       const stats = [
         ["EpisÃ³dios", eps.length || a.episodes],
         ["Score", a.score],
@@ -504,7 +515,7 @@
         <section class="detail-info">
           <div class="tags">${age?`<span class="age">${esc(age.replace(/[^0-9+]/g,"") || age)}</span>`:""}${(a.genres||[]).filter(useful).slice(0,8).map(g=>`<span class="genre">${esc(g)}</span>`).join("")}</div>
           <h1 class="detail-title">${esc(a.title)}</h1>${(a.alt_titles||[])[0]?`<div class="alt-title">${esc(a.alt_titles[0])}</div>`:""}
-          <div class="actions">${trailer?`<button class="btn primary" onclick="openTrailer('${esc(trailer)}')"><i class="fa-solid fa-play"></i> Trailer</button>`:""}<button class="btn ${fav?"active":""}" id="favBtn" onclick="toggleFavoriteCurrent()"><i class="fa-solid fa-heart"></i> ${fav?"Favoritado":"Favoritar"}</button></div>
+          <div class="actions">${variantButtons}${trailer?`<button class="btn primary" onclick="openTrailer('${esc(trailer)}')"><i class="fa-solid fa-play"></i> Trailer</button>`:""}<button class="btn ${fav?"active":""}" id="favBtn" onclick="toggleFavoriteCurrent()"><i class="fa-solid fa-heart"></i> ${fav?"Favoritado":"Favoritar"}</button></div>
           <div class="stats">${stat("Episódios",eps.length||a.episodes||"-")}${stat("AniList",a.anilist_episodes||"-")}${stat("Score",a.score||"-")}${stat("Ano",a.year||"-")}${stat("Status",a.status||"-")}${stat("Duração",a.duration||"24 min")}${stat("Áudio",isDub(a)?"Dublado":"Legendado")}${stat("Temporada",a.season||"-")}${stat("Estúdio",a.studio||"-")}</div>
           <div class="progress-box"><div class="progress-label"><span>${watched} de ${eps.length} episódios assistidos</span><span>${pct}%</span></div><div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div></div>
           ${a.description?`<div class="syn-title">Sinopse</div><p class="syn ${canMore?"collapsed":""}" id="synopsis">${esc(a.description)}</p>${canMore?`<button class="btn ghost small" id="moreBtn" onclick="toggleSynopsis()">Mostrar mais</button>`:""}`:""}
