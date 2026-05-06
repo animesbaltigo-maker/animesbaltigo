@@ -154,7 +154,7 @@ def _anime_url(anime_id: str) -> str:
 
 def _parse_episode_ref(value: str) -> tuple[int, int]:
     raw = str(value or "").strip()
-    match = re.search(r"^[sS]?(\d+)[eE:.-](\d+)$", raw)
+    match = re.search(r"^[sStT]?(\d+)[eE:.-](\d+)$", raw)
     if match:
         return int(match.group(1)), int(match.group(2))
     digits = re.search(r"\d+", raw)
@@ -900,7 +900,11 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
         payload = await get_episodes(anime_id, 0, 3000)
         items = payload.get("all_items") or []
         by_episode = payload.get("by_episode") or {}
-        index = by_episode.get(f"{season}:{episode_number}") or by_episode.get(_episode_key(season, episode_number)) or by_episode.get(str(episode_number))
+        index = by_episode.get(f"{season}:{episode_number}")
+        if index is None:
+            index = by_episode.get(_episode_key(season, episode_number))
+        if index is None:
+            index = by_episode.get(str(episode_number))
         if index is None:
             raise RuntimeError(f"Episodio nao encontrado no AnimePlay: T{season}E{episode_number}")
 
