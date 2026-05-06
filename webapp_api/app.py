@@ -1437,7 +1437,13 @@ async def api_search(
 @app.get("/api/anime/{anime_id}")
 async def api_anime(anime_id: str):
     async def factory():
-        data = await get_anime_details(anime_id)
+        try:
+            data = await get_anime_details(anime_id)
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code if error.response is not None else 500
+            if status == 404:
+                return None
+            raise
         if not data:
             return None
 
