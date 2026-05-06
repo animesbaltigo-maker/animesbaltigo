@@ -395,6 +395,38 @@ def _meta_content(soup: BeautifulSoup, *names: str) -> str:
     return ""
 
 
+def _media_url_from_node(node) -> str:
+    if not node:
+        return ""
+    candidates = []
+    parent = getattr(node, "parent", None)
+    grandparent = getattr(parent, "parent", None)
+    for current in (node, parent, grandparent):
+        if not current:
+            continue
+        if getattr(current, "get", None):
+            candidates.extend([current.get("data-src"), current.get("data-lazy-src"), current.get("data-bg")])
+            match = re.search(r"url\((['\"]?)(.*?)\1\)", current.get("style") or "", re.I)
+            if match:
+                candidates.append(match.group(2))
+        if getattr(current, "select", None):
+            for img in current.select("img"):
+                candidates.extend([img.get("data-src"), img.get("data-lazy-src"), img.get("src")])
+                srcset = img.get("srcset") or ""
+                if srcset:
+                    candidates.append(srcset.split(",", 1)[0].strip().split(" ", 1)[0])
+            for media in current.select("[data-src], [data-lazy-src], [data-bg], [style*='background']"):
+                candidates.extend([media.get("data-src"), media.get("data-lazy-src"), media.get("data-bg")])
+                match = re.search(r"url\((['\"]?)(.*?)\1\)", media.get("style") or "", re.I)
+                if match:
+                    candidates.append(match.group(2))
+    for value in candidates:
+        value = _clean(str(value or "")).replace("\\/", "/")
+        if value and re.search(r"\.(?:webp|jpe?g|png|gif|avif)(?:\?|$)", value, re.I):
+            return urljoin(BASE_URL, value)
+    return ""
+
+
 def _is_dubbed(title: str, anime_id: str = "") -> bool:
     return bool(re.search(r"\bdublado\b", f"{title} {anime_id}", re.I))
 
@@ -414,10 +446,9 @@ def _extract_anime_cards(html_doc: str, query: str = "") -> list[dict]:
             continue
 
         title = _clean(anchor.get_text(" ", strip=True))
-        img = anchor.find("img")
-        cover_url = ""
+        img = anchor.find("img") or (anchor.parent.find("img") if anchor.parent else None)
+        cover_url = _media_url_from_node(anchor)
         if img:
-            cover_url = img.get("data-src") or img.get("src") or ""
             title = title or _clean(img.get("alt"))
 
         title = re.sub(r"\b(?:TV|OVA|ONA|Filme)\b\s*$", "", title, flags=re.I).strip()
@@ -527,12 +558,15 @@ def _parse_episodes_from_detail(soup: BeautifulSoup, anime_id: str) -> list[dict
         episode = int(match.group(2))
         title = _clean(anchor.get_text(" ", strip=True))
         title = re.sub(r"^Epis[oó]dio\s*\d+\s*-\s*", "", title, flags=re.I).strip()
+        thumb = _media_url_from_node(anchor)
         by_episode[episode] = {
             "episode": _episode_key(1, episode),
             "number": str(episode),
             "episode_number": episode,
             "season": 1,
             "title": title,
+            "thumb": thumb,
+            "image": thumb,
             "url": href,
             "base_slug": anime_id,
             "label": str(episode),
@@ -586,7 +620,7 @@ async def get_anime_details(anime_id: str):
         "banner_url": cover,
         "media_image_url": cover,
         "score": score,
-        "status": "N/A",
+        "status": "",
         "format": "TV",
         "episodes": len(episodes) or None,
         "season": "",
@@ -758,6 +792,8 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
         "season": 1,
         "episode_number": episode_number,
         "episode_title": item.get("title") or "",
+        "thumb": item.get("thumb") or item.get("image") or "",
+        "image": item.get("image") or item.get("thumb") or "",
     }
     _cache_set(_PLAYER_CACHE, cache_key, data)
     return data
