@@ -162,6 +162,10 @@ def _normal_post_key(anime_id: str, title: str = "") -> str:
     raw = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
     raw = raw.replace("-todos-os-episodios", "")
     raw = re.sub(r"-(legendado|dublado|dub|sub)$", "", raw)
+    raw = re.sub(r"-\d+(?:st|nd|rd|th)?-season.*$", "", raw)
+    raw = re.sub(r"-season-\d+.*$", "", raw)
+    raw = re.sub(r"-(\d+)-(?:arise|part|cour|final|shadow).*$", "", raw)
+    raw = re.sub(r"-\d+$", "", raw)
     return raw or anime_id or title
 
 
