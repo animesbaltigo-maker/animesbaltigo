@@ -18,6 +18,7 @@ _DETAILS_CACHE = {}
 _EPISODES_CACHE = {}
 _PLAYER_CACHE = {}
 _ANILIST_CACHE = {}
+_ANILIST_DISABLED_UNTIL = 0.0
 
 _SEARCH_CACHE_TTL = 1800
 _DETAILS_CACHE_TTL = 21600
@@ -224,6 +225,11 @@ def _anilist_score(local_title: str, media: dict) -> int:
 
 
 async def _search_anilist_by_title(title: str, alt_titles: list[str] | None = None) -> dict | None:
+    global _ANILIST_DISABLED_UNTIL
+
+    if time.time() < _ANILIST_DISABLED_UNTIL:
+        return None
+
     candidates = [title, *(alt_titles or [])]
     search_title = next((_clean(item) for item in candidates if _clean(item)), "")
     cache_key = _normalize_text(search_title)
@@ -286,6 +292,13 @@ async def _search_anilist_by_title(title: str, alt_titles: list[str] | None = No
                 ANILIST_API_URL,
                 {"query": query, "variables": {"search": candidate}},
             )
+        except httpx.HTTPStatusError as error:
+            if error.response is not None and error.response.status_code == 429:
+                _ANILIST_DISABLED_UNTIL = time.time() + 300
+                print("[ANILIST] rate_limited; usando fallback local por 300s")
+                return None
+            print(f"[ANILIST] animeplay_search_error={repr(error)}")
+            continue
         except Exception as error:
             print(f"[ANILIST] animeplay_search_error={repr(error)}")
             continue
