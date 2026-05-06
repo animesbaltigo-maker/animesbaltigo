@@ -179,7 +179,19 @@ def _extract_alt_titles(anime: dict, fallback_item: dict) -> list[str]:
     return clean
 
 
+def _is_hentai(anime: dict) -> bool:
+    haystack = " ".join([
+        str(anime.get("id") or ""),
+        str(anime.get("title") or ""),
+        str(anime.get("display_title") or ""),
+        " ".join(str(g) for g in anime.get("genres") or []),
+    ])
+    return bool(re.search(r"\bhentai\b|\+18|18\+", haystack, re.I))
+
+
 def _pick_image(anime: dict) -> str:
+    if _is_hentai(anime):
+        return ""
     return (
         anime.get("cover_url")
         or anime.get("media_image_url")
