@@ -7,7 +7,7 @@ from core.http_client import get_http_client
 from config import ANIME_SOURCE, SOURCE_SITE_BASE
 
 
-BASE_URL = SOURCE_SITE_BASE or "https://sushianimes.com.br"
+BASE_URL = SOURCE_SITE_BASE or "https://animeplay.cloud"
 
 _HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -36,6 +36,51 @@ def _extract_episode_links_from_home(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     results = []
     seen = set()
+
+    if ANIME_SOURCE == "animeplay" or "animeplay.cloud" in BASE_URL.lower():
+        for a in soup.select("a[href*='/episodio/']"):
+            href = (a.get("href") or "").strip()
+            full_url = urljoin(BASE_URL, href)
+            path = full_url.split("/episodio/", 1)[-1].strip("/")
+            match = re.search(r"^(.+)-episodio-(\d+)$", path, re.I)
+            if not match:
+                continue
+
+            anime_id = match.group(1)
+            episode_number = int(match.group(2))
+            episode_key = f"S1E{episode_number}"
+            key = f"{anime_id}|{episode_key}"
+            if key in seen:
+                continue
+            seen.add(key)
+
+            text = _clean(a.get_text(" ", strip=True))
+            title = re.sub(r"^Epis[oó]dio\s*\d+\s*-\s*", "", text, flags=re.I).strip()
+            if not title:
+                img = a.find("img")
+                if img:
+                    title = _clean(img.get("alt"))
+            if not title:
+                title = anime_id.replace("-", " ").title()
+
+            thumb = ""
+            img = a.find("img")
+            if img:
+                thumb = (img.get("data-src") or img.get("src") or "").strip()
+
+            results.append({
+                "anime_id": anime_id,
+                "episode": episode_key,
+                "season": 1,
+                "episode_number": episode_number,
+                "title": title,
+                "thumb": thumb,
+                "image": thumb,
+                "episode_url": full_url,
+                "key": key,
+            })
+
+        return results
 
     if ANIME_SOURCE == "sushi" or "sushianimes" in BASE_URL.lower():
         for a in soup.select("a[href*='/anime/'][href*='-season-'][href*='-episode']"):
