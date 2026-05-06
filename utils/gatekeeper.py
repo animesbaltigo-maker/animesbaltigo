@@ -1,7 +1,10 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+import time
 
 from config import REQUIRED_CHANNEL, REQUIRED_CHANNEL_URL
+
+_ACCESS_NOTICE_TTL = 120
 
 
 async def ensure_channel_membership(update, context: ContextTypes.DEFAULT_TYPE):
@@ -22,6 +25,13 @@ async def ensure_channel_membership(update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception:
         pass
+
+    user_key = f"access_notice:{user_id}"
+    now = time.monotonic()
+    last_notice = context.user_data.get(user_key, 0.0)
+    if now - last_notice < _ACCESS_NOTICE_TTL:
+        return False
+    context.user_data[user_key] = now
 
     text = (
         "🔒 <b>Acesso restrito</b>\n\n"
