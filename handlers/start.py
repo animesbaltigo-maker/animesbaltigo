@@ -1,14 +1,17 @@
 import asyncio
 import html
+import json
 import time
 import re
+from pathlib import Path
 from urllib.parse import quote_plus
 
+import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
-from config import BOT_BRAND, BOT_USERNAME
+from config import BOT_BRAND, BOT_USERNAME, DATA_DIR, HTTP_TIMEOUT
 from services.animefire_client import get_anime_details, get_episode_player, search_anime
 from services.metrics import is_episode_watched
 from services.referral_db import (
@@ -34,6 +37,8 @@ MINIAPP_URL = "https://rough-double-remarkable-north.trycloudflare.com/miniapp/i
 
 START_COOLDOWN = 1.2
 START_DEEP_LINK_TTL = 8.0
+ANILIST_LINKS_JSON_PATH = Path(DATA_DIR) / "anilist_anime_links.json"
+ANILIST_API_URL = "https://graphql.anilist.co"
 
 _START_USER_LOCKS = {}
 _START_INFLIGHT = {}
@@ -764,6 +769,90 @@ async def _resolve_group_from_anime_id(anime_id: str):
     return anime, fallback_item
 
 
+def _load_anilist_links() -> dict:
+    try:
+        if not ANILIST_LINKS_JSON_PATH.exists():
+            return {}
+        data = json.loads(ANILIST_LINKS_JSON_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+async def _fetch_anilist_title(anilist_id: str) -> str:
+    query = """
+    query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        title {
+          romaji
+          english
+          native
+        }
+      }
+    }
+    """
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        response = await client.post(
+            ANILIST_API_URL,
+            json={"query": query, "variables": {"id": int(anilist_id)}},
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    title = ((data.get("data") or {}).get("Media") or {}).get("title") or {}
+    return (
+        title.get("romaji")
+        or title.get("english")
+        or title.get("native")
+        or ""
+    ).strip()
+
+
+def _item_matches_anilist(item: dict, anilist_id: str) -> bool:
+    candidates = [
+        item.get("anilist_id"),
+        item.get("anilistId"),
+    ]
+    for variant in item.get("variants") or []:
+        candidates.extend([variant.get("anilist_id"), variant.get("anilistId")])
+
+    return any(str(value or "") == str(anilist_id) for value in candidates)
+
+
+async def _resolve_group_from_anilist_id(anilist_id: str):
+    anilist_id = str(anilist_id or "").strip()
+    links = _load_anilist_links()
+    mapped = links.get(anilist_id) or {}
+
+    mapped_id = mapped.get("default_anime_id") or mapped.get("id")
+    if mapped_id:
+        try:
+            anime, group_item = await _resolve_group_from_anime_id(mapped_id)
+            if group_item:
+                return anime, group_item
+        except Exception:
+            pass
+
+    title = await asyncio.wait_for(_fetch_anilist_title(anilist_id), timeout=20)
+    if not title:
+        raise RuntimeError(f"AniList sem titulo para id={anilist_id}")
+
+    results = await asyncio.wait_for(search_anime(title), timeout=20)
+    if not results:
+        raise RuntimeError(f"Nenhum resultado local para AniList id={anilist_id}")
+
+    for item in results:
+        if _item_matches_anilist(item, anilist_id):
+            anime_id = item.get("default_anime_id") or item.get("id")
+            anime = await asyncio.wait_for(get_anime_details(anime_id), timeout=20)
+            return anime, item
+
+    item = results[0]
+    anime_id = item.get("default_anime_id") or item.get("id")
+    anime = await asyncio.wait_for(get_anime_details(anime_id), timeout=20)
+    return anime, item
+
+
 def _remember_group_item(context: ContextTypes.DEFAULT_TYPE, item: dict) -> None:
     default_id = item.get("default_anime_id") or item.get("id")
     if default_id:
@@ -925,8 +1014,9 @@ async def start(update, context):
                     )
                     return
 
-            if arg.startswith("anime_"):
-                anime_id = arg[len("anime_"):].strip()
+            if arg.startswith("anime_al_") or arg.startswith("anime_"):
+                is_anilist_deep_link = arg.startswith("anime_al_")
+                anime_id = arg[len("anime_al_"):].strip() if is_anilist_deep_link else arg[len("anime_"):].strip()
 
                 loading_msg = await message.reply_text(
                     "⏳ <b>Abrindo o anime para você...</b>",
@@ -934,7 +1024,10 @@ async def start(update, context):
                 )
 
                 try:
-                    anime, group_item = await _resolve_group_from_anime_id(anime_id)
+                    if is_anilist_deep_link:
+                        anime, group_item = await _resolve_group_from_anilist_id(anime_id)
+                    else:
+                        anime, group_item = await _resolve_group_from_anime_id(anime_id)
                     _remember_group_item(context, group_item)
 
                     fallback_title = group_item.get("title") or anime.get("title") or "Sem título"
