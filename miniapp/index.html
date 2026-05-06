@@ -133,12 +133,12 @@
     }
     @media (max-width:620px){
       body{font-size:13px}.shell{width:calc(100% - 20px)}.page{padding-top:10px;padding-bottom:calc(84px + var(--safe-bottom))}
-      .brand-mark{width:42px;height:42px}.brand-name{font-size:22px}.brand-sub{font-size:10px;letter-spacing:.24em}.mobile-tabs{display:block;top:calc(var(--safe-top) + 112px)}.bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:70;display:grid;grid-template-columns:repeat(6,1fr);gap:3px;padding:7px 8px calc(7px + var(--safe-bottom));background:rgba(6,6,7,.94);backdrop-filter:blur(16px);border-top:1px solid #19191d}.bottom-nav button{min-height:48px;border-radius:11px;color:#bdbdc5;display:grid;place-items:center;font-size:10px;font-weight:800}.bottom-nav i{font-size:16px}.bottom-nav button.active{color:#fff;background:rgba(255,65,46,.14)}
+      .brand-mark{width:42px;height:42px}.brand-name{font-size:22px}.brand-sub{font-size:10px;letter-spacing:.24em}.mobile-tabs{display:none}.card-play{display:none}.bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:70;display:grid;grid-template-columns:repeat(6,1fr);gap:3px;padding:7px 8px calc(7px + var(--safe-bottom));background:rgba(6,6,7,.94);backdrop-filter:blur(16px);border-top:1px solid #19191d}.bottom-nav button{min-height:48px;border-radius:11px;color:#bdbdc5;display:grid;place-items:center;font-size:10px;font-weight:800}.bottom-nav i{font-size:16px}.bottom-nav button.active{color:#fff;background:rgba(255,65,46,.14)}
       .hero{height:360px;border-radius:9px}.hero-body{left:16px;right:58px;bottom:52px;width:auto}.hero-title{font-size:clamp(22px,7.2vw,28px);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.kicker{font-size:12px}.hero-controls{right:8px}.hero-arrow{width:42px;height:42px}.hero-meta{display:none}
-      .grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid.wide{grid-template-columns:repeat(2,minmax(0,1fr))}.rail-cards{grid-auto-columns:82%;gap:12px}.section-title{font-size:19px}
+      .grid{grid-template-columns:repeat(2,calc((100% - 12px)/2));gap:12px;overflow:hidden}.grid.wide{grid-template-columns:repeat(2,calc((100% - 12px)/2))}.rail-cards{grid-auto-columns:82%;gap:12px}.section-title{font-size:19px}.card{width:100%;min-width:0}.card-title{font-size:13px}
       .detail-top{display:block}.crumbline{margin:0 0 12px}.poster-box{width:min(58vw,210px);margin:0 auto}.status{height:46px;margin:10px 0 14px}.detail-info{padding-top:0}.tags{gap:8px;align-items:flex-start;flex-wrap:nowrap;overflow:auto;padding-bottom:3px;scrollbar-width:none}.tags::-webkit-scrollbar{display:none}.genre{font-size:14px;white-space:nowrap}.detail-title{font-size:clamp(25px,8vw,30px)}.alt-title{font-size:15px}.actions .btn{flex:1;min-width:132px}.stats{grid-template-columns:repeat(2,1fr);gap:14px}.syn{font-size:14px}
       .episode-panel{padding:12px;margin-top:18px}.ep-toolbar{display:grid;grid-template-columns:1fr auto;gap:8px}.ep-toolbar .seg{grid-column:1/-1}.ep-search{grid-column:1/-1}.episodes{gap:6px}.ep-card{grid-template-columns:96px 1fr auto;gap:10px;padding:8px 4px}.ep-thumb{width:96px;height:54px}.ep-title{font-size:13px}.ep-name{font-size:13px}.switch{width:44px;height:28px}.switch::after{width:20px;height:20px}.ep-card.watched .switch::after{transform:translateX(16px)}
-      .player-title{font-size:18px}.side-list{max-height:none}.list-page-head{display:block}.pager .btn{flex:1}
+      .player-title{font-size:18px}.side-list{max-height:none}.list-page-head{display:block}.list-page-head>.btn,.list-page-head>.actions{display:none}.pager .btn{flex:1}
     }
   </style>
 </head>
@@ -274,7 +274,12 @@
     function imageTag(item, alt, wide=false){
       const src = imgUrl(item);
       const proxy = src.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(src)}` : "";
-      return `<div class="thumb ${wide ? "wide" : ""}"><img src="${esc(src)}" data-proxy="${esc(proxy)}" alt="${esc(alt)}" loading="lazy" decoding="async" onload="this.parentElement.classList.add('loaded')" onerror="imageFail(this)"><span class="fallback-logo">Baltigo</span></div>`;
+      return `<div class="thumb ${wide ? "wide" : ""}"><img src="${esc(proxy || src)}" data-direct="${esc(proxy ? src : "")}" alt="${esc(alt)}" loading="lazy" decoding="async" onload="this.parentElement.classList.add('loaded')" onerror="imageFail(this)"><span class="fallback-logo">Baltigo</span></div>`;
+    }
+    function posterImage(item){
+      const src = imgUrl(item);
+      const proxy = src.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(src)}` : "";
+      return `<img src="${esc(proxy || src)}" data-direct="${esc(proxy ? src : "")}" alt="${esc(item.title)}" onload="this.parentElement.classList.add('loaded')" onerror="imageFail(this)"><span class="fallback-logo">Baltigo</span>`;
     }
     function imageFail(el){
       if (el.classList.contains("hero-img") && heroItems.length > 1) {
@@ -285,10 +290,10 @@
           return;
         }
       }
-      const proxy = el.dataset.proxy || "";
-      if (proxy && el.src !== new URL(proxy, location.href).href) {
-        el.dataset.proxy = "";
-        el.src = proxy;
+      const direct = el.dataset.direct || "";
+      if (direct && el.src !== direct) {
+        el.dataset.direct = "";
+        el.src = direct;
         return;
       }
       el.onerror=null;
@@ -343,8 +348,8 @@
       const src = imgUrl(item);
       const proxy = src.startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(src)}` : "";
       el.innerHTML = `<section class="hero" id="hero" onclick="openAnime('${esc(animeId)}')" aria-label="Destaque: ${esc(title)}">
-        <div class="hero-media active" style="background-image:${cssImage(src)}"></div>
-        <img class="hero-img" src="${esc(src)}" data-proxy="${esc(proxy)}" alt="${esc(title)}" loading="eager" decoding="async" onerror="imageFail(this)">
+        <div class="hero-media active" style="background-image:${cssImage(proxy || src)}"></div>
+        <img class="hero-img" src="${esc(proxy || src)}" data-direct="${esc(proxy ? src : "")}" alt="${esc(title)}" loading="eager" decoding="async" onerror="imageFail(this)">
         <div class="hero-body">
           <div class="kicker"><b>Anime</b>${genres[0] ? `<span>${esc(genres[0])}</span>` : ""}</div>
           <h1 class="hero-title">${esc(title)}</h1>
@@ -444,7 +449,7 @@
       const trailer = trailerUrl(a), canMore = (a.description||"").length > 260;
       mount(`<div class="detail-top">
         <div class="crumbline"><button onclick="showHome()">Início</button> &nbsp;-&nbsp; ${esc(a.title)}</div>
-        <aside><div class="image-box poster-box"><img src="${esc(imgUrl(a))}" data-proxy="${esc(imgUrl(a).startsWith("http") ? `/api/image-proxy?url=${encodeURIComponent(imgUrl(a))}` : "")}" alt="${esc(a.title)}" onload="this.parentElement.classList.add('loaded')" onerror="imageFail(this)"><span class="fallback-logo">Baltigo</span></div><div class="status"><i class="fa-solid fa-check"></i> ${esc(a.status||"Disponível")}</div></aside>
+        <aside><div class="image-box poster-box">${posterImage(a)}</div><div class="status"><i class="fa-solid fa-check"></i> ${esc(a.status||"Disponível")}</div></aside>
         <section class="detail-info">
           <div class="tags"><span class="age">16</span>${(a.genres||[]).slice(0,8).map(g=>`<span class="genre">${esc(g)}</span>`).join("")}</div>
           <h1 class="detail-title">${esc(a.title)}</h1>${(a.alt_titles||[])[0]?`<div class="alt-title">${esc(a.alt_titles[0])}</div>`:""}
