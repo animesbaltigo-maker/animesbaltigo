@@ -1,107 +1,204 @@
-import os
-from pathlib import Path
+import asyncio
+import traceback
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    InlineQueryHandler,
+    MessageHandler,
+    filters,
+)
 
-try:
-    from dotenv import load_dotenv
+from config import BOT_TOKEN
+from core.http_client import close_http_client
+from core.telethon_uploader import start_telethon_uploader, stop_telethon_uploader
+from core.video_download_queue import start_video_download_workers, stop_video_download_workers
+from handlers.start import start
+from handlers.search import buscar
+from handlers.help import ajuda
+from handlers.callbacks import callbacks
+from handlers.infoanime import infoanime, callback_info_anime
+from handlers.postanime import postanime
+from handlers.novoseps import postnovoseps, auto_post_new_eps_job
+from handlers.postfilmes import postfilmes
+from handlers.recommend import recomendar
+from handlers.baltigoflix import baltigoflix
+from handlers.metricas import metricas, metricas_limpar
+from handlers.pedido import pedido
+from handlers.calendario import calendario
+from handlers.broadcast import (
+    broadcast_command,
+    broadcast_callbacks,
+    broadcast_message_router,
+)
+from handlers.referral import indicacoes, referral_button
+from handlers.referral_admin import refstats, auto_referral_check_job
+from services.referral_db import init_referral_db
+from services.subscriptions import init_subscriptions_db
+from services.affiliate_db import init_affiliate_db, release_due_commissions
+from handlers.bingo import bingo
+from handlers.bingo_admin import startbingo, sortear, startbingo_auto, resetbingo
+from services.metrics import init_metrics_db
+from services.animefire_client import preload_popular_cache
+from handlers.inline import inline_query
+from handlers.testminiapp import testminiapp
+from handlers.tracemoe import traceme, tracequota, trace_photo_handler
 
-    load_dotenv(BASE_DIR / ".env")
-except Exception:
-    pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8675150552:AAHoUu64RoMPHNdaChP9RQGF0iz-tk7Crbo").strip()
-API_ID = int(os.getenv("API_ID", "0") or "0")
-API_HASH = os.getenv("API_HASH", "").strip()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "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").strip()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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").strip()
+from handlers.group_ai import group_ai_handler, esquecer_handler
 
-SOURCE_SITE_BASE = os.getenv("SOURCE_SITE_BASE", "https://animeplay.cloud").strip().rstrip("/")
-ANIME_SOURCE = os.getenv("ANIME_SOURCE", "").strip().lower()
-if not ANIME_SOURCE:
-    if "animeplay.cloud" in SOURCE_SITE_BASE.lower():
-        ANIME_SOURCE = "animeplay"
-    elif "animesonline.cloud" in SOURCE_SITE_BASE.lower():
-        ANIME_SOURCE = "animesonline"
-    elif "sushianimes" in SOURCE_SITE_BASE.lower():
-        ANIME_SOURCE = "sushi"
+
+init_metrics_db()
+init_subscriptions_db()
+init_affiliate_db()
+
+async def post_init(app: Application):
+    await start_telethon_uploader()
+    await start_video_download_workers(app)
+    asyncio.create_task(preload_popular_cache())
+
+
+async def post_shutdown(app: Application):
+    await stop_video_download_workers(app)
+    await stop_telethon_uploader()
+    await close_http_client()
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    print("ERRO:", repr(context.error))
+    traceback.print_exception(
+        type(context.error),
+        context.error,
+        context.error.__traceback__,
+    )
+
+    try:
+        if isinstance(update, Update):
+            if update.callback_query:
+                await update.callback_query.answer("❌ Ocorreu um erro.", show_alert=True)
+            elif update.effective_message:
+                await update.effective_message.reply_text(
+                    "❌ Ocorreu um erro ao processar sua solicitação."
+                )
+    except Exception:
+        pass
+
+
+async def affiliate_release_job(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        release_due_commissions()
+    except Exception as error:
+        print("ERRO AFFILIATE RELEASE:", repr(error))
+
+
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("Configure BOT_TOKEN nas variáveis de ambiente.")
+
+    init_referral_db()
+
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+
+    # Comandos principais
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("testminiapp", testminiapp))
+    app.add_handler(CommandHandler("buscar", buscar))
+    app.add_handler(CommandHandler("ajuda", ajuda))
+    app.add_handler(CommandHandler("infoanime", infoanime))
+    app.add_handler(CommandHandler("postanime", postanime))
+    app.add_handler(CommandHandler("postnovoseps", postnovoseps))
+    app.add_handler(CommandHandler("postfilmes", postfilmes))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("indicacoes", indicacoes))
+    app.add_handler(CommandHandler("refstats", refstats))
+    app.add_handler(CommandHandler("recomendar", recomendar))
+    app.add_handler(CommandHandler("bingo", bingo))
+    app.add_handler(CommandHandler("startbingo", startbingo))
+    app.add_handler(CommandHandler("sortear", sortear))
+    app.add_handler(CommandHandler("autobingo", startbingo_auto))
+    app.add_handler(CommandHandler("resetbingo", resetbingo))
+    app.add_handler(CommandHandler("baltigoflix", baltigoflix))
+    app.add_handler(CommandHandler("metricas", metricas))
+    app.add_handler(CommandHandler("metricaslimpar", metricas_limpar))
+    app.add_handler(CommandHandler("pedido", pedido))
+    app.add_handler(CommandHandler("calendario", calendario))
+
+    # TraceMoe
+    app.add_handler(CommandHandler("traceme", traceme))
+    app.add_handler(CommandHandler("tracequota", tracequota))
+    app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, trace_photo_handler))
+
+    # Inline
+    app.add_handler(InlineQueryHandler(inline_query))
+
+    # Callbacks
+    app.add_handler(CallbackQueryHandler(callback_info_anime, pattern=r"^info_anime:"))
+    app.add_handler(CallbackQueryHandler(broadcast_callbacks, pattern=r"^bc\|"))
+    app.add_handler(CallbackQueryHandler(referral_button, pattern=r"^noop_indicar$"))
+    app.add_handler(CallbackQueryHandler(callbacks))
+
+    # Broadcast router
+    app.add_handler(
+        MessageHandler(
+            filters.ALL & ~filters.COMMAND,
+            broadcast_message_router,
+        ),
+        group=99,
+    )
+
+    app.add_handler(CommandHandler("esquecer", esquecer_handler))
+
+    # IA Gemini nos grupos
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            group_ai_handler,
+        ),
+        group=100,
+    )
+
+    # Jobs
+    if not app.job_queue:
+        print("[ERRO] JobQueue não disponível. Instale: python-telegram-bot[job-queue]==22.6")
     else:
-        ANIME_SOURCE = "animefire"
+        app.job_queue.run_repeating(
+            auto_post_new_eps_job,
+            interval=600,
+            first=15,
+            name="auto_post_new_eps",
+        )
+        print("[OK] Job registrado: auto_post_new_eps (a cada 600s)")
 
-REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Centraldeanimes_Baltigo").strip()
-REQUIRED_CHANNEL_URL = os.getenv("REQUIRED_CHANNEL_URL", "t.me/Centraldeanimes_Baltigo").strip()
-BOT_USERNAME = os.getenv("BOT_USERNAME", "AnimesBaltigo_Bot").strip()
-CANAL_POSTAGEM = os.getenv("CANAL_POSTAGEM", "@Centraldeanimes_Baltigo").strip()
-STICKER_DIVISOR = os.getenv(
-    "STICKER_DIVISOR",
-    "CAACAgQAAx0CbKkU-AACFJtps_kRLpeUt2Gvd7mT4d0gS1vyCgACOhUAAqDAiFJSU5pkUMltvzoE",
-).strip()
+        app.job_queue.run_repeating(
+            auto_referral_check_job,
+            interval=3600,
+            first=60,
+            name="auto_referral_check",
+        )
+        print("[OK] Job registrado: auto_referral_check (a cada 3600s)")
 
-ADMIN_IDS = [
-    int(x.strip())
-    for x in os.getenv("ADMIN_IDS", "1852596083,987654321").split(",")
-    if x.strip().isdigit()
-]
+        app.job_queue.run_repeating(
+            affiliate_release_job,
+            interval=1800,
+            first=90,
+            name="affiliate_release",
+        )
+        print("[OK] Job registrado: affiliate_release (a cada 1800s)")
 
-SEARCH_LIMIT = int(os.getenv("SEARCH_LIMIT", "10"))
-EPISODES_PER_PAGE = int(os.getenv("EPISODES_PER_PAGE", "12"))
-EPISODE_LOOKUP_LIMIT = int(os.getenv("EPISODE_LOOKUP_LIMIT", "400"))
-ANTI_FLOOD_SECONDS = float(os.getenv("ANTI_FLOOD_SECONDS", "1.2"))
-API_CACHE_TTL_SECONDS = int(os.getenv("API_CACHE_TTL_SECONDS", "900"))
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "45"))
-UPSTREAM_PROXY_URL = (
-    os.getenv("UPSTREAM_PROXY_URL", "").strip()
-    or os.getenv("SCRAPER_PROXY_URL", "").strip()
-    or os.getenv("HTTPS_PROXY", "").strip()
-    or os.getenv("HTTP_PROXY", "").strip()
-    or os.getenv("ALL_PROXY", "").strip()
-)
-VIDEO_DOWNLOAD_QUEUE_LIMIT = int(os.getenv("VIDEO_DOWNLOAD_QUEUE_LIMIT", "20"))
-VIDEO_DOWNLOAD_WORKERS = int(os.getenv("VIDEO_DOWNLOAD_WORKERS", "2"))
-VIDEO_DOWNLOAD_CACHE_DIR = os.getenv(
-    "VIDEO_DOWNLOAD_CACHE_DIR",
-    str(DATA_DIR / "video_cache"),
-).strip()
-VIDEO_DOWNLOAD_MAX_MB = int(os.getenv("VIDEO_DOWNLOAD_MAX_MB", "1900"))
-VIDEO_DOWNLOAD_TRUST_ENV = os.getenv("VIDEO_DOWNLOAD_TRUST_ENV", "0").strip().lower() in {"1", "true", "yes", "on", "sim"}
-VIDEO_DOWNLOAD_CHUNK_MB = int(os.getenv("VIDEO_DOWNLOAD_CHUNK_MB", "4"))
-VIDEO_DOWNLOAD_PART_MB = int(os.getenv("VIDEO_DOWNLOAD_PART_MB", "8"))
-VIDEO_DOWNLOAD_PARALLEL = os.getenv("VIDEO_DOWNLOAD_PARALLEL", "0").strip().lower() in {"1", "true", "yes", "on", "sim"}
-VIDEO_DOWNLOAD_PARALLEL_WORKERS = int(os.getenv("VIDEO_DOWNLOAD_PARALLEL_WORKERS", "4"))
-VIDEO_CACHE_TTL_HOURS = int(os.getenv("VIDEO_CACHE_TTL_HOURS", "1"))
-VIDEO_CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("VIDEO_CACHE_CLEANUP_INTERVAL_SECONDS", "600"))
-VIDEO_UPLOAD_MAX_MB = int(os.getenv("VIDEO_UPLOAD_MAX_MB", "49"))
-TELETHON_UPLOAD_MAX_MB = int(os.getenv("TELETHON_UPLOAD_MAX_MB", "1900"))
-TELETHON_PARALLEL_UPLOAD = os.getenv("TELETHON_PARALLEL_UPLOAD", "1").strip() == "1"
-TELETHON_PARALLEL_UPLOAD_THRESHOLD_MB = int(os.getenv("TELETHON_PARALLEL_UPLOAD_THRESHOLD_MB", "20"))
-TELETHON_PARALLEL_UPLOAD_WORKERS = int(os.getenv("TELETHON_PARALLEL_UPLOAD_WORKERS", "8"))
-TELETHON_SESSION_NAME = os.getenv("TELETHON_SESSION_NAME", str(DATA_DIR / "anime_uploader_bot")).strip()
-VIDEO_DOWNLOAD_PROTECT_CONTENT = os.getenv("VIDEO_DOWNLOAD_PROTECT_CONTENT", "1").strip() == "1"
+    app.add_error_handler(error_handler)
 
-BOT_BRAND = os.getenv("BOT_BRAND", os.getenv("OT_BRAND", "Anime Brasil")).strip()
-WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL", "").strip().rstrip("/")
-_SUBSCRIPTIONS_DB_RAW = Path(
-    os.getenv("SUBSCRIPTIONS_DB_PATH", "").strip()
-    or os.getenv("BALTIGO_SUBSCRIPTIONS_DB_PATH", "").strip()
-    or str(DATA_DIR / "offline_subscriptions.sqlite3")
-)
-SUBSCRIPTIONS_DB_PATH = str(
-    _SUBSCRIPTIONS_DB_RAW if _SUBSCRIPTIONS_DB_RAW.is_absolute() else BASE_DIR / _SUBSCRIPTIONS_DB_RAW
-)
-BALTIGOFLIX_SUBSCRIBE_URL = os.getenv("BALTIGOFLIX_SUBSCRIBE_URL", "http://baltigoflix.com.br/").strip()
-BALTIGOFLIX_SUPPORT_URL = os.getenv("BALTIGOFLIX_SUPPORT_URL", "https://t.me/SourceBaltigo_Bot").strip()
-CAKTO_CHECKOUT_URL = os.getenv("CAKTO_CHECKOUT_URL", "").strip()
-CAKTO_MENSAL_CHECKOUT_URL = os.getenv("CAKTO_MENSAL_CHECKOUT_URL", "https://pay.cakto.com.br/9snqsP3").strip()
-CAKTO_TRIMESTRAL_CHECKOUT_URL = os.getenv("CAKTO_TRIMESTRAL_CHECKOUT_URL", "https://pay.cakto.com.br/3fsy24d").strip()
-CAKTO_SEMESTRAL_CHECKOUT_URL = os.getenv("CAKTO_SEMESTRAL_CHECKOUT_URL", "https://pay.cakto.com.br/32ocvxm").strip()
-CAKTO_ANUAL_CHECKOUT_URL = os.getenv("CAKTO_ANUAL_CHECKOUT_URL", "https://pay.cakto.com.br/u9wz86m").strip()
-CAKTO_BRONZE_CHECKOUT_URL = os.getenv("CAKTO_BRONZE_CHECKOUT_URL", CAKTO_MENSAL_CHECKOUT_URL).strip()
-CAKTO_OURO_CHECKOUT_URL = os.getenv("CAKTO_OURO_CHECKOUT_URL", CAKTO_TRIMESTRAL_CHECKOUT_URL).strip()
-CAKTO_DIAMANTE_CHECKOUT_URL = os.getenv("CAKTO_DIAMANTE_CHECKOUT_URL", CAKTO_SEMESTRAL_CHECKOUT_URL).strip()
-CAKTO_RUBI_CHECKOUT_URL = os.getenv("CAKTO_RUBI_CHECKOUT_URL", CAKTO_ANUAL_CHECKOUT_URL).strip()
-CAKTO_WEBHOOK_SECRET = os.getenv("CAKTO_WEBHOOK_SECRET", "").strip()
-CAKTO_CLIENT_ID = os.getenv("CAKTO_CLIENT_ID", "").strip()
-CAKTO_CLIENT_SECRET = os.getenv("CAKTO_CLIENT_SECRET", "").strip()
-CAKTO_API_BASE_URL = os.getenv("CAKTO_API_BASE_URL", "https://api.cakto.com.br").strip().rstrip("/")
-CAKTO_ORDER_SYNC_LIMIT = int(os.getenv("CAKTO_ORDER_SYNC_LIMIT", "100") or "100")
+    print("Bot rodando...")
+    app.run_polling(drop_pending_updates=True)
+
+
+if __name__ == "__main__":
+    main()
