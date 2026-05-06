@@ -603,7 +603,12 @@ def _shape_details(data: dict, fallback_id: str = "") -> dict:
         "year": data.get("season_year"),
         "season": data.get("season") or "",
         "seasons": data.get("seasons") or [],
+        "duration": data.get("duration") or "",
         "studio": _clean(data.get("studio") or ""),
+        "anilist_url": data.get("anilist_url") or "",
+        "anilist_id": data.get("anilist_id"),
+        "anilist_title": _clean(data.get("anilist_title") or ""),
+        "anilist_episodes": data.get("anilist_episodes"),
         "alt_titles": _clean_alt_titles(data.get("alt_titles") or []),
     }
 
