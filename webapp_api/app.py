@@ -347,6 +347,8 @@ def _clean_genres(genres: list[str] | None) -> list[str]:
         gl = g.lower()
         if any(gl.startswith(prefix) for prefix in skip_prefixes):
             continue
+        if gl in {"dublado", "legendado", "animes dublado", "animes dublados", "animes legendados"}:
+            continue
         if g not in seen:
             seen.add(g)
             cleaned.append(g)
@@ -386,7 +388,22 @@ def _section_url(slug: str, page: int) -> str:
     if _is_sushi_source():
         return BASE_URL
     if _is_animeplay_source():
-        return BASE_URL if page <= 1 else f"{BASE_URL}/page/{page}"
+        mapping = {
+            "lista-de-animes-dublados": "tipo/dublado",
+            "lista-de-animes-legendados": "tipo/legendado",
+            "genero/acao": "genre/acao",
+            "genero/aventura": "genre/aventura",
+            "genero/comedia": "genre/comedia",
+            "genero/drama": "genre/drama",
+            "genero/fantasia": "genre/fantasia",
+            "genero/romance": "genre/romance",
+            "genero/sobrenatural": "genre/sobrenatural",
+            "genero/suspense": "genre/suspense",
+        }
+        animeplay_slug = mapping.get(slug, "")
+        if not animeplay_slug:
+            return BASE_URL
+        return f"{BASE_URL}/{animeplay_slug}" if page <= 1 else f"{BASE_URL}/{animeplay_slug}/page/{page}"
     if page <= 1:
         return f"{BASE_URL}/{slug}"
     return f"{BASE_URL}/{slug}/{page}"
@@ -488,6 +505,38 @@ def _extract_last_page(page_html: str, slug: str) -> int:
     return max_page
 
 
+def _media_url_from_node(node) -> str:
+    if not node:
+        return ""
+    candidates: list[str] = []
+    parent = getattr(node, "parent", None)
+    grandparent = getattr(parent, "parent", None)
+    for current in (node, parent, grandparent):
+        if not current:
+            continue
+        if getattr(current, "get", None):
+            candidates.extend([current.get("data-src"), current.get("data-lazy-src"), current.get("data-bg")])
+            match = re.search(r"url\((['\"]?)(.*?)\1\)", current.get("style") or "", re.I)
+            if match:
+                candidates.append(match.group(2))
+        if getattr(current, "select", None):
+            for img in current.select("img"):
+                candidates.extend([img.get("data-src"), img.get("data-lazy-src"), img.get("src")])
+                srcset = img.get("srcset") or ""
+                if srcset:
+                    candidates.append(srcset.split(",", 1)[0].strip().split(" ", 1)[0])
+            for media in current.select("[data-src], [data-lazy-src], [data-bg], [style*='background']"):
+                candidates.extend([media.get("data-src"), media.get("data-lazy-src"), media.get("data-bg")])
+                match = re.search(r"url\((['\"]?)(.*?)\1\)", media.get("style") or "", re.I)
+                if match:
+                    candidates.append(match.group(2))
+    for value in candidates:
+        value = _clean(str(value or "")).replace("\\/", "/")
+        if value and re.search(r"\.(?:webp|jpe?g|png|gif|avif)(?:\?|$)", value, re.I):
+            return urljoin(BASE_URL, value)
+    return ""
+
+
 def _extract_listing_cards(page_html: str) -> list[dict]:
     soup = BeautifulSoup(page_html, "html.parser")
     found: dict[str, dict] = {}
@@ -503,10 +552,9 @@ def _extract_listing_cards(page_html: str) -> list[dict]:
         if title_el:
             title = _clean(title_el.get_text(" ", strip=True))
 
-        img = anchor.find("img")
-        cover = ""
+        img = anchor.find("img") or (anchor.parent.find("img") if anchor.parent else None)
+        cover = _media_url_from_node(anchor)
         if img:
-            cover = img.get("data-src") or img.get("src") or ""
             title = title or _clean(img.get("alt") or "")
         if not cover:
             media = anchor.select_one("[data-src], [data-bg]")
@@ -565,7 +613,7 @@ def _sushi_section_matches(item: dict[str, Any], section: str) -> bool:
         "suspense": ("suspense", "misterio", "mystery", "thriller"),
     }
     if section in aliases:
-        return any(alias in text for alias in aliases[section])
+        return True
     return True
 
 
@@ -591,7 +639,7 @@ def _animeplay_section_matches(item: dict[str, Any], section: str) -> bool:
         "suspense": ("suspense", "misterio", "mystery", "thriller"),
     }
     if section in aliases:
-        return any(alias in text for alias in aliases[section])
+        return True
     return True
 
 
@@ -801,8 +849,10 @@ def _normalize_episodes(items: list[dict[str, Any]] | None) -> list[dict[str, An
 
 
 def _has_minimum_catalog_fields(item: dict[str, Any]) -> bool:
-    if _is_sushi_source() or _is_animeplay_source():
+    if _is_sushi_source():
         return bool(item.get("id") and item.get("title"))
+    if _is_animeplay_source():
+        return bool(item.get("id") and item.get("title") and (item.get("cover_url") or item.get("banner_url") or item.get("image_url")))
     return bool(item.get("id") and item.get("title") and (item.get("cover_url") or item.get("banner_url")))
 
 
@@ -1051,17 +1101,11 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
 
     if _is_animeplay_source():
         async def animeplay_factory():
-            pages_to_fetch = 4 if section in {"em_lancamento", "atualizados", "top"} else 2
-            html_pages = []
-            fetched = await asyncio.gather(
-                *[_get(_section_url(slug, page_num)) for page_num in range(1, pages_to_fetch + 1)],
-                return_exceptions=True,
-            )
-            html_pages.extend([html_doc for html_doc in fetched if isinstance(html_doc, str)])
-
-            raw_items = []
-            for html_doc in html_pages:
-                raw_items.extend(_extract_listing_cards(html_doc))
+            first_html = await _get(_section_url(slug, 1))
+            source_total_pages = _extract_last_page(first_html, slug)
+            current_page = min(max(1, page), max(1, source_total_pages))
+            page_html = first_html if current_page == 1 else await _get(_section_url(slug, current_page))
+            raw_items = _extract_listing_cards(page_html)
 
             items = await _enrich_animeplay_home_cards(raw_items, section)
             if section in {"em_lancamento", "atualizados"}:
@@ -1070,23 +1114,20 @@ async def _get_paginated_section_page(section: str, page: int) -> dict:
                 items = sorted(items, key=_score_value, reverse=True)
 
             total = len(items)
-            total_pages = max(1, (total + GRID_PAGE_LIMIT - 1) // GRID_PAGE_LIMIT) if total else 1
-            current_page = min(max(1, page), total_pages)
-            start = (current_page - 1) * GRID_PAGE_LIMIT
-            end = start + GRID_PAGE_LIMIT
+            total_pages = max(1, source_total_pages)
             return {
                 "section": section,
                 "title": conf["title"],
                 "page": current_page,
                 "limit": GRID_PAGE_LIMIT,
-                "total_items": total,
+                "total_items": total if total_pages == 1 else total_pages * GRID_PAGE_LIMIT,
                 "total_pages": total_pages,
                 "has_next": current_page < total_pages,
                 "has_prev": current_page > 1,
-                "items": items[start:end],
+                "items": items[:GRID_PAGE_LIMIT],
             }
 
-        return await _cached(f"animeplay-page:v4:{section}:{page}", 120 if section in {"em_lancamento", "atualizados"} else SECTION_TTL, animeplay_factory)
+        return await _cached(f"animeplay-page:v5:{section}:{page}", 120 if section in {"em_lancamento", "atualizados"} else SECTION_TTL, animeplay_factory)
 
     async def meta_factory():
         first_html = await _get(_section_url(slug, 1))
@@ -1338,6 +1379,7 @@ async def api_anime(anime_id: str):
         item = _shape_details(data, anime_id)
         if episodes:
             item["episodes"] = len(episodes)
+            item["seasons"] = sorted({int(ep.get("season") or 1) for ep in episodes})
         return {"item": item, "episodes": episodes}
 
     payload = await _cached(f"anime:{anime_id}", ANIME_TTL, factory)
