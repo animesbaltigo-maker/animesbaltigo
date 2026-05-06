@@ -23,7 +23,7 @@ _PLAYER_LOCKS = {}
 
 _SEARCH_CACHE_TTL = 1800
 _DETAILS_CACHE_TTL = 21600
-_EPISODES_CACHE_TTL = 600
+_EPISODES_CACHE_TTL = 21600
 _PLAYER_CACHE_TTL = 180
 _ANILIST_CACHE_TTL = 86400
 
@@ -49,13 +49,17 @@ def _cache_get(cache: dict, key: str, ttl: int):
     if not item:
         return None
     if time.time() - item["time"] > ttl:
-        cache.pop(key, None)
         return None
     return item["data"]
 
 
 def _cache_set(cache: dict, key: str, data) -> None:
     cache[key] = {"time": time.time(), "data": data}
+
+
+def _cache_get_stale(cache: dict, key: str):
+    item = cache.get(key)
+    return item["data"] if item else None
 
 
 def _clean(value: str | None) -> str:
@@ -79,8 +83,51 @@ def _strip_html_tags(value: str | None) -> str:
 def _normalize_text(value: str | None) -> str:
     text = _clean(value).lower()
     text = re.sub(r"\b(?:dublado|legendado|todos os episodios|todos os episódios|online|hd|gratis|grátis)\b", " ", text)
+    text = re.sub(r"\b(?:temporada|season)\s*\d+\b", " ", text)
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _clean_variant_title(value: str | None) -> str:
+    text = _clean(value)
+    text = re.sub(r"\s*[–—-]\s*(?:Todos os Epis[oó]dios|AnimePlay\.Cloud).*$", "", text, flags=re.I)
+    text = re.sub(r"\b(?:Dublado|Legendado)\b", "", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip(" -–—")
+    return text or _clean(value)
+
+
+def _group_key_for_item(item: dict) -> str:
+    title = item.get("title") or item.get("raw_title") or item.get("id") or ""
+    key = _normalize_text(_clean_variant_title(title))
+    if not key:
+        key = _normalize_text(item.get("id") or "")
+    return key
+
+
+def _query_match_score(query: str, item: dict) -> int:
+    q_norm = _normalize_text(query)
+    if not q_norm:
+        return 1
+    hay = _normalize_text(" ".join([
+        item.get("title") or "",
+        item.get("raw_title") or "",
+        item.get("id") or "",
+        " ".join(item.get("alt_titles") or []),
+    ]))
+    if not hay:
+        return 0
+    if q_norm == hay:
+        return 100
+    if q_norm in hay:
+        return 90
+    q_tokens = [token for token in q_norm.split() if token]
+    hay_tokens = set(hay.split())
+    if not q_tokens:
+        return 0
+    overlap = sum(1 for token in q_tokens if token in hay_tokens or token in hay)
+    if len(q_tokens) > 1 and overlap < len(q_tokens):
+        return 0
+    return int((overlap / len(q_tokens)) * 70)
 
 
 def _slug_from_url(url: str) -> str:
@@ -231,7 +278,11 @@ async def _search_anilist_by_title(title: str, alt_titles: list[str] | None = No
     if time.time() < _ANILIST_DISABLED_UNTIL:
         return None
 
-    candidates = [title, *(alt_titles or [])]
+    candidates = []
+    for value in [title, _clean_variant_title(title), *(alt_titles or [])]:
+        value = _clean(value)
+        if value and value not in candidates:
+            candidates.append(value)
     search_title = next((_clean(item) for item in candidates if _clean(item)), "")
     cache_key = _normalize_text(search_title)
     if not cache_key:
@@ -355,15 +406,11 @@ def _merge_anilist_data(local_data: dict, anilist_data: dict | None) -> dict:
     local_episode_count = local_data.get("episodes")
 
     for key in (
-        "title",
         "score",
         "status",
         "format",
-        "episodes",
         "season",
         "season_year",
-        "genres",
-        "studio",
         "anilist_id",
         "anilist_url",
         "title_romaji",
@@ -376,10 +423,11 @@ def _merge_anilist_data(local_data: dict, anilist_data: dict | None) -> dict:
         if anilist_data.get(key) not in (None, "", []):
             merged[key] = anilist_data[key]
 
-    if anilist_data.get("description"):
-        merged["description"] = anilist_data["description"]
+    if not merged.get("episodes") and anilist_data.get("episodes"):
+        merged["episodes"] = anilist_data["episodes"]
     if anilist_data.get("cover_url"):
         merged["cover_url"] = anilist_data["cover_url"]
+        merged["media_image_url"] = anilist_data.get("media_image_url") or anilist_data["cover_url"]
     if anilist_data.get("banner_url"):
         merged["banner_url"] = anilist_data["banner_url"]
 
@@ -482,7 +530,76 @@ def _extract_anime_cards(html_doc: str, query: str = "") -> list[dict]:
         if not previous or item["_score"] > previous["_score"] or (item["cover_url"] and not previous.get("cover_url")):
             found[anime_id] = item
 
-    return sorted(found.values(), key=lambda item: item.get("_score", 0), reverse=True)
+    items = list(found.values())
+    if query:
+        filtered = []
+        for item in items:
+            match_score = _query_match_score(query, item)
+            if match_score <= 0:
+                continue
+            q_tokens = _normalize_text(query).split()
+            title_tokens = _normalize_text(item.get("title") or item.get("id") or "").split()
+            extra_tokens = max(0, len(title_tokens) - len(q_tokens))
+            exact_bonus = 30 if _group_key_for_item(item) == _normalize_text(query) else 0
+            dubbed_penalty = 8 if item.get("is_dubbed") and not re.search(r"\bdublado\b", query or "", re.I) else 0
+            item["_score"] = match_score + exact_bonus - min(30, extra_tokens * 3) - dubbed_penalty
+            filtered.append(item)
+        items = filtered
+
+    return sorted(items, key=lambda item: item.get("_score", 0), reverse=True)
+
+
+def _group_search_results(items: list[dict], query: str = "") -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for item in items:
+        key = _group_key_for_item(item)
+        if not key:
+            key = item.get("id") or item.get("title") or str(len(order))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(item)
+
+    grouped: list[dict] = []
+    for key in order:
+        variants = groups[key]
+        variants.sort(
+            key=lambda item: (
+                1 if _is_dubbed(item.get("title") or "", item.get("id") or "") else 0,
+                -(item.get("_score") or 0),
+                item.get("title") or "",
+            )
+        )
+        wants_dubbed = bool(re.search(r"\bdublado\b", query or "", re.I))
+        default = next(
+            (
+                item
+                for item in variants
+                if _is_dubbed(item.get("title") or "", item.get("id") or "") == wants_dubbed
+            ),
+            variants[0],
+        )
+        clean_title = _clean_variant_title(default.get("title") or "")
+        shaped_variants = []
+        for variant in variants:
+            current = dict(variant)
+            current["title"] = _clean(current.get("title") or current.get("id") or "")
+            current["label"] = "Dublado" if _is_dubbed(current.get("title") or "", current.get("id") or "") else "Legendado"
+            current["is_dubbed"] = current["label"] == "Dublado"
+            current.pop("_score", None)
+            shaped_variants.append(current)
+        item = dict(default)
+        item["title"] = clean_title or item.get("title") or item.get("id", "").replace("-", " ").title()
+        item["display_title"] = item["title"]
+        item["default_anime_id"] = default.get("id")
+        item["variants"] = shaped_variants
+        item["is_grouped"] = len(shaped_variants) > 1
+        item["has_dubbed"] = any(variant.get("is_dubbed") for variant in shaped_variants)
+        item["has_subbed"] = any(not variant.get("is_dubbed") for variant in shaped_variants)
+        item["prefix"] = "DUB" if item["has_dubbed"] and not item["has_subbed"] else "LEG"
+        grouped.append(item)
+    return grouped
 
 
 async def search_anime(query: str, limit: int | None = None):
@@ -495,7 +612,7 @@ async def search_anime(query: str, limit: int | None = None):
         return cached[:limit] if limit else cached
 
     html_doc = await _request_text(f"{BASE_URL}/?s={quote_plus(query)}")
-    found = _extract_anime_cards(html_doc, query=query)
+    found = _group_search_results(_extract_anime_cards(html_doc, query=query), query=query)
     _cache_set(_SEARCH_CACHE, key, found)
     return found[:limit] if limit else found
 
@@ -671,8 +788,15 @@ async def get_anime_details(anime_id: str):
             final_alt_titles.append(value)
     data["alt_titles"] = final_alt_titles[:10]
 
+    stale_episodes = _cache_get_stale(_EPISODES_CACHE, anime_id) or []
+    if not episodes and stale_episodes:
+        episodes = stale_episodes
+        data["episodes"] = len(episodes)
+        data["seasons"] = sorted({int(item.get("season") or 1) for item in episodes}) or [1]
+
     _cache_set(_DETAILS_CACHE, anime_id, data)
-    _cache_set(_EPISODES_CACHE, anime_id, episodes)
+    if episodes or stale_episodes is None:
+        _cache_set(_EPISODES_CACHE, anime_id, episodes)
     return data
 
 
@@ -680,8 +804,17 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
     anime_id = _normalize_anime_id(anime_id)
     items = _cache_get(_EPISODES_CACHE, anime_id, _EPISODES_CACHE_TTL)
     if items is None:
-        await get_anime_details(anime_id)
-        items = _cache_get(_EPISODES_CACHE, anime_id, _EPISODES_CACHE_TTL) or []
+        stale = _cache_get_stale(_EPISODES_CACHE, anime_id) or []
+        try:
+            await get_anime_details(anime_id)
+            items = _cache_get(_EPISODES_CACHE, anime_id, _EPISODES_CACHE_TTL) or stale
+        except Exception:
+            if stale:
+                items = stale
+            else:
+                raise
+        if not items and stale:
+            items = stale
 
     total = len(items)
     page = items[offset: offset + limit] if limit else items[offset:]
