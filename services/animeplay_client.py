@@ -178,37 +178,74 @@ def _search_query_from_anime_id(anime_id: str) -> str:
     return re.sub(r"\s+", " ", value.replace("-", " ")).strip()
 
 
+def _search_queries_from_anime_id(anime_id: str) -> list[str]:
+    value = _normalize_anime_id(anime_id)
+    raw = re.sub(r"-(?:legendado|dublado|dub|sub)$", "", value, flags=re.I)
+    raw = re.sub(r"-todos-os-episodios$", "", raw, flags=re.I)
+    raw = re.sub(r"\s+", " ", raw.replace("-", " ")).strip()
+    cleaned = _search_query_from_anime_id(anime_id)
+    queries = []
+    for query in (raw, cleaned):
+        if query and query not in queries:
+            queries.append(query)
+    return queries
+
+
 async def _resolve_existing_anime_id(anime_id: str) -> str:
-    query = _search_query_from_anime_id(anime_id)
-    if not query:
-        return ""
-    try:
-        results = await search_anime(query, limit=12)
-    except Exception:
+    queries = _search_queries_from_anime_id(anime_id)
+    if not queries:
         return ""
 
     wanted_dub = _is_dubbed("", anime_id)
     normalized_original = _normalize_text(anime_id)
-    for item in results:
-        candidates = [item, *(item.get("variants") or [])]
-        for candidate in candidates:
-            candidate_id = candidate.get("id") or candidate.get("default_anime_id") or ""
-            if not candidate_id:
-                continue
-            if wanted_dub != _is_dubbed(candidate.get("title") or "", candidate_id):
-                continue
-            candidate_norm = _normalize_text(candidate_id)
-            if candidate_norm and (
-                candidate_norm in normalized_original
-                or _normalize_text(query) in candidate_norm
-                or candidate_norm in _normalize_text(query)
-            ):
-                return candidate_id
+    desired_number = ""
+    numbers = re.findall(r"(?:^|-)(\d+)(?=-|$)", _normalize_anime_id(anime_id))
+    if numbers:
+        desired_number = numbers[-1]
+    first_candidate = ""
+    for query in queries:
+        try:
+            results = await search_anime(query, limit=12)
+        except Exception:
+            continue
 
-    for item in results:
-        candidate_id = item.get("default_anime_id") or item.get("id") or ""
-        if candidate_id:
-            return candidate_id
+        normalized_query = _normalize_text(query)
+        if desired_number:
+            for item in results:
+                candidates = [item, *(item.get("variants") or [])]
+                for candidate in candidates:
+                    candidate_id = candidate.get("id") or candidate.get("default_anime_id") or ""
+                    if not candidate_id:
+                        continue
+                    if wanted_dub != _is_dubbed(candidate.get("title") or "", candidate_id):
+                        continue
+                    if re.search(rf"-{re.escape(desired_number)}(?:-(?:dublado|legendado|dub|sub))?$", candidate_id, re.I):
+                        return candidate_id
+
+        for item in results:
+            candidates = [item, *(item.get("variants") or [])]
+            for candidate in candidates:
+                candidate_id = candidate.get("id") or candidate.get("default_anime_id") or ""
+                if not candidate_id:
+                    continue
+                if not first_candidate:
+                    first_candidate = candidate_id
+                if wanted_dub != _is_dubbed(candidate.get("title") or "", candidate_id):
+                    continue
+                candidate_norm = _normalize_text(candidate_id)
+                if candidate_norm and (
+                    candidate_norm in normalized_original
+                    or normalized_query in candidate_norm
+                    or candidate_norm in normalized_query
+                ):
+                    return candidate_id
+
+        for item in results:
+            candidate_id = item.get("default_anime_id") or item.get("id") or ""
+            if candidate_id and not first_candidate:
+                first_candidate = candidate_id
+    if first_candidate:
+        return first_candidate
     return ""
 
 
@@ -734,11 +771,10 @@ def _parse_genres(soup: BeautifulSoup) -> list[str]:
 
 def _parse_episodes_from_detail(soup: BeautifulSoup, anime_id: str) -> list[dict]:
     by_episode = {}
-    episode_slug_prefix = re.sub(r"-todos-os-episodios$", "", anime_id, flags=re.I)
     for anchor in soup.select("a[href*='/episodio/']"):
         href = urljoin(BASE_URL, anchor.get("href") or "")
         slug = _slug_from_url(href)
-        if anime_id not in slug and episode_slug_prefix not in slug:
+        if not slug:
             continue
         li = anchor.find_parent("li")
         season = 1
@@ -1049,6 +1085,8 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
 
 def invalidate_episode_caches(anime_id: str, episode: str) -> None:
     anime_id = _normalize_anime_id(anime_id)
+    _DETAILS_CACHE.pop(anime_id, None)
+    _EPISODES_CACHE.pop(anime_id, None)
     season, episode_number = _parse_episode_ref(episode)
     prefix = f"{anime_id}|{season}|{episode_number}|"
     for key in list(_PLAYER_CACHE.keys()):
