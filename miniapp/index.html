@@ -567,16 +567,16 @@
       </article>`;
     }
 
-    async function openPlayer(animeId, episode){
+    async function openPlayer(animeId, episode, refresh=false){
       if(!animeId||!episode) return;
       history.replaceState(null,"",`#watch/${animeId}/${episode}`); loading("Preparando player");
       try{
         if(!currentAnime || currentAnime.id !== animeId){ const d=await api(`/api/anime/${encodeURIComponent(animeId)}`); currentAnime=normalizeAnime(d.item||{}); currentEpisodes=normalizeEpisodes(d.episodes||[]); }
         const ep = currentEpisodes.find(e=>epKey(e)===episode || String(e.episode_number)===String(episode)) || {episode,title:""};
-        const payload = await api(`/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=HD`, {noCache:true, timeout:45000});
+        const payload = await api(`/api/anime/${encodeURIComponent(animeId)}/episode/${encodeURIComponent(episode)}?quality=HD${refresh?"&refresh=1":""}`, {noCache:true, timeout:45000});
         const item = payload.item || payload;
         setWatched(animeId,ep,true); saveHistory(currentAnime,ep,item); renderPlayer(item,ep);
-      }catch(err){ console.error(err); mount(errorBox("Episódio indisponível","Não foi possível carregar o player agora.",`<button class="btn primary" onclick="openPlayer('${esc(animeId)}','${esc(episode)}')">Tentar novamente</button><button class="btn ghost" onclick="openAnime('${esc(animeId)}')">Voltar</button>`)); }
+      }catch(err){ console.error(err); mount(errorBox("Episódio indisponível","Não foi possível carregar o player agora.",`<button class="btn primary" onclick="openPlayer('${esc(animeId)}','${esc(episode)}',true)">Tentar novamente</button><button class="btn ghost" onclick="openAnime('${esc(animeId)}')">Voltar</button>`)); }
     }
     function renderPlayer(item,ep){
       const video = item.video || "";
@@ -625,7 +625,7 @@
         }
       }
       const last = window._lastPlayer || {};
-      const actions = `<button class="btn primary small" onclick="openPlayer('${esc(last.animeId||currentAnime?.id||"")}','${esc(last.episode||"")}')">Tentar novamente</button>${last.direct?`<button class="btn ghost small" onclick="window.open('${esc(last.direct)}','_blank')">Abrir fonte</button>`:""}`;
+      const actions = `<button class="btn primary small" onclick="openPlayer('${esc(last.animeId||currentAnime?.id||"")}','${esc(last.episode||"")}',true)">Tentar novamente</button>${last.direct?`<button class="btn ghost small" onclick="window.open('${esc(last.direct)}','_blank')">Abrir fonte</button>`:""}`;
       document.getElementById("videoWrap").innerHTML = playerError("Falha ao carregar vídeo","A fonte respondeu, mas o WebView não conseguiu iniciar esse player.",actions);
     }
     function sideEpisode(e,active){ return `<button class="side-ep ${epKey(e)===epKey(active)?"active":""}" onclick="openPlayer('${esc(currentAnime.id)}','${esc(epKey(e))}')"><span class="side-thumb">${thumbImg(e,currentAnime,e.title || currentAnime.title)}</span><span class="side-copy"><span class="side-title">${esc(epLabel(e))}</span><span class="side-name">${esc(e.title||"")}</span></span></button>`; }
