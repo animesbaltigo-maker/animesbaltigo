@@ -35,6 +35,8 @@ from handlers.broadcast import (
     broadcast_message_router,
     broadcast_public_callbacks,
 )
+from handlers.control_block import control_block_callback_guard, control_block_message_guard
+from services.control_agent import start_control_agent, stop_control_agent
 from handlers.referral import indicacoes, referral_button
 from handlers.referral_admin import refstats, auto_referral_check_job
 from services.referral_db import init_referral_db
@@ -57,12 +59,14 @@ init_subscriptions_db()
 init_affiliate_db()
 
 async def post_init(app: Application):
+    await start_control_agent(app)
     await start_telethon_uploader()
     await start_video_download_workers(app)
     asyncio.create_task(preload_popular_cache())
 
 
 async def post_shutdown(app: Application):
+    await stop_control_agent(app)
     await stop_video_download_workers(app)
     await stop_telethon_uploader()
     await close_http_client()
@@ -110,6 +114,9 @@ def main():
     )
 
     # Comandos principais
+    app.add_handler(CallbackQueryHandler(control_block_callback_guard, pattern=r".*"), group=-100)
+    app.add_handler(MessageHandler(filters.ALL, control_block_message_guard), group=-100)
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("testminiapp", testminiapp))
     app.add_handler(CommandHandler("buscar", buscar))

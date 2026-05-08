@@ -7,3 +7,4 @@ beautifulsoup4==4.12.3
 lxml
 telethon
 python-dotenv
+aiohttp>=3.9,<4.0
