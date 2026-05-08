@@ -48,6 +48,7 @@ from services.metrics import init_metrics_db
 from services.animefire_client import preload_popular_cache
 from handlers.inline import inline_query
 from handlers.testminiapp import testminiapp
+from handlers.bots_showcase import bots_showcase
 from handlers.tracemoe import traceme, tracequota, trace_photo_handler
 
 
@@ -119,6 +120,8 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("testminiapp", testminiapp))
+    app.add_handler(CommandHandler("bots", bots_showcase))
+    app.add_handler(CommandHandler("vitrine", bots_showcase))
     app.add_handler(CommandHandler("buscar", buscar))
     app.add_handler(CommandHandler("ajuda", ajuda))
     app.add_handler(CommandHandler("infoanime", infoanime))

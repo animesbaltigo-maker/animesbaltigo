@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Vitrine Baltigo</title>
+  <meta name="theme-color" content="#050506" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #050506;
+      --panel: #0d0d10;
+      --panel-2: #151519;
+      --line: #24242a;
+      --text: #ffffff;
+      --soft: #c9c9d2;
+      --muted: #8b8b97;
+      --brand: #ff3b30;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html { background: var(--bg); color-scheme: dark; }
+    body {
+      min-height: 100dvh;
+      background:
+        radial-gradient(circle at 15% 0%, rgba(255, 59, 48, .18), transparent 28%),
+        radial-gradient(circle at 90% 10%, rgba(255, 192, 64, .09), transparent 24%),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a, button { color: inherit; font: inherit; }
+    button { border: 0; cursor: pointer; }
+    img { display: block; width: 100%; }
+
+    .app {
+      width: min(100% - 22px, 760px);
+      margin: 0 auto;
+      padding: calc(18px + var(--safe-top)) 0 calc(22px + var(--safe-bottom));
+    }
+
+    .topbar {
+      min-height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .logo {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #ff4c39, #b91513);
+      box-shadow: 0 14px 38px rgba(255, 59, 48, .26);
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .brand h1 {
+      font-size: clamp(22px, 6vw, 34px);
+      line-height: 1.03;
+      letter-spacing: 0;
+      font-weight: 900;
+    }
+
+    .brand p {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .qg {
+      min-height: 40px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.1);
+      background: rgba(255,255,255,.05);
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #f2f2f5;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
+
+    .card {
+      min-width: 0;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.08);
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.025));
+      box-shadow: 0 18px 50px rgba(0,0,0,.28);
+      text-align: left;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    }
+
+    .card:active { transform: scale(.985); }
+    .card:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+
+    .visual {
+      position: relative;
+      aspect-ratio: 16 / 10;
+      background: #121216;
+      overflow: hidden;
+    }
+
+    .visual img {
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .visual::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(0deg, rgba(0,0,0,.44), transparent 62%);
+      pointer-events: none;
+    }
+
+    .body {
+      padding: 14px;
+      min-height: 162px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 18px;
+      line-height: 1.12;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .tag {
+      width: 28px;
+      height: 28px;
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      background: rgba(255,59,48,.15);
+      color: #ffb6ae;
+      font-size: 15px;
+    }
+
+    .desc {
+      color: var(--soft);
+      font-size: 13.5px;
+      line-height: 1.45;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .open {
+      margin-top: auto;
+      min-height: 36px;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: var(--brand);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .footer {
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    @media (min-width: 720px) {
+      .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .card:hover { transform: translateY(-3px); border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.065); }
+    }
+
+    @media (max-width: 520px) {
+      .app { width: calc(100% - 18px); }
+      .topbar { align-items: flex-start; }
+      .qg { display: none; }
+      .grid { gap: 12px; }
+      .card { border-radius: 16px; }
+      .body { min-height: 172px; padding: 12px; }
+      .name { font-size: 16px; }
+      .desc { font-size: 13px; -webkit-line-clamp: 4; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">B</div>
+        <div>
+          <h1>Vitrine Baltigo</h1>
+          <p>Todos os bots em um só lugar</p>
+        </div>
+      </div>
+      <a class="qg" href="https://t.me/QG_BALTIGO" data-link="https://t.me/QG_BALTIGO">⚔️ QG</a>
+    </header>
+
+    <section class="grid" id="botsGrid" aria-label="Bots Baltigo"></section>
+    <p class="footer">Baltigo • Telegram bots</p>
+  </main>
+
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    try {
+      tg?.ready();
+      tg?.expand();
+      tg?.setHeaderColor?.("#050506");
+      tg?.setBackgroundColor?.("#050506");
+    } catch (error) {}
+
+    function banner(title, icon, from, to, accent) {
+      const safeTitle = title.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+              <stop stop-color="${from}"/><stop offset="1" stop-color="${to}"/>
+            </linearGradient>
+            <radialGradient id="r" cx=".72" cy=".16" r=".62">
+              <stop stop-color="${accent}" stop-opacity=".95"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/>
+            </radialGradient>
+            <pattern id="p" width="46" height="46" patternUnits="userSpaceOnUse" patternTransform="rotate(18)">
+              <path d="M0 23H46" stroke="rgba(255,255,255,.08)" stroke-width="2"/>
+            </pattern>
+          </defs>
+          <rect width="640" height="400" fill="url(#g)"/>
+          <rect width="640" height="400" fill="url(#r)"/>
+          <rect width="640" height="400" fill="url(#p)"/>
+          <circle cx="104" cy="108" r="58" fill="rgba(255,255,255,.16)"/>
+          <text x="104" y="128" text-anchor="middle" font-size="64" font-family="Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji">${icon}</text>
+          <text x="56" y="300" fill="white" font-size="46" font-family="Inter, Arial, sans-serif" font-weight="900">${safeTitle}</text>
+          <text x="58" y="344" fill="rgba(255,255,255,.72)" font-size="22" font-family="Inter, Arial, sans-serif" font-weight="800">BALTIGO</text>
+        </svg>`;
+      return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    }
+
+    const bots = [
+      {
+        name: "Animes Baltigo",
+        icon: "🍥",
+        url: "https://t.me/AnimesBaltigo_Bot",
+        desc: "Animes, episódios, lista completa e download offline quando disponível.",
+        image: banner("Animes", "🍥", "#24101c", "#b31924", "#ffb238")
+      },
+      {
+        name: "Mangás Baltigo",
+        icon: "📘",
+        url: "https://t.me/MangasBaltigo_Bot",
+        desc: "Mangás, manhwas e manhuas com leitura pelo MiniApp.",
+        image: banner("Mangás", "📘", "#101827", "#235a8f", "#7bd5ff")
+      },
+      {
+        name: "HQ Baltigo",
+        icon: "📚",
+        url: "https://t.me/HQBaltigoBot",
+        desc: "HQs, quadrinhos, webtoons, favoritos e histórico de leitura.",
+        image: banner("HQs", "📚", "#151116", "#6c1f46", "#ff79b8")
+      },
+      {
+        name: "Novels Baltigo",
+        icon: "📖",
+        url: "https://t.me/NovelsBrasil_Bot",
+        desc: "Web novels e light novels com capítulos para ler pelo WebApp.",
+        image: banner("Novels", "📖", "#15130d", "#7b4b19", "#ffd166")
+      },
+      {
+        name: "Series Brazil Bot",
+        icon: "🍿",
+        url: "https://t.me/SeriesBrazilBot",
+        desc: "Filmes e séries para buscar, explorar e abrir direto pelo Telegram.",
+        image: banner("Séries", "🍿", "#101014", "#3d2b84", "#b6a7ff")
+      },
+      {
+        name: "Rádio Animes",
+        icon: "🎶",
+        url: "https://t.me/RadioAnimes_Bot",
+        desc: "Openings, endings e temas de anime para ouvir no bot.",
+        image: banner("Rádio", "🎶", "#10151b", "#12615b", "#76ffe8")
+      },
+      {
+        name: "Baixa Aqui",
+        icon: "📥",
+        url: "https://t.me/Baixa_aquibot",
+        desc: "Baixe links, envie mídias, organize arquivos e acompanhe tarefas.",
+        image: banner("Baixa", "📥", "#141414", "#33513f", "#92ffa9")
+      },
+      {
+        name: "QG Baltigo",
+        icon: "⚔️",
+        url: "https://t.me/SourceBaltigo_Bot",
+        desc: "Central da comunidade, cards, jogos e ferramentas do QG.",
+        image: banner("QG", "⚔️", "#15110f", "#7c2416", "#ff8f63")
+      }
+    ];
+
+    const grid = document.getElementById("botsGrid");
+
+    function openBot(url) {
+      try {
+        if (tg?.openTelegramLink) {
+          tg.openTelegramLink(url);
+          return;
+        }
+      } catch (error) {}
+      window.open(url, "_blank", "noopener");
+    }
+
+    grid.innerHTML = bots.map((bot, index) => `
+      <button class="card" type="button" data-index="${index}" aria-label="Abrir ${bot.name}">
+        <div class="visual"><img src="${bot.image}" alt="" loading="lazy"></div>
+        <div class="body">
+          <h2 class="name"><span class="tag">${bot.icon}</span><span>${bot.name}</span></h2>
+          <p class="desc">${bot.desc}</p>
+          <span class="open">Abrir bot</span>
+        </div>
+      </button>
+    `).join("");
+
+    grid.addEventListener("click", (event) => {
+      const card = event.target.closest(".card");
+      if (!card) return;
+      const bot = bots[Number(card.dataset.index)];
+      if (bot) openBot(bot.url);
+    });
+
+    document.querySelectorAll("[data-link]").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        openBot(link.dataset.link);
+      });
+    });
+  </script>
+</body>
+</html>

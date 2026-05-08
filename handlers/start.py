@@ -12,6 +12,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from config import BOT_BRAND, BOT_USERNAME, DATA_DIR, HTTP_TIMEOUT
+from handlers.bots_showcase import bots_webapp_url
 from services.animefire_client import get_anime_details, get_episode_player, search_anime
 from services.metrics import is_episode_watched
 from services.referral_db import (
@@ -1261,6 +1262,12 @@ async def start(update, context):
                     InlineKeyboardButton(
                         "🔎 Buscar anime",
                         switch_inline_query_current_chat=""
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🧭 Bots Baltigo",
+                        web_app=WebAppInfo(url=bots_webapp_url())
                     )
                 ],
                 [
