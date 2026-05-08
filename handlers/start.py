@@ -1250,7 +1250,6 @@ async def start(update, context):
             text = (
                 f"🍥 <b>Bem-vindo ao Animes Baltigo Bot, {first_name}!</b>\n\n"
                 "Aqui você pode encontrar seus animes favoritos, abrir episódios rapidamente e assistir sem sair do bot.\n\n"
-                "<b>✨ O que você pode fazer aqui:</b>\n\n"
                 "<blockquote>• 🔎 Busque qualquer anime\n"
                 "• 📺 Navegue pela lista de episódios\n"
                 "• 📥 Baixe para assistir offline quando disponível</blockquote>\n\n"
