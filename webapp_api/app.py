@@ -1481,10 +1481,18 @@ async def api_episode(
         invalidate_episode_caches(anime_id, episode)
 
     async def factory():
-        item = await get_episode_player(anime_id, episode, quality)
+        try:
+            item = await get_episode_player(anime_id, episode, quality)
+        except Exception as error:
+            print(f"[API_EPISODE] primary_error anime={anime_id} episode={episode} quality={quality}: {error!r}")
+            fallback_quality = "SD" if quality == "HD" else "HD"
+            try:
+                item = await get_episode_player(anime_id, episode, fallback_quality)
+            except Exception as fallback_error:
+                print(f"[API_EPISODE] fallback_error anime={anime_id} episode={episode} quality={fallback_quality}: {fallback_error!r}")
+                return None
         if not item:
             return None
-
         payload = _shape_episode_payload(anime_id, episode, quality, item)
 
         # Automatic HD → SD fallback when the primary quality has no video.
@@ -1508,7 +1516,7 @@ async def api_episode(
 
     payload = await _cached(cache_key, EPISODE_TTL, factory)
     if not payload:
-        raise HTTPException(status_code=404, detail="Episódio não encontrado")
+        raise HTTPException(status_code=502, detail="Nao foi possivel obter um link de video para esse episodio agora.")
 
     return {"ok": True, "item": payload}
 
@@ -1919,6 +1927,9 @@ async def proxy_stream(
     if parsed_video_url.netloc.lower().endswith("aniplay.online"):
         outgoing_headers["Referer"] = "https://aniplay.online/"
         outgoing_headers["Origin"] = "https://aniplay.online"
+    elif parsed_video_url.netloc.lower().endswith("mangas.cloud"):
+        outgoing_headers["Referer"] = "https://animeplay.cloud/"
+        outgoing_headers.pop("Origin", None)
 
     if range_header:
         outgoing_headers["Range"] = range_header

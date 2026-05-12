@@ -3,7 +3,7 @@ import html
 import json
 import re
 import time
-from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, quote_plus, unquote, urljoin, urlsplit, urlunsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -977,6 +977,192 @@ def _extract_direct_url(embed_url: str) -> str:
     return ""
 
 
+def _is_direct_video_url(url: str) -> bool:
+    return bool(re.search(r"\.(?:mp4|m3u8|webm)(?:\?|$)", str(url or ""), re.I))
+
+
+def _make_absolute_url(url: str, base_url: str) -> str:
+    url = html.unescape(str(url or "")).replace("\\/", "/").strip()
+    if not url:
+        return ""
+    if url.startswith("//"):
+        return "https:" + url
+    return urljoin(base_url, url)
+
+
+def _normalize_media_url(url: str) -> str:
+    url = html.unescape(str(url or "")).replace("\\/", "/").strip()
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+        path = quote(unquote(parts.path), safe="/%:@")
+        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+    except Exception:
+        return url.replace(" ", "%20")
+
+
+def _extract_embed_url(embed_url: str) -> str:
+    embed_url = html.unescape(str(embed_url or "")).replace("\\/", "/").strip()
+    if not embed_url:
+        return ""
+    direct_url = _extract_direct_url(embed_url)
+    if direct_url:
+        return direct_url
+    if embed_url.startswith(("http://", "https://", "//")):
+        return "https:" + embed_url if embed_url.startswith("//") else embed_url
+    soup = BeautifulSoup(embed_url, "html.parser")
+    iframe = soup.find("iframe")
+    if iframe:
+        return _make_absolute_url(iframe.get("src") or "", BASE_URL)
+    return ""
+
+
+def _extract_direct_video_urls(page_html: str, base_url: str = "") -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def push(value: str):
+        value = html.unescape(str(value or "")).replace("\\/", "/").strip()
+        if not value:
+            return
+        if base_url:
+            value = _make_absolute_url(value, base_url)
+        value = _normalize_media_url(value)
+        if not value.startswith(("http://", "https://")):
+            return
+        if not _is_direct_video_url(value):
+            return
+        if value in seen:
+            return
+        seen.add(value)
+        candidates.append(value)
+
+    patterns = [
+        r'https?://[^\s"\'<>\\]+\.m3u8(?:\?[^\s"\'<>\\]*)?',
+        r'https?://[^\s"\'<>\\]+\.mp4(?:\?[^\s"\'<>\\]*)?',
+        r'https?:\\/\\/[^\s"\'<>]+\.m3u8(?:\?[^\s"\'<>]*)?',
+        r'https?:\\/\\/[^\s"\'<>]+\.mp4(?:\?[^\s"\'<>]*)?',
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, page_html or "", flags=re.I):
+            push(match)
+
+    soup = BeautifulSoup(page_html or "", "html.parser")
+    for tag in soup.find_all(["video", "source"]):
+        for attr in ("src", "data-src", "data-video-src"):
+            push(tag.get(attr) or "")
+
+    for pattern in (
+        r'''["'](?:file|src|video|stream|url|hls|playlist)["']\s*:\s*["']([^"']+)["']''',
+        r"""(?:file|src|video|stream|url|hls|playlist)\s*=\s*["']([^"']+)["']""",
+    ):
+        for match in re.findall(pattern, page_html or "", flags=re.I):
+            push(match)
+
+    return candidates
+
+
+def _extract_iframe_sources(page_html: str, base_url: str = "") -> list[str]:
+    soup = BeautifulSoup(page_html or "", "html.parser")
+    results: list[str] = []
+    seen: set[str] = set()
+    for iframe in soup.find_all("iframe"):
+        src = _make_absolute_url(iframe.get("src") or "", base_url or BASE_URL)
+        if not src or src in seen:
+            continue
+        seen.add(src)
+        results.append(src)
+    return results
+
+
+async def _resolve_embed_to_direct_urls(url: str, referer: str = "", depth: int = 0, visited: set[str] | None = None) -> list[str]:
+    if not url or depth > 2:
+        return []
+    if visited is None:
+        visited = set()
+
+    url = _make_absolute_url(url, referer or BASE_URL)
+    if not url or url in visited:
+        return []
+    visited.add(url)
+
+    if _is_direct_video_url(url):
+        return [_normalize_media_url(url)]
+
+    try:
+        page_html = await _request_text(url, referer=referer or BASE_URL)
+    except Exception as error:
+        print(f"[ANIMEPLAY] embed_resolve_error={repr(error)} url={url}")
+        return []
+
+    direct_urls = _extract_direct_video_urls(page_html, base_url=url)
+    if direct_urls:
+        return direct_urls
+
+    for iframe_url in _extract_iframe_sources(page_html, base_url=url):
+        resolved = await _resolve_embed_to_direct_urls(
+            iframe_url,
+            referer=url,
+            depth=depth + 1,
+            visited=visited,
+        )
+        if resolved:
+            return resolved
+    return []
+
+
+def _quality_from_label_or_url(label: str, url: str) -> str:
+    value = f"{label or ''} {url or ''}".upper()
+    if "MOBILE" in value or "CELULAR" in value or "480" in value or "360" in value:
+        return "SD"
+    return "HD"
+
+
+async def _video_url_looks_playable(url: str, referer: str = "") -> bool:
+    url = _normalize_media_url(url)
+    if not _is_direct_video_url(url):
+        return False
+
+    headers = {
+        "User-Agent": _HTTP_HEADERS["User-Agent"],
+        "Accept": "*/*",
+        "Accept-Language": _HTTP_HEADERS["Accept-Language"],
+        "Referer": referer or BASE_URL,
+        "Range": "bytes=0-1",
+    }
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(12.0, connect=5.0)) as client:
+        for method in ("HEAD", "GET"):
+            try:
+                async with HTTP_SEMAPHORE:
+                    response = await client.request(method, url, headers=headers)
+                try:
+                    if response.status_code in (200, 206):
+                        content_type = (response.headers.get("content-type") or "").lower()
+                        if (
+                            "video" in content_type
+                            or "mpegurl" in content_type
+                            or "octet-stream" in content_type
+                            or url.lower().split("?", 1)[0].endswith((".mp4", ".m3u8", ".webm"))
+                        ):
+                            return True
+                    if response.status_code in (403, 405) and method == "HEAD":
+                        continue
+                    if response.status_code >= 500:
+                        print(f"[ANIMEPLAY] skipping_dead_video status={response.status_code} url={url}")
+                        return False
+                finally:
+                    await response.aclose()
+            except Exception as error:
+                print(f"[ANIMEPLAY] video_probe_error={repr(error)} url={url}")
+                if method == "HEAD":
+                    continue
+                return False
+
+    return False
+
+
 async def _resolve_player_options(post_id: str, episode_url: str, options: list[dict]) -> dict[str, str]:
     videos = {}
     ordered_options = sorted(options, key=lambda item: 0 if int(item.get("nume") or 0) == 2 else int(item.get("nume") or 99))
@@ -996,17 +1182,23 @@ async def _resolve_player_options(post_id: str, episode_url: str, options: list[
             print(f"[ANIMEPLAY] player_option_error={repr(error)}")
             continue
 
-        direct_url = _extract_direct_url(data.get("embed_url") or "")
-        if not direct_url:
-            continue
-
         label = str(option.get("label") or "").upper()
-        quality = "HD"
-        if "MOBILE" in label or "CELULAR" in label:
-            quality = "SD"
-        elif "FULL" in label or "FHD" in label:
-            quality = "HD"
-        videos.setdefault(quality, direct_url)
+        embed_url = _extract_embed_url(data.get("embed_url") or "")
+        direct_urls = []
+        if _is_direct_video_url(embed_url):
+            direct_urls = [embed_url]
+        elif embed_url:
+            direct_urls = await _resolve_embed_to_direct_urls(embed_url, referer=episode_url)
+
+        if not direct_urls:
+            direct_urls = _extract_direct_video_urls(json.dumps(data, ensure_ascii=False), base_url=episode_url)
+
+        for direct_url in direct_urls:
+            direct_url = _normalize_media_url(direct_url)
+            if not await _video_url_looks_playable(direct_url, referer=episode_url):
+                continue
+            quality = _quality_from_label_or_url(label, direct_url)
+            videos.setdefault(quality, direct_url)
 
     return videos
 
