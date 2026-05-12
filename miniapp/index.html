@@ -51,13 +51,13 @@
     .mobile-tabs .rail{display:flex;gap:8px;overflow:auto;scrollbar-width:none}.mobile-tabs .rail::-webkit-scrollbar{display:none}
     .tab-btn{height:42px;min-width:42px;border-radius:999px;padding:0 13px;background:#101012;border:1px solid #17171a;display:flex;align-items:center;gap:8px;color:#d9d9df;font-weight:800;white-space:nowrap}
     .tab-btn.active{border-color:rgba(255,65,46,.6);color:#fff;background:rgba(255,65,46,.12)}
-    .bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:70;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:3px;padding:7px 8px calc(7px + var(--safe-bottom));background:rgba(6,6,7,.94);backdrop-filter:blur(16px);border-top:1px solid #19191d}
+    .bottom-nav{position:fixed!important;left:0!important;right:0!important;bottom:0!important;z-index:1000!important;display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr));gap:3px;padding:7px 8px calc(7px + var(--safe-bottom));background:rgba(6,6,7,.96);backdrop-filter:blur(16px);border-top:1px solid #19191d;transform:translateZ(0)}
     .bottom-nav button{min-width:0;min-height:48px;border-radius:11px;color:#bdbdc5;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:10px;font-weight:800;overflow:hidden}
     .bottom-nav button span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .bottom-nav i{font-size:16px;line-height:1}
     .bottom-nav button.active{color:#fff;background:rgba(255,65,46,.14)}
 
-    .page{padding:18px 0 calc(84px + var(--safe-bottom));min-height:calc(100dvh - var(--header))}
+    .page{padding:18px 0 calc(96px + var(--safe-bottom));min-height:calc(100dvh - var(--header))}
     .page.player-page{padding-top:8px}
     .section{margin-top:34px}.section:first-child{margin-top:0}
     .section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
@@ -140,7 +140,7 @@
       .detail-top{grid-template-columns:190px 1fr;gap:22px}.stats{grid-template-columns:repeat(3,1fr)}.ep-toolbar{grid-template-columns:1fr auto}.ep-toolbar .mark-btn{display:none}.ep-layout{grid-template-columns:1fr;gap:16px}.seasons{display:flex;overflow:auto;border-right:0;border-bottom:1px solid #17171a}.season-btn{width:auto;min-width:118px;padding:0 16px;text-align:center}.season-btn.active::after{left:18px;right:18px;top:auto;bottom:-1px;width:auto;height:3px}.player-grid{grid-template-columns:1fr}.side-list{max-height:440px}
     }
     @media (max-width:620px){
-      body{font-size:13px}.shell{width:calc(100% - 20px)}.page{padding-top:10px;padding-bottom:calc(84px + var(--safe-bottom))}
+      body{font-size:13px}.shell{width:calc(100% - 20px)}.page{padding-top:10px;padding-bottom:calc(96px + var(--safe-bottom))}
       .brand-mark{width:42px;height:42px}.brand-name{font-size:22px}.brand-sub{font-size:10px;letter-spacing:.24em}.mobile-tabs{display:none}.card-play{display:none}
       .hero{height:360px;border-radius:9px}.hero-body{left:16px;right:58px;bottom:52px;width:auto}.hero-title{font-size:clamp(22px,7.2vw,28px);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.kicker{font-size:12px}.hero-controls{right:8px}.hero-arrow{width:42px;height:42px}.hero-meta{display:none}
       .grid{grid-template-columns:repeat(2,calc((100% - 12px)/2));gap:12px;overflow:hidden}.grid.wide{grid-template-columns:repeat(2,calc((100% - 12px)/2))}.rail-cards{grid-auto-columns:82%;gap:12px}.section-title{font-size:19px}.card{width:100%;min-width:0}.card-title{font-size:13px}
@@ -181,7 +181,14 @@
   </header>
   <div class="mobile-tabs"><div class="shell rail" id="mobileTabs"></div></div>
   <main id="app"></main>
-  <nav class="bottom-nav" id="bottomNav" aria-label="Navegação mobile"></nav>
+  <nav class="bottom-nav" id="bottomNav" aria-label="Navegação mobile">
+    <button data-go="home" aria-label="Início" title="Início"><i class="fa-solid fa-house"></i><span>Início</span></button>
+    <button data-go="dublados" aria-label="Dublados" title="Dublados"><i class="fa-solid fa-play"></i><span>Dublados</span></button>
+    <button data-go="legendados" aria-label="Legendas" title="Legendas"><i class="fa-solid fa-closed-captioning"></i><span>Legendas</span></button>
+    <button data-go="top" aria-label="Em alta" title="Em alta"><i class="fa-solid fa-chart-line"></i><span>Em alta</span></button>
+    <button data-go="history" aria-label="Histórico" title="Histórico"><i class="fa-solid fa-clock-rotate-left"></i><span>Histórico</span></button>
+    <button data-go="favorites" aria-label="Favoritos" title="Favoritos"><i class="fa-solid fa-heart"></i><span>Favoritos</span></button>
+  </nav>
 
   <script src="./animations.js"></script>
   <script>
