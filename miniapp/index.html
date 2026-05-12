@@ -6,13 +6,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Animes Baltigo</title>
   <meta name="theme-color" content="#000000" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
   <style>
     :root{
       --bg:#000;--panel:#070707;--panel2:#101012;--panel3:#171719;--line:#1d1d20;--line2:#29292d;
       --text:#fff;--text2:#c9c9d1;--muted:#8b8b94;--muted2:#5f5f67;--brand:#ff412e;--brand2:#e6251c;
       --green:#11964b;--amber:#f5b82e;--danger:#ff4238;--max:1250px;--radius:8px;--header:92px;
-      --safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px);
+      --tg-safe-area-inset-top:0px;--tg-safe-area-inset-right:0px;--tg-safe-area-inset-bottom:0px;--tg-safe-area-inset-left:0px;
+      --tg-content-safe-area-inset-top:0px;--tg-content-safe-area-inset-right:0px;--tg-content-safe-area-inset-bottom:0px;--tg-content-safe-area-inset-left:0px;
+      --safe-top:max(env(safe-area-inset-top,0px),var(--tg-safe-area-inset-top),var(--tg-content-safe-area-inset-top));--safe-bottom:max(env(safe-area-inset-bottom,0px),var(--tg-safe-area-inset-bottom),var(--tg-content-safe-area-inset-bottom));
       --shadow:0 22px 80px rgba(0,0,0,.62);
     }
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -171,6 +174,61 @@
   <nav class="bottom-nav" id="bottomNav" aria-label="Navegação mobile"></nav>
 
   <script>
+    const TG_FULLSCREEN_VERSION = "8.0";
+    const tgApp = window.Telegram?.WebApp || null;
+    const tgState = { fullscreenError: "" };
+
+    function initTelegramWebApp(){
+      const tg = tgApp;
+      if(!tg) return;
+      document.body.classList.add("telegram");
+      try{ tg.ready?.(); }catch(e){}
+      try{ tg.expand?.(); }catch(e){}
+      try{ tg.setHeaderColor?.("#000000"); }catch(e){}
+      try{ tg.setBackgroundColor?.("#000000"); }catch(e){}
+      try{ tg.setBottomBarColor?.("#000000"); }catch(e){}
+      applyTelegramSafeArea();
+      syncTelegramFullscreenClass();
+      const on = (event, handler) => { try{ tg.onEvent?.(event, handler); }catch(e){} };
+      on("viewportChanged", e => { if(e?.isStateStable !== false) { try{ tg.expand?.(); }catch(err){} } });
+      on("safeAreaChanged", applyTelegramSafeArea);
+      on("contentSafeAreaChanged", applyTelegramSafeArea);
+      on("fullscreenChanged", () => { tgState.fullscreenError = ""; syncTelegramFullscreenClass(); applyTelegramSafeArea(); });
+      on("fullscreenFailed", e => { tgState.fullscreenError = e?.error || "FAILED"; syncTelegramFullscreenClass(); });
+      on("activated", () => { try{ tg.expand?.(); }catch(e){} requestTelegramFullscreen({silent:true}); });
+      setTimeout(() => requestTelegramFullscreen({silent:true}), 250);
+    }
+    function px(value){ return Number.isFinite(+value) ? Math.max(0, +value) + "px" : "0px"; }
+    function setInsetVars(prefix, inset){
+      const root = document.documentElement;
+      ["top","right","bottom","left"].forEach(side => root.style.setProperty("--" + prefix + "-" + side, px(inset?.[side])));
+    }
+    function applyTelegramSafeArea(){
+      if(!tgApp) return;
+      setInsetVars("tg-safe-area-inset", tgApp.safeAreaInset);
+      setInsetVars("tg-content-safe-area-inset", tgApp.contentSafeAreaInset);
+    }
+    function syncTelegramFullscreenClass(){
+      document.body.classList.toggle("tg-fullscreen", !!tgApp?.isFullscreen);
+    }
+    function supportsTelegramFullscreen(){
+      return !!(tgApp?.requestFullscreen && tgApp?.isVersionAtLeast?.(TG_FULLSCREEN_VERSION));
+    }
+    function requestTelegramFullscreen({silent=false}={}){
+      if(!tgApp) return false;
+      try{ tgApp.expand?.(); }catch(e){}
+      if(!supportsTelegramFullscreen()){
+        if(!silent) tgState.fullscreenError = "UNSUPPORTED";
+        return false;
+      }
+      if(tgApp.isFullscreen){ syncTelegramFullscreenClass(); return true; }
+      try{ tgApp.requestFullscreen(); return true; }
+      catch(e){ if(!silent) tgState.fullscreenError = e?.message || "FAILED"; return false; }
+    }
+    function exitTelegramFullscreen(){
+      if(!tgApp?.exitFullscreen || !tgApp?.isFullscreen) return false;
+      try{ tgApp.exitFullscreen(); return true; }catch(e){ return false; }
+    }
     const API = "";
     const SOURCE_BASE = "https://animeplay.cloud";
     const CACHE_TTL = 5 * 60 * 1000;
@@ -593,12 +651,15 @@
       mount(`<div class="player-grid"><section><div class="watchbox"><div class="video-wrap" id="videoWrap">${player}</div></div><div class="player-info"><div class="actions"><button class="btn ghost small" onclick="openAnime('${esc(currentAnime.id)}')"><i class="fa-solid fa-angle-left"></i> Detalhes</button>${prev?`<button class="btn ghost small" onclick="openPlayer('${esc(currentAnime.id)}','${esc(epKey(prev))}')">Anterior</button>`:""}${next?`<button class="btn primary small" onclick="openPlayer('${esc(currentAnime.id)}','${esc(epKey(next))}')">Próximo episódio</button>`:""}</div><h1 class="player-title">${esc(currentAnime.title)}</h1><div class="player-sub">${esc(epLabel(ep))}${ep.title?" · "+esc(ep.title):""}${isHls?" · HLS":""}</div></div></section><aside class="side-list"><div class="side-head">Episódios</div>${currentEpisodes.map(e=>sideEpisode(e,ep)).join("")}</aside></div>`,"page player-page");
       document.getElementById("videoWrap")?.insertAdjacentHTML("beforeend", `<button class="fs-exit" onclick="exitForcedFullscreen()" aria-label="Sair da tela cheia"><i class="fa-solid fa-xmark"></i></button>`);
       document.querySelector(".player-info .actions")?.insertAdjacentHTML("afterbegin", `<button class="btn ghost small" onclick="enterFullscreen()"><i class="fa-solid fa-expand"></i> Tela cheia</button>`);
+      requestTelegramFullscreen({silent:true});
       const v=document.querySelector("video"); if(v){ v.ontimeupdate=()=>saveHistory(currentAnime,ep,item,Math.floor(v.currentTime||0),Math.floor(v.duration||0)); }
     }
     function playerError(t,m,actions=""){ return `<div class="empty" style="height:100%;display:grid;place-items:center"><div><h3>${esc(t)}</h3><p>${esc(m)}</p>${actions?`<div class="actions" style="justify-content:center">${actions}</div>`:""}</div></div>`; }
     async function enterFullscreen(){
       const wrap = document.getElementById("videoWrap");
       const media = wrap?.querySelector("video,iframe") || wrap;
+      requestTelegramFullscreen();
+      try{ tgApp?.disableVerticalSwipes?.(); }catch(e){}
       try{
         if(media?.requestFullscreen) return await media.requestFullscreen();
         if(media?.webkitRequestFullscreen) return media.webkitRequestFullscreen();
@@ -610,6 +671,8 @@
     }
     function exitForcedFullscreen(){
       document.body.classList.remove("force-fullscreen");
+      exitTelegramFullscreen();
+      try{ tgApp?.enableVerticalSwipes?.(); }catch(e){}
       try{ document.exitFullscreen?.(); }catch(e){}
       try{ screen.orientation?.unlock?.(); }catch(e){}
     }
@@ -668,7 +731,8 @@
       showHome();
     }
     window.addEventListener("hashchange",boot);
-    Object.assign(window,{showHome,openAnime,openPlayer,openSection,runSearch,showHistory,showFavorites,clearHistory,toggleFavoriteCurrent,toggleSynopsis,openTrailer,setHero,toggleEpisodeWatched,playerFailed,enterFullscreen,exitForcedFullscreen});
+    Object.assign(window,{showHome,openAnime,openPlayer,openSection,runSearch,showHistory,showFavorites,clearHistory,toggleFavoriteCurrent,toggleSynopsis,openTrailer,setHero,toggleEpisodeWatched,playerFailed,enterFullscreen,exitForcedFullscreen,requestTelegramFullscreen,exitTelegramFullscreen});
+    initTelegramWebApp();
     boot();
   </script>
 </body>
