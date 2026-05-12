@@ -176,7 +176,7 @@
   <script>
     const TG_FULLSCREEN_VERSION = "8.0";
     const tgApp = window.Telegram?.WebApp || null;
-    const tgState = { fullscreenError: "" };
+    const tgState = { fullscreenError: "", requestedByGesture: false };
 
     function initTelegramWebApp(){
       const tg = tgApp;
@@ -189,14 +189,26 @@
       try{ tg.setBottomBarColor?.("#000000"); }catch(e){}
       applyTelegramSafeArea();
       syncTelegramFullscreenClass();
+      bindTelegramFullscreenGesture();
       const on = (event, handler) => { try{ tg.onEvent?.(event, handler); }catch(e){} };
       on("viewportChanged", e => { if(e?.isStateStable !== false) { try{ tg.expand?.(); }catch(err){} } });
       on("safeAreaChanged", applyTelegramSafeArea);
       on("contentSafeAreaChanged", applyTelegramSafeArea);
       on("fullscreenChanged", () => { tgState.fullscreenError = ""; syncTelegramFullscreenClass(); applyTelegramSafeArea(); });
       on("fullscreenFailed", e => { tgState.fullscreenError = e?.error || "FAILED"; syncTelegramFullscreenClass(); });
-      on("activated", () => { try{ tg.expand?.(); }catch(e){} requestTelegramFullscreen({silent:true}); });
+      on("activated", () => { try{ tg.expand?.(); }catch(e){} bindTelegramFullscreenGesture(); requestTelegramFullscreen({silent:true}); });
       setTimeout(() => requestTelegramFullscreen({silent:true}), 250);
+    }
+    function bindTelegramFullscreenGesture(){
+      if(!tgApp || tgApp.isFullscreen || tgState.requestedByGesture) return;
+      const once = () => {
+        tgState.requestedByGesture = true;
+        requestTelegramFullscreen();
+        setTimeout(() => { if(!tgApp?.isFullscreen) tgState.requestedByGesture = false; }, 1200);
+      };
+      document.addEventListener("pointerdown", once, {once:true, passive:true, capture:true});
+      document.addEventListener("touchstart", once, {once:true, passive:true, capture:true});
+      document.addEventListener("click", once, {once:true, passive:true, capture:true});
     }
     function px(value){ return Number.isFinite(+value) ? Math.max(0, +value) + "px" : "0px"; }
     function setInsetVars(prefix, inset){
@@ -219,11 +231,21 @@
       try{ tgApp.expand?.(); }catch(e){}
       if(!supportsTelegramFullscreen()){
         if(!silent) tgState.fullscreenError = "UNSUPPORTED";
+        bindTelegramFullscreenGesture();
         return false;
       }
       if(tgApp.isFullscreen){ syncTelegramFullscreenClass(); return true; }
-      try{ tgApp.requestFullscreen(); return true; }
-      catch(e){ if(!silent) tgState.fullscreenError = e?.message || "FAILED"; return false; }
+      try{
+        tgState.fullscreenError = "";
+        tgApp.requestFullscreen();
+        setTimeout(syncTelegramFullscreenClass, 120);
+        return true;
+      }
+      catch(e){
+        if(!silent) tgState.fullscreenError = e?.message || "FAILED";
+        bindTelegramFullscreenGesture();
+        return false;
+      }
     }
     function exitTelegramFullscreen(){
       if(!tgApp?.exitFullscreen || !tgApp?.isFullscreen) return false;
@@ -652,6 +674,7 @@
       document.getElementById("videoWrap")?.insertAdjacentHTML("beforeend", `<button class="fs-exit" onclick="exitForcedFullscreen()" aria-label="Sair da tela cheia"><i class="fa-solid fa-xmark"></i></button>`);
       document.querySelector(".player-info .actions")?.insertAdjacentHTML("afterbegin", `<button class="btn ghost small" onclick="enterFullscreen()"><i class="fa-solid fa-expand"></i> Tela cheia</button>`);
       requestTelegramFullscreen({silent:true});
+      bindTelegramFullscreenGesture();
       const v=document.querySelector("video"); if(v){ v.ontimeupdate=()=>saveHistory(currentAnime,ep,item,Math.floor(v.currentTime||0),Math.floor(v.duration||0)); }
     }
     function playerError(t,m,actions=""){ return `<div class="empty" style="height:100%;display:grid;place-items:center"><div><h3>${esc(t)}</h3><p>${esc(m)}</p>${actions?`<div class="actions" style="justify-content:center">${actions}</div>`:""}</div></div>`; }
@@ -673,6 +696,7 @@
       document.body.classList.remove("force-fullscreen");
       exitTelegramFullscreen();
       try{ tgApp?.enableVerticalSwipes?.(); }catch(e){}
+      bindTelegramFullscreenGesture();
       try{ document.exitFullscreen?.(); }catch(e){}
       try{ screen.orientation?.unlock?.(); }catch(e){}
     }
