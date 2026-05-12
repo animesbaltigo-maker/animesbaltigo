@@ -262,6 +262,37 @@ def _episode_key(season: int, episode: int) -> str:
     return f"S{int(season)}E{int(episode)}"
 
 
+def _episode_lookup_keys(season: int, episode: int) -> list[str]:
+    season = int(season or 1)
+    episode = int(episode or 1)
+    return [
+        f"{season}:{episode}",
+        _episode_key(season, episode),
+        f"S{season:02d}E{episode:02d}",
+        f"T{season}E{episode}",
+        f"T{season:02d}E{episode:02d}",
+        str(episode),
+        f"{episode:02d}",
+    ]
+
+
+def _find_episode_index(items: list[dict], by_episode: dict, season: int, episode: int) -> int | None:
+    for key in _episode_lookup_keys(season, episode):
+        index = by_episode.get(key)
+        if index is not None:
+            return index
+
+    for index, item in enumerate(items):
+        try:
+            item_season = int(item.get("season") or 1)
+            item_episode = int(item.get("episode_number") or item.get("number") or 0)
+        except Exception:
+            continue
+        if item_season == int(season or 1) and item_episode == int(episode or 1):
+            return index
+    return None
+
+
 async def _request_text(url: str, *, referer: str | None = None, headers: dict | None = None) -> str:
     client = await get_http_client()
     merged_headers = dict(_HTTP_HEADERS)
@@ -944,11 +975,14 @@ async def get_episodes(anime_id: str, offset: int = 0, limit: int = 3000):
     page = items[offset: offset + limit] if limit else items[offset:]
     by_episode = {}
     for index, item in enumerate(items):
+        season = int(item.get("season") or 1)
+        episode_number = int(item.get("episode_number") or 0)
         keys = {
             str(item.get("episode") or ""),
             str(item.get("number") or ""),
-            str(item.get("episode_number") or ""),
-            f"{item.get('season') or 1}:{item.get('episode_number')}",
+            str(episode_number or ""),
+            f"{season}:{episode_number}",
+            *_episode_lookup_keys(season, episode_number),
         }
         for key in keys:
             if key:
@@ -1227,11 +1261,14 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
         payload = await get_episodes(anime_id, 0, 3000)
         items = payload.get("all_items") or []
         by_episode = payload.get("by_episode") or {}
-        index = by_episode.get(f"{season}:{episode_number}")
+        index = _find_episode_index(items, by_episode, season, episode_number)
         if index is None:
-            index = by_episode.get(_episode_key(season, episode_number))
-        if index is None:
-            index = by_episode.get(str(episode_number))
+            _DETAILS_CACHE.pop(anime_id, None)
+            _EPISODES_CACHE.pop(anime_id, None)
+            payload = await get_episodes(anime_id, 0, 3000)
+            items = payload.get("all_items") or []
+            by_episode = payload.get("by_episode") or {}
+            index = _find_episode_index(items, by_episode, season, episode_number)
         if index is None:
             raise RuntimeError(f"Episodio nao encontrado no AnimePlay: T{season}E{episode_number}")
 
