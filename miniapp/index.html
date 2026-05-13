@@ -32,12 +32,13 @@
     .hide{display:none!important}
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
-    .app-header{position:sticky;top:0;z-index:60;background:linear-gradient(180deg,#000 0%,rgba(0,0,0,.96) 84%,rgba(0,0,0,.72));padding-top:var(--safe-top);backdrop-filter:blur(14px)}
+    .app-header{position:sticky;top:0;z-index:60;background:linear-gradient(180deg,#000 0%,rgba(0,0,0,.96) 84%,rgba(0,0,0,.72));padding-top:var(--safe-top);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.10)}
     .nav{min-height:var(--header);display:grid;grid-template-columns:auto 1fr minmax(260px,360px) auto;align-items:center;gap:20px}
     .brand{display:flex;align-items:center;gap:12px;min-width:230px}
-    .logo-brand{min-width:150px;width:170px;height:42px;justify-content:center;opacity:0;transform:translateY(-5px) scale(.96);animation:logoReveal 560ms cubic-bezier(.22,1,.36,1) 120ms forwards}
-    .logo-crop{display:block;position:relative;aspect-ratio:3.58/1;overflow:hidden}
-    .logo-crop img{position:absolute;left:50%;top:54%;width:161%;max-width:none;height:auto;transform:translate(-50%,-54%);user-select:none;pointer-events:none}
+    .logo-brand{min-width:128px;width:146px;height:42px;justify-content:center;position:relative;padding-right:18px;opacity:0;transform:translateY(-5px) scale(.96);animation:logoReveal 560ms cubic-bezier(.22,1,.36,1) 120ms forwards}
+    .logo-brand::after{content:"";position:absolute;right:0;top:8px;bottom:8px;width:1px;background:rgba(255,255,255,.14)}
+    .logo-crop{display:block;position:relative;aspect-ratio:4.05/1;overflow:hidden}
+    .logo-crop img{position:absolute;left:50%;top:50%;width:100%;max-width:none;height:auto;transform:translate(-50%,-50%);user-select:none;pointer-events:none}
     .brand-logo-img{width:100%;height:auto;filter:none}
     .brand-mark{width:44px;height:44px;border-radius:12px;background:linear-gradient(145deg,#ff4b35,#bd130d);display:grid;place-items:center;font-weight:900;font-size:21px;box-shadow:0 12px 34px rgba(255,65,46,.23)}
     .brand-name{font-weight:900;text-transform:uppercase;font-size:25px;line-height:.95;letter-spacing:0}.brand-name span{color:var(--brand)}
@@ -46,7 +47,7 @@
     .round,.view-btn,.icon-btn{width:40px;height:40px;border-radius:999px;display:grid;place-items:center;background:#101012;border:1px solid #141416;color:#f7f7f9;transition:background .16s,border-color .16s,transform .16s}
     .round:hover,.view-btn:hover,.icon-btn:hover,.round.active,.view-btn.active{background:#1a1a1d;border-color:#303036}
     .round:active,.view-btn:active,.icon-btn:active{transform:scale(.94)}
-    .search{height:50px;border-radius:28px;background:#111113;border:1px solid #16161a;display:flex;align-items:center;gap:14px;padding:0 18px;color:var(--muted)}
+    .search{position:relative;height:50px;border-radius:28px;background:#111113;border:1px solid #16161a;display:flex;align-items:center;gap:14px;padding:0 18px;color:var(--muted)}
     .search input{width:100%;min-width:0;color:#fff;font-size:14px}.search input::placeholder{color:#777781}
     .search:focus-within{background:#151518;border-color:#303036}
     .top-action{height:36px;border-radius:999px;border:1px solid #202025;background:#0b0b0c;color:#d7d7dc;display:inline-flex;align-items:center;gap:8px;padding:0 13px;font-size:12px;font-weight:800;white-space:nowrap}
@@ -145,13 +146,13 @@
     @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
     @media (max-width:980px){
       :root{--header:84px}.shell{width:min(100% - 24px,var(--max))}
-      .nav{grid-template-columns:1fr;gap:10px;padding:12px 0}.brand{min-width:0}.logo-brand{justify-self:center;width:168px;height:auto}.nav-icons,.top-action{display:none}.search{height:48px}.mobile-tabs{display:block}
+      .nav{grid-template-columns:1fr;gap:18px;padding:12px 0 18px}.brand{min-width:0}.logo-brand{justify-self:center;width:130px;min-width:130px;height:38px;margin:0 auto 4px;padding-right:0}.logo-brand::after{left:50%;right:auto;top:auto;bottom:-11px;width:100vw;height:1px;transform:translateX(-50%);background:rgba(255,255,255,.13)}.nav-icons,.top-action{display:none}.search{height:48px}.search::after{content:"";position:absolute;left:50%;bottom:-12px;width:100vw;height:1px;background:rgba(255,255,255,.10);transform:translateX(-50%)}.mobile-tabs{display:block}
       .hero{height:420px}.hero-body{left:24px;bottom:58px;width:calc(100% - 58px)}.hero-title{font-size:clamp(26px,8vw,38px)}.hero-desc{font-size:14px;-webkit-line-clamp:3}.hero-dots{left:24px;bottom:28px}.hero-controls{right:14px}.hero-arrow{width:48px;height:48px}
       .detail-top{grid-template-columns:190px 1fr;gap:22px}.stats{grid-template-columns:repeat(3,1fr)}.ep-toolbar{grid-template-columns:1fr auto}.ep-toolbar .mark-btn{display:none}.ep-layout{grid-template-columns:1fr;gap:16px}.seasons{display:flex;overflow:auto;border-right:0;border-bottom:1px solid #17171a}.season-btn{width:auto;min-width:118px;padding:0 16px;text-align:center}.season-btn.active::after{left:18px;right:18px;top:auto;bottom:-1px;width:auto;height:3px}.player-grid{grid-template-columns:1fr}.side-list{max-height:440px}
     }
     @media (max-width:620px){
       body{font-size:13px}.shell{width:calc(100% - 20px)}.page{padding-top:10px;padding-bottom:calc(96px + var(--safe-bottom))}
-      .brand-mark{width:42px;height:42px}.brand-name{font-size:22px}.brand-sub{font-size:10px;letter-spacing:.24em}.logo-brand{width:156px}.mobile-tabs{display:none}.card-play{display:none}
+      .brand-mark{width:42px;height:42px}.brand-name{font-size:22px}.brand-sub{font-size:10px;letter-spacing:.24em}.logo-brand{width:118px;min-width:118px;height:36px}.mobile-tabs{display:none}.card-play{display:none}
       .hero{height:360px;border-radius:9px}.hero-body{left:16px;right:58px;bottom:52px;width:auto}.hero-title{font-size:clamp(22px,7.2vw,28px);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.kicker{font-size:12px}.hero-controls{right:8px}.hero-arrow{width:42px;height:42px}.hero-meta{display:none}
       .grid{grid-template-columns:repeat(2,calc((100% - 12px)/2));gap:12px;overflow:hidden}.grid.wide{grid-template-columns:repeat(2,calc((100% - 12px)/2))}.rail-cards{grid-auto-columns:82%;gap:12px}.section-title{font-size:19px}.card{width:100%;min-width:0}.card-title{font-size:13px}
       .detail-top{display:block}.crumbline{margin:0 0 12px}.poster-box{width:min(58vw,210px);margin:0 auto}.status{height:46px;margin:10px 0 14px}.detail-info{padding-top:0}.tags{gap:8px;align-items:flex-start;flex-wrap:nowrap;overflow:auto;padding-bottom:3px;scrollbar-width:none}.tags::-webkit-scrollbar{display:none}.genre{font-size:14px;white-space:nowrap}.detail-title{font-size:clamp(25px,8vw,30px)}.alt-title{font-size:15px}.actions .btn{flex:1;min-width:132px}.stats{grid-template-columns:repeat(2,1fr);gap:14px}.syn{font-size:14px}
@@ -159,19 +160,19 @@
       .player-title{font-size:18px}.side-list{max-height:none}.list-page-head{display:block}.list-page-head>.btn,.list-page-head>.actions{display:none}.pager .btn{flex:1}
     }
   </style>
-  <link rel="stylesheet" href="./animations.css" />
+  <link rel="stylesheet" href="/miniapp/animations.css" />
 </head>
 <body>
   <div id="splashScreen" aria-hidden="true">
     <div class="splash-inner">
-      <div class="logo-crop splash-logo" role="img" aria-label="Animes Baltigo Streaming"><img src="https://litter.catbox.moe/0r2m63.PNG" alt=""></div>
+      <div class="logo-crop splash-logo" role="img" aria-label="Animes Baltigo Streaming"><img src="/miniapp/assets/logo-header.png" alt=""></div>
       <div class="splash-bar"></div>
     </div>
   </div>
   <header class="app-header">
     <div class="shell nav">
       <a class="brand logo-brand" href="#home" aria-label="Animes Baltigo Streaming">
-        <span class="logo-crop brand-logo-img" aria-hidden="true"><img src="https://litter.catbox.moe/0r2m63.PNG" alt=""></span>
+        <span class="logo-crop brand-logo-img" aria-hidden="true"><img src="/miniapp/assets/logo-header.png" alt=""></span>
         <span class="sr-only">Animes Baltigo Streaming</span>
       </a>
       <nav class="nav-icons" aria-label="Navegação principal">
@@ -200,7 +201,7 @@
     <button data-go="favorites" aria-label="Favoritos" title="Favoritos"><i class="fa-solid fa-heart"></i><span>Favoritos</span></button>
   </nav>
 
-  <script src="./animations.js"></script>
+  <script src="/miniapp/animations.js"></script>
   <script>
     const TG_FULLSCREEN_VERSION = "8.0";
     const tgApp = window.Telegram?.WebApp || null;
@@ -413,7 +414,7 @@
     function loading(label="Carregando"){
       const isCatalog = /cat[aá]logo/i.test(label);
       if(isCatalog){
-        mount(`<div class="loading catalog-loading"><span class="logo-crop loading-logo" role="img" aria-label="Animes Baltigo Streaming"><img src="https://litter.catbox.moe/0r2m63.PNG" alt=""></span><span class="loading-line" aria-hidden="true"></span><div class="loading-label">${esc(label)}</div></div>`);
+        mount(`<div class="loading catalog-loading"><span class="logo-crop loading-logo" role="img" aria-label="Animes Baltigo Streaming"><img src="/miniapp/assets/logo-header.png" alt=""></span><span class="loading-line" aria-hidden="true"></span><div class="loading-label">${esc(label)}</div></div>`);
         return;
       }
       mount(`<div class="loading"><span class="spinner"></span><div>${esc(label)}</div></div>`);
