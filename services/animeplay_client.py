@@ -1015,7 +1015,25 @@ def _is_direct_video_url(url: str) -> bool:
     value = str(url or "")
     if re.search(r"\.(?:mp4|m3u8|webm)(?:\?|$)", value, re.I):
         return True
+    try:
+        query = parse_qs(urlsplit(value).query)
+        for key in ("f", "file", "source", "src", "url", "video"):
+            for candidate in query.get(key) or []:
+                if re.search(r"\.(?:mp4|m3u8|webm)(?:\?|$)", candidate, re.I):
+                    return True
+    except Exception:
+        pass
     return bool(re.search(r"(?:^https?://[^/]*googlevideo\.com/|/)(?:videoplayback)(?:\?|$)", value, re.I))
+
+
+def _is_trusted_embed_url(url: str) -> bool:
+    try:
+        parsed = urlsplit(str(url or ""))
+    except Exception:
+        return False
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    return host in {"blogger.com", "www.blogger.com"} and path.endswith("/video.g")
 
 
 def _make_absolute_url(url: str, base_url: str) -> str:
@@ -1203,8 +1221,9 @@ async def _video_url_looks_playable(url: str, referer: str = "") -> bool:
     return False
 
 
-async def _resolve_player_options(post_id: str, episode_url: str, options: list[dict]) -> dict[str, str]:
+async def _resolve_player_options(post_id: str, episode_url: str, options: list[dict]) -> tuple[dict[str, str], dict[str, str]]:
     videos = {}
+    trusted_embeds = {}
     ordered_options = sorted(options, key=lambda item: 0 if int(item.get("nume") or 0) == 2 else int(item.get("nume") or 99))
     for option in ordered_options:
         try:
@@ -1224,6 +1243,10 @@ async def _resolve_player_options(post_id: str, episode_url: str, options: list[
 
         label = str(option.get("label") or "").upper()
         embed_url = _extract_embed_url(data.get("embed_url") or "")
+        if embed_url and _is_trusted_embed_url(embed_url):
+            quality = _quality_from_label_or_url(label, embed_url)
+            trusted_embeds.setdefault(quality, embed_url)
+
         direct_urls = []
         if _is_direct_video_url(embed_url):
             direct_urls = [embed_url]
@@ -1240,10 +1263,10 @@ async def _resolve_player_options(post_id: str, episode_url: str, options: list[
             quality = _quality_from_label_or_url(label, direct_url)
             videos.setdefault(quality, direct_url)
 
-        if not direct_urls and embed_url:
+        if not direct_urls and embed_url and not _is_trusted_embed_url(embed_url):
             print(f"[ANIMEPLAY] ignored_embed_without_direct_video label={label!r} url={embed_url}")
 
-    return videos
+    return videos, trusted_embeds
 
 
 async def get_episode_player(anime_id: str, episode: str, preferred_quality: str = "HD"):
@@ -1291,7 +1314,11 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
             raise RuntimeError("Nao encontrei servidores do player no AnimePlay.")
 
         post_id = str(options[0].get("post") or "")
-        videos = await _resolve_player_options(post_id, episode_url, options)
+        videos, trusted_embeds = await _resolve_player_options(post_id, episode_url, options)
+        using_embed_fallback = False
+        if not videos and trusted_embeds:
+            videos = trusted_embeds
+            using_embed_fallback = True
         if not videos:
             raise RuntimeError("AnimePlay nao retornou MP4/HLS direto para esse episodio.")
 
@@ -1304,8 +1331,9 @@ async def get_episode_player(anime_id: str, episode: str, preferred_quality: str
         data = {
             "video": video,
             "videos": videos,
+            "player_type": "iframe" if using_embed_fallback else "video",
             "base_slug": anime_id,
-            "server": "ANIMEPLAY",
+            "server": "BLOGGER" if using_embed_fallback else "ANIMEPLAY",
             "quality": selected_quality,
             "available_qualities": list(videos.keys()),
             "prev_episode": prev_episode,
