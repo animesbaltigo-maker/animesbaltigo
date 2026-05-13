@@ -64,6 +64,18 @@ HEADERS = {
 }
 
 
+class NoCacheStaticFiles(StaticFiles):
+    def is_not_modified(self, *args, **kwargs) -> bool:
+        return False
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
 def _is_sushi_source() -> bool:
     return ANIME_SOURCE == "sushi" or "sushianimes" in BASE_URL.lower()
 
@@ -1828,7 +1840,7 @@ async def clear_cache(
 # =============================================================================
 
 if MINIAPP_DIR.exists():
-    app.mount("/miniapp", StaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
+    app.mount("/miniapp", NoCacheStaticFiles(directory=str(MINIAPP_DIR)), name="miniapp")
 
 
 @app.get("/app")
