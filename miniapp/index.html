@@ -35,11 +35,13 @@
     .app-header{position:sticky;top:0;z-index:60;background:linear-gradient(180deg,#000 0%,rgba(0,0,0,.96) 84%,rgba(0,0,0,.72));padding-top:var(--safe-top);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.10)}
     .nav{min-height:var(--header);display:grid;grid-template-columns:auto 1fr minmax(260px,360px) auto;align-items:center;gap:20px}
     .brand{display:flex;align-items:center;gap:12px;min-width:230px}
-    .logo-brand{min-width:128px;width:146px;height:42px;justify-content:center;position:relative;padding-right:18px;opacity:0;transform:translateY(-5px) scale(.96);animation:logoReveal 560ms cubic-bezier(.22,1,.36,1) 120ms forwards}
+    .logo-brand{min-width:172px;width:auto;height:42px;justify-content:center;position:relative;padding-right:18px;opacity:0;transform:translateY(-5px) scale(.96);animation:logoReveal 560ms cubic-bezier(.22,1,.36,1) 120ms forwards}
     .logo-brand::after{content:"";position:absolute;right:0;top:8px;bottom:8px;width:1px;background:rgba(255,255,255,.14)}
-    .logo-crop{display:block;position:relative;aspect-ratio:4.05/1;overflow:hidden}
-    .logo-crop img{position:absolute;left:50%;top:50%;width:100%;max-width:none;height:auto;transform:translate(-50%,-50%);user-select:none;pointer-events:none}
-    .brand-logo-img{width:100%;height:auto;filter:none}
+    .wordmark{display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;color:#fff;font-weight:950;line-height:1;text-transform:uppercase;letter-spacing:-.035em;text-shadow:0 0 24px rgba(255,65,46,.16)}
+    .wordmark span{color:var(--brand);margin-left:3px;text-shadow:0 0 22px rgba(255,65,46,.28)}
+    .brand-wordmark{font-size:20px}
+    .splash-wordmark{font-size:clamp(28px,8vw,46px);opacity:0;transform:translateY(12px) scale(.94);animation:logoReveal 680ms cubic-bezier(.22,1,.36,1) forwards}
+    .loading-wordmark{font-size:clamp(22px,7vw,34px);margin-bottom:2px}
     .brand-mark{width:44px;height:44px;border-radius:12px;background:linear-gradient(145deg,#ff4b35,#bd130d);display:grid;place-items:center;font-weight:900;font-size:21px;box-shadow:0 12px 34px rgba(255,65,46,.23)}
     .brand-name{font-weight:900;text-transform:uppercase;font-size:25px;line-height:.95;letter-spacing:0}.brand-name span{color:var(--brand)}
     .brand-sub{display:block;margin-top:3px;color:#babac3;font-size:11px;font-weight:800;letter-spacing:.31em;text-transform:uppercase}
@@ -130,12 +132,14 @@
 
     .list-page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:18px}.pager{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:22px;flex-wrap:wrap}.page-indicator{height:38px;display:inline-flex;align-items:center;color:#bdbdc5;padding:0 8px;font-weight:800}
     .empty,.error{border:1px solid #1a1a1d;background:#070708;border-radius:10px;padding:34px 18px;text-align:center;color:#c8c8d0}.error{border-color:#361714;background:#120504}.empty h3,.error h3{font-size:18px;margin-bottom:8px;color:#fff}
-    .loading{display:grid;place-items:center;min-height:320px;color:#bdbdc5;font-weight:900;text-align:center}.spinner{width:28px;height:28px;border-radius:50%;border:3px solid #28282d;border-top-color:var(--brand);animation:spin .8s linear infinite;margin-bottom:12px}
-    .loading.catalog-loading{min-height:calc(100dvh - var(--header) - 110px);align-content:center;gap:16px;color:#f3f3f5}
-    .loading-logo{width:min(62vw,280px);opacity:0;transform:translateY(12px) scale(.95);filter:drop-shadow(0 14px 34px rgba(255,65,46,.1));animation:logoReveal 620ms cubic-bezier(.22,1,.36,1) forwards}
+    .loading{display:flex;align-items:center;justify-content:center;min-height:calc(100dvh - var(--header) - 110px);padding:34px 0;color:#c9c9d1;font-weight:900;text-align:center}
+    .loading-stack{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;width:min(78vw,320px)}
+    .spinner{width:30px;height:30px;border-radius:50%;border:3px solid #28282d;border-top-color:var(--brand);animation:spin .8s linear infinite;margin:0}
+    .loading.catalog-loading{color:#f3f3f5}
     .loading-line{position:relative;width:min(48vw,260px);height:4px;border-radius:999px;background:#17171a;overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.035)}
     .loading-line::before{content:"";position:absolute;inset:0;width:46%;border-radius:inherit;background:linear-gradient(90deg,transparent,var(--brand),#ff8a68,transparent);animation:loadingSweep 1.05s ease-in-out infinite}
-    .loading-label{font-size:13px;color:#aaaab3;font-weight:850;letter-spacing:.02em}
+    .loading-label{font-size:17px;color:#d7d7de;font-weight:900;letter-spacing:.01em}
+    .catalog-loading .loading-label{font-size:13px;color:#aaaab3;letter-spacing:.02em}
     .sk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:20px}.sk-card{height:310px;border-radius:8px;background:linear-gradient(100deg,#0b0b0d,#17171a,#0b0b0d);background-size:220% 100%;animation:skeleton 1.35s ease-in-out infinite}
     @keyframes spin{to{transform:rotate(360deg)}}@keyframes skeleton{to{background-position:-220% 0}}@keyframes logoReveal{to{opacity:1;transform:translateY(0) scale(1)}}@keyframes loadingSweep{0%{transform:translateX(-115%)}100%{transform:translateX(255%)}}
 
@@ -146,13 +150,13 @@
     @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
     @media (max-width:980px){
       :root{--header:84px}.shell{width:min(100% - 24px,var(--max))}
-      .nav{grid-template-columns:1fr;gap:18px;padding:12px 0 18px}.brand{min-width:0}.logo-brand{justify-self:center;width:130px;min-width:130px;height:38px;margin:0 auto 4px;padding-right:0}.logo-brand::after{left:50%;right:auto;top:auto;bottom:-11px;width:100vw;height:1px;transform:translateX(-50%);background:rgba(255,255,255,.13)}.nav-icons,.top-action{display:none}.search{height:48px}.search::after{content:"";position:absolute;left:50%;bottom:-12px;width:100vw;height:1px;background:rgba(255,255,255,.10);transform:translateX(-50%)}.mobile-tabs{display:block}
+      .nav{grid-template-columns:1fr;gap:18px;padding:12px 0 18px}.brand{min-width:0}.logo-brand{justify-self:center;width:auto;min-width:0;height:38px;margin:0 auto 4px;padding-right:0}.brand-wordmark{font-size:20px}.logo-brand::after{left:50%;right:auto;top:auto;bottom:-11px;width:100vw;height:1px;transform:translateX(-50%);background:rgba(255,255,255,.13)}.nav-icons,.top-action{display:none}.search{height:48px}.search::after{content:"";position:absolute;left:50%;bottom:-12px;width:100vw;height:1px;background:rgba(255,255,255,.10);transform:translateX(-50%)}.mobile-tabs{display:block}
       .hero{height:420px}.hero-body{left:24px;bottom:58px;width:calc(100% - 58px)}.hero-title{font-size:clamp(26px,8vw,38px)}.hero-desc{font-size:14px;-webkit-line-clamp:3}.hero-dots{left:24px;bottom:28px}.hero-controls{right:14px}.hero-arrow{width:48px;height:48px}
       .detail-top{grid-template-columns:190px 1fr;gap:22px}.stats{grid-template-columns:repeat(3,1fr)}.ep-toolbar{grid-template-columns:1fr auto}.ep-toolbar .mark-btn{display:none}.ep-layout{grid-template-columns:1fr;gap:16px}.seasons{display:flex;overflow:auto;border-right:0;border-bottom:1px solid #17171a}.season-btn{width:auto;min-width:118px;padding:0 16px;text-align:center}.season-btn.active::after{left:18px;right:18px;top:auto;bottom:-1px;width:auto;height:3px}.player-grid{grid-template-columns:1fr}.side-list{max-height:440px}
     }
     @media (max-width:620px){
       body{font-size:13px}.shell{width:calc(100% - 20px)}.page{padding-top:10px;padding-bottom:calc(96px + var(--safe-bottom))}
-      .brand-mark{width:42px;height:42px}.brand-name{font-size:22px}.brand-sub{font-size:10px;letter-spacing:.24em}.logo-brand{width:118px;min-width:118px;height:36px}.mobile-tabs{display:none}.card-play{display:none}
+      .brand-mark{width:42px;height:42px}.brand-name{font-size:22px}.brand-sub{font-size:10px;letter-spacing:.24em}.logo-brand{width:auto;min-width:0;height:36px}.brand-wordmark{font-size:18px}.mobile-tabs{display:none}.card-play{display:none}
       .hero{height:360px;border-radius:9px}.hero-body{left:16px;right:58px;bottom:52px;width:auto}.hero-title{font-size:clamp(22px,7.2vw,28px);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.kicker{font-size:12px}.hero-controls{right:8px}.hero-arrow{width:42px;height:42px}.hero-meta{display:none}
       .grid{grid-template-columns:repeat(2,calc((100% - 12px)/2));gap:12px;overflow:hidden}.grid.wide{grid-template-columns:repeat(2,calc((100% - 12px)/2))}.rail-cards{grid-auto-columns:82%;gap:12px}.section-title{font-size:19px}.card{width:100%;min-width:0}.card-title{font-size:13px}
       .detail-top{display:block}.crumbline{margin:0 0 12px}.poster-box{width:min(58vw,210px);margin:0 auto}.status{height:46px;margin:10px 0 14px}.detail-info{padding-top:0}.tags{gap:8px;align-items:flex-start;flex-wrap:nowrap;overflow:auto;padding-bottom:3px;scrollbar-width:none}.tags::-webkit-scrollbar{display:none}.genre{font-size:14px;white-space:nowrap}.detail-title{font-size:clamp(25px,8vw,30px)}.alt-title{font-size:15px}.actions .btn{flex:1;min-width:132px}.stats{grid-template-columns:repeat(2,1fr);gap:14px}.syn{font-size:14px}
@@ -165,22 +169,22 @@
 <body>
   <div id="splashScreen" aria-hidden="true">
     <div class="splash-inner">
-      <div class="logo-crop splash-logo" role="img" aria-label="Animes Baltigo Streaming"><img src="/miniapp/assets/logo-header.png?v=20260513-3" alt=""></div>
+      <div class="wordmark splash-wordmark" role="img" aria-label="Animes Baltigo Streaming">ANIMES<span>BALTIGO</span></div>
       <div class="splash-bar"></div>
     </div>
   </div>
   <header class="app-header">
     <div class="shell nav">
       <a class="brand logo-brand" href="#home" aria-label="Animes Baltigo Streaming">
-        <span class="logo-crop brand-logo-img" aria-hidden="true"><img src="/miniapp/assets/logo-header.png?v=20260513-3" alt=""></span>
+        <span class="wordmark brand-wordmark" aria-hidden="true">ANIMES<span>BALTIGO</span></span>
         <span class="sr-only">Animes Baltigo Streaming</span>
       </a>
-      <nav class="nav-icons" aria-label="NavegaÃ§Ã£o principal">
-        <button class="round" data-go="home" title="InÃ­cio" aria-label="InÃ­cio"><i class="fa-solid fa-house"></i></button>
+      <nav class="nav-icons" aria-label="Navegação principal">
+        <button class="round" data-go="home" title="Início" aria-label="Início"><i class="fa-solid fa-house"></i></button>
         <button class="round" data-go="dublados" title="Dublados" aria-label="Dublados"><i class="fa-solid fa-play"></i></button>
         <button class="round" data-go="legendados" title="Legendados" aria-label="Legendados"><i class="fa-solid fa-closed-captioning"></i></button>
         <button class="round" data-go="top" title="Em alta" aria-label="Em alta"><i class="fa-solid fa-chart-line"></i></button>
-        <button class="round" data-go="history" title="HistÃ³rico" aria-label="HistÃ³rico"><i class="fa-solid fa-clock-rotate-left"></i></button>
+        <button class="round" data-go="history" title="Histórico" aria-label="Histórico"><i class="fa-solid fa-clock-rotate-left"></i></button>
         <button class="round" data-go="favorites" title="Favoritos" aria-label="Favoritos"><i class="fa-solid fa-heart"></i></button>
       </nav>
       <form class="search" id="globalSearch">
@@ -192,12 +196,12 @@
   </header>
   <div class="mobile-tabs"><div class="shell rail" id="mobileTabs"></div></div>
   <main id="app"></main>
-  <nav class="bottom-nav" id="bottomNav" aria-label="NavegaÃ§Ã£o mobile">
-    <button data-go="home" aria-label="InÃ­cio" title="InÃ­cio"><i class="fa-solid fa-house"></i><span>InÃ­cio</span></button>
+  <nav class="bottom-nav" id="bottomNav" aria-label="Navegação mobile">
+    <button data-go="home" aria-label="Início" title="Início"><i class="fa-solid fa-house"></i><span>Início</span></button>
     <button data-go="dublados" aria-label="Dublados" title="Dublados"><i class="fa-solid fa-play"></i><span>Dublados</span></button>
     <button data-go="legendados" aria-label="Legendas" title="Legendas"><i class="fa-solid fa-closed-captioning"></i><span>Legendas</span></button>
     <button data-go="top" aria-label="Em alta" title="Em alta"><i class="fa-solid fa-chart-line"></i><span>Em alta</span></button>
-    <button data-go="history" aria-label="HistÃ³rico" title="HistÃ³rico"><i class="fa-solid fa-clock-rotate-left"></i><span>HistÃ³rico</span></button>
+    <button data-go="history" aria-label="Histórico" title="Histórico"><i class="fa-solid fa-clock-rotate-left"></i><span>Histórico</span></button>
     <button data-go="favorites" aria-label="Favoritos" title="Favoritos"><i class="fa-solid fa-heart"></i><span>Favoritos</span></button>
   </nav>
 
@@ -304,8 +308,8 @@
     initTelegram();
 
     const navItems = [
-      ["home","InÃ­cio","fa-house"],["dublados","Dublados","fa-play"],["legendados","Legendas","fa-closed-captioning"],
-      ["top","Em alta","fa-chart-line"],["history","HistÃ³rico","fa-clock-rotate-left"],["favorites","Favoritos","fa-heart"]
+      ["home","Início","fa-house"],["dublados","Dublados","fa-play"],["legendados","Legendas","fa-closed-captioning"],
+      ["top","Em alta","fa-chart-line"],["history","Histórico","fa-clock-rotate-left"],["favorites","Favoritos","fa-heart"]
     ];
     document.getElementById("mobileTabs").innerHTML = navItems.map(n => navButton(n,"tab-btn")).join("");
     document.getElementById("bottomNav").innerHTML = navItems.map(n => navButton(n,"")).join("");
@@ -414,10 +418,10 @@
     function loading(label="Carregando"){
       const isCatalog = /cat[aÃ¡]logo/i.test(label);
       if(isCatalog){
-        mount(`<div class="loading catalog-loading"><span class="logo-crop loading-logo" role="img" aria-label="Animes Baltigo Streaming"><img src="/miniapp/assets/logo-header.png?v=20260513-3" alt=""></span><span class="loading-line" aria-hidden="true"></span><div class="loading-label">${esc(label)}</div></div>`);
+        mount(`<div class="loading catalog-loading"><div class="loading-stack"><div class="wordmark loading-wordmark" role="img" aria-label="Animes Baltigo Streaming">ANIMES<span>BALTIGO</span></div><span class="loading-line" aria-hidden="true"></span><div class="loading-label">${esc(label)}</div></div></div>`);
         return;
       }
-      mount(`<div class="loading"><span class="spinner"></span><div>${esc(label)}</div></div>`);
+      mount(`<div class="loading"><div class="loading-stack"><span class="spinner" aria-hidden="true"></span><div class="loading-label">${esc(label)}</div></div></div>`);
     }
     function errorBox(title,msg,action=`<button class="btn primary" onclick="showHome()">Voltar ao inÃ­cio</button>`){ return `<div class="error"><h3>${esc(title)}</h3><p>${esc(msg)}</p><div class="actions" style="justify-content:center">${action}</div></div>`; }
     function emptyBox(title,msg="",action=""){ return `<div class="empty"><h3>${esc(title)}</h3>${msg?`<p>${esc(msg)}</p>`:""}${action?`<div class="actions" style="justify-content:center">${action}</div>`:""}</div>`; }
