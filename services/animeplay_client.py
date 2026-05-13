@@ -1205,7 +1205,6 @@ async def _video_url_looks_playable(url: str, referer: str = "") -> bool:
 
 async def _resolve_player_options(post_id: str, episode_url: str, options: list[dict]) -> dict[str, str]:
     videos = {}
-    fallback_embeds = {}
     ordered_options = sorted(options, key=lambda item: 0 if int(item.get("nume") or 0) == 2 else int(item.get("nume") or 99))
     for option in ordered_options:
         try:
@@ -1241,11 +1240,10 @@ async def _resolve_player_options(post_id: str, episode_url: str, options: list[
             quality = _quality_from_label_or_url(label, direct_url)
             videos.setdefault(quality, direct_url)
 
-        if not direct_urls and embed_url and embed_url.startswith(("http://", "https://")):
-            quality = _quality_from_label_or_url(label, embed_url)
-            fallback_embeds.setdefault(quality, embed_url)
+        if not direct_urls and embed_url:
+            print(f"[ANIMEPLAY] ignored_embed_without_direct_video label={label!r} url={embed_url}")
 
-    return videos or fallback_embeds
+    return videos
 
 
 async def get_episode_player(anime_id: str, episode: str, preferred_quality: str = "HD"):
