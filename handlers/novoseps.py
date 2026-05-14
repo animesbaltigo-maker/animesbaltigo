@@ -249,25 +249,19 @@ async def _post_one_episode(
         except Exception as mockup_error:
             logging.warning("Falha ao renderizar mockup AniList de %s: %r", anime_id, mockup_error)
 
+        if not photo:
+            return False, _pick_main_title(anime)
+
         caption = _build_episode_caption(anime, episode)
         keyboard = _build_episode_keyboard(anime_id, episode)
 
-        if photo:
-            await context.bot.send_photo(
-                chat_id=CANAL_ATUALIZACOES,
-                photo=photo,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=CANAL_ATUALIZACOES,
-                text=caption,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-                disable_web_page_preview=True,
-            )
+        await context.bot.send_photo(
+            chat_id=CANAL_ATUALIZACOES,
+            photo=photo,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
         return True, _pick_main_title(anime)
 

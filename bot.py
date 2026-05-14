@@ -88,6 +88,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
             if update.callback_query:
                 await update.callback_query.answer("❌ Ocorreu um erro.", show_alert=True)
             elif update.effective_message:
+                chat_type = getattr(update.effective_chat, "type", "")
+                if chat_type != "private":
+                    return
                 await update.effective_message.reply_text(
                     "❌ Ocorreu um erro ao processar sua solicitação."
                 )
