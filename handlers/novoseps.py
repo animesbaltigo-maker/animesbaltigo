@@ -243,12 +243,7 @@ async def _post_one_episode(
     try:
         anime = await get_anime_details(anime_id)
 
-        photo = (
-            anime.get("media_image_url")
-            or anime.get("cover_url")
-            or anime.get("banner_url")
-            or None
-        )
+        photo = None
         try:
             photo = await render_anime_update_mockup(title_hint or _pick_main_title(anime))
         except Exception as mockup_error:
