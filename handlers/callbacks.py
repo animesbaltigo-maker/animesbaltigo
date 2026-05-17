@@ -9,12 +9,21 @@ from urllib.parse import quote_plus
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update, WebAppInfo
 from telegram.ext import ContextTypes
 
+from config import (
+    BOT_USERNAME,
+    DOWNLOAD_ARCHIVE_CHANNEL,
+    OFFLINE_REFERRAL_REQUIRED_CLICKS,
+    build_default_webapp_url,
+)
 from services.animefire_client import (
     get_anime_details,
     get_episodes,
     get_episode_player,
     get_random_anime_by_genre,
+    invalidate_anime_episode_cache,
+    search_anime,
 )
+from services.episode_archive import send_archived_episode
 from services.metrics import (
     log_event,
     mark_user_seen,
@@ -22,6 +31,7 @@ from services.metrics import (
     mark_episode_watched,
     unmark_episode_watched,
 )
+from services.referral_db import referral_distinct_clicks
 
 EPISODES_PER_PAGE = 15
 SEARCH_RESULTS_PER_PAGE = 8
@@ -30,14 +40,14 @@ CALLBACK_COOLDOWN = 1.0
 QUALITY_COOLDOWN = 0.8
 
 ANIME_CACHE_TTL = 60 * 30
-EPISODES_CACHE_TTL = 60 * 10
-PLAYER_CACHE_TTL = 60 * 10
+EPISODES_CACHE_TTL = 60 * 2
+PLAYER_CACHE_TTL = 60 * 2
 RECOMMEND_CACHE_TTL = 60 * 5
 
 GLOBAL_FETCH_SEMAPHORE = asyncio.Semaphore(40)
 
 SEARCH_BANNER_URL = "https://photo.chelpbot.me/AgACAgEAAxkBaL-UMWnDPUdoNCaz4ZUFvzeOHSVXh0oRAALTC2sbdnEYRrjsVpeCeT08AQADAgADeQADOgQ/photo.jpg"
-MINIAPP_URL = "https://rough-double-remarkable-north.trycloudflare.com/app"
+MINIAPP_URL = build_default_webapp_url()
 
 GENRE_PT_MAP = {
     "Action": "Ação",
@@ -148,6 +158,28 @@ def _cache_set(cache: dict, key: str, data):
     }
 
 
+def invalidate_callback_episode_cache(anime_id: str) -> None:
+    anime_id = str(anime_id or "").strip()
+    if not anime_id:
+        return
+
+    prefix = f"{anime_id}|"
+
+    for cache in (_GLOBAL_EPISODES_CACHE, _GLOBAL_PLAYER_CACHE):
+        for key in list(cache.keys()):
+            if str(key).startswith(prefix):
+                cache.pop(key, None)
+
+    for inflight in (_INFLIGHT_EPISODES, _INFLIGHT_PLAYER):
+        for key in list(inflight.keys()):
+            if not str(key).startswith(prefix):
+                continue
+
+            task = inflight.pop(key, None)
+            if task and not task.done():
+                task.cancel()
+
+
 async def _dedup_fetch(cache: dict, inflight: dict, key: str, ttl: int, coro_factory):
     cached = _cache_get(cache, key, ttl)
     if cached is not None:
@@ -180,6 +212,108 @@ async def _safe_answer_query(query, text: str | None = None, show_alert: bool = 
             await query.answer(text, show_alert=show_alert)
     except Exception:
         pass
+
+
+async def _delete_message_later(message, delay: float = 7.0) -> None:
+    try:
+        await asyncio.sleep(delay)
+        await message.delete()
+    except Exception:
+        pass
+
+
+def _offline_referral_progress(user_id: int) -> tuple[int, int]:
+    required = max(1, int(OFFLINE_REFERRAL_REQUIRED_CLICKS or 3))
+    current = referral_distinct_clicks(user_id)
+    return current, required
+
+
+def _offline_referral_link(user_id: int) -> str:
+    return f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+
+
+def _offline_unlock_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    link = _offline_referral_link(user_id)
+    share_url = (
+        "https://t.me/share/url?"
+        f"url={quote_plus(link)}"
+        "&text=" + quote_plus("Vem usar esse bot de animes comigo:")
+    )
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Compartilhar meu link", url=share_url)],
+        [InlineKeyboardButton("Copiar/abrir link", url=link)],
+    ])
+
+
+async def _send_offline_locked_message(message, user_id: int) -> None:
+    current, required = _offline_referral_progress(user_id)
+    missing = max(0, required - current)
+    link = _offline_referral_link(user_id)
+    text = (
+        "<b>Baixar offline ainda esta bloqueado</b>\n\n"
+        "Para liberar essa funcao de graca, indique o bot para "
+        f"<b>{required}</b> pessoas diferentes.\n\n"
+        f"<b>Seu progresso:</b> <code>{current}/{required}</code>\n"
+        f"<b>Faltam:</b> <code>{missing}</code>\n\n"
+        "Quando tres pessoas diferentes clicarem no seu link, o download offline "
+        "fica liberado automaticamente para voce.\n\n"
+        "<b>Seu link:</b>\n"
+        f"<code>{html.escape(link)}</code>"
+    )
+    await message.reply_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=_offline_unlock_keyboard(user_id),
+        disable_web_page_preview=True,
+    )
+
+
+def _episode_service_label(episode: str) -> str:
+    episode = str(episode or "").strip()
+    if re.match(r"^S\d+E\d+$", episode, flags=re.IGNORECASE):
+        return episode.upper()
+    return f"S1E{episode}"
+
+
+def _season_base_query(title: str) -> str:
+    value = str(title or "").strip()
+    value = re.sub(r"\([^)]*\)", " ", value)
+    value = re.sub(r"\b\d+(?:st|nd|rd|th)\s+season\b", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"\bseason\s+\d+\b", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"\b\d+\s*(?:temporada|season)\b", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"\b(dublado|legendado|ova|ona|movie|filme|special)\b", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+", " ", value).strip(" :-|")
+    return value or str(title or "").strip()
+
+
+def _season_number_from_item(item: dict, fallback: int) -> int:
+    text = " ".join(
+        str(item.get(key) or "")
+        for key in ("title", "raw_title", "id")
+    ).lower()
+    patterns = [
+        r"\b(\d+)(?:st|nd|rd|th)\s+season\b",
+        r"\bseason\s+(\d+)\b",
+        r"\btemporada\s+(\d+)\b",
+        r"-(\d+)(?:-|$)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            try:
+                return max(1, int(match.group(1)))
+            except Exception:
+                pass
+    return fallback
+
+
+def _season_picker_text(title: str, total: int) -> str:
+    safe_title = html.escape(_season_base_query(title))
+    return (
+        f"<b>{safe_title}</b>\n\n"
+        f"<b>Temporadas encontradas:</b> <code>{total}</code>\n\n"
+        "<i>Escolha a temporada que deseja abrir.</i>"
+    )
 
 
 async def _mark_user_seen_safe(user):
@@ -220,9 +354,10 @@ def _anime_main_image(anime: dict) -> str:
 
 def _anime_secondary_image(anime: dict) -> str:
     return (
-        anime.get("media_image_url")
+        anime.get("banner_url")
+        or anime.get("bannerImage")
+        or anime.get("media_image_url")
         or anime.get("cover_url")
-        or anime.get("banner_url")
         or ""
     ).strip()
 
@@ -857,6 +992,11 @@ def _single_anime_keyboard(
         ]
     ]
 
+    rows = [_anime_access_row(anime_id)]
+    rows.append([
+        InlineKeyboardButton("Temporadas", callback_data=f"season|{anime_id}")
+    ])
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, fallback_item or {})
     trailer_url = _build_trailer_url(anime)
@@ -905,6 +1045,12 @@ def _variant_keyboard(
             )
         ])
 
+    rows = []
+    if sub_variant:
+        rows.append(_variant_access_row("JP no bot", sub_variant["id"]))
+    if dub_variant:
+        rows.append(_variant_access_row("BR no bot", dub_variant["id"]))
+
     second_row = []
     anilist_url = _build_anilist_url(anime, fallback_title, item)
     trailer_url = _build_trailer_url(anime)
@@ -914,6 +1060,16 @@ def _variant_keyboard(
 
     if trailer_url:
         second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
+
+    if not rows:
+        default_id = item.get("default_anime_id") or item.get("id")
+        rows.append(_anime_access_row(default_id))
+
+    default_id = item.get("default_anime_id") or item.get("id")
+    if default_id:
+        rows.append([
+            InlineKeyboardButton("Temporadas", callback_data=f"season|{default_id}")
+        ])
 
     if second_row:
         rows.append(second_row)
@@ -1192,13 +1348,34 @@ def _player_keyboard(
 
 def _build_miniapp_episode_url(anime_id: str, episode: str, quality: str) -> str:
     quality = _normalize_quality(quality)
-    base = MINIAPP_URL.rstrip("/")
-    return f"{base}/?anime={anime_id}&ep={episode}&q={quality}"
+    return build_default_webapp_url({"anime": anime_id, "ep": episode, "q": quality})
 
 
 def _build_miniapp_anime_url(anime_id: str) -> str:
-    base = MINIAPP_URL.rstrip("/")
-    return f"{base}/?anime={anime_id}"
+    return build_default_webapp_url({"anime": anime_id})
+
+
+def _anime_access_row(anime_id: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(
+            "📱 MiniApp",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+        InlineKeyboardButton(
+            "📋 Lista no bot",
+            callback_data=f"eps|{anime_id}|0",
+        ),
+    ]
+
+
+def _variant_access_row(label: str, anime_id: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(label, callback_data=f"var|{anime_id}"),
+        InlineKeyboardButton(
+            "📱 MiniApp",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+    ]
 
 
 def _player_keyboard(
@@ -1246,6 +1423,10 @@ def _player_keyboard(
             InlineKeyboardButton(
                 "▶️ Assistir",
                 web_app=WebAppInfo(url=miniapp_episode_url),
+            ),
+            InlineKeyboardButton(
+                "Link normal",
+                callback_data=f"watch|{anime_id}|{episode}",
             )
         ],
         [watch_toggle_button],
@@ -1276,6 +1457,187 @@ def _player_keyboard(
     rows.append([
         InlineKeyboardButton("📋 Lista de episódios", callback_data=f"eps|{anime_id}|0")
     ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+def _anime_access_row(anime_id: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(
+            "📚 Ver no bot",
+            callback_data=f"eps|{anime_id}|0",
+        ),
+        InlineKeyboardButton(
+            "📱 Abrir MiniApp",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+    ]
+
+
+def _variant_access_row(label: str, anime_id: str) -> list[InlineKeyboardButton]:
+    raw = (label or "").strip().lower()
+    if raw.startswith("jp") or "legend" in raw:
+        variant_label = "legendado"
+    elif raw.startswith("br") or "dub" in raw:
+        variant_label = "dublado"
+    else:
+        variant_label = (label or "anime").strip().lower()
+
+    return [
+        InlineKeyboardButton(
+            f"Bot: {variant_label}",
+            callback_data=f"var|{anime_id}",
+        ),
+        InlineKeyboardButton(
+            f"MiniApp: {variant_label}",
+            web_app=WebAppInfo(url=_build_miniapp_anime_url(anime_id)),
+        ),
+    ]
+
+
+def _player_keyboard(
+    anime_id: str,
+    episode: str,
+    detected_video: str,
+    prev_episode,
+    next_episode,
+    selected_quality: str,
+    user_id: int | str,
+    available_qualities: set | None = None,
+):
+    selected_quality = _normalize_quality(selected_quality)
+    available_qualities = available_qualities or set()
+
+    hd_label = "HD"
+    sd_label = "SD"
+
+    if available_qualities:
+        if "HD" not in available_qualities:
+            hd_label = "HD indisponivel"
+        if "SD" not in available_qualities:
+            sd_label = "SD indisponivel"
+
+    if selected_quality == "HD":
+        hd_label = f"{hd_label} 🔘"
+    else:
+        sd_label = f"{sd_label} 🔘"
+
+    watched = is_episode_watched(user_id, anime_id, episode)
+
+    watch_toggle_button = InlineKeyboardButton(
+        "❌ Desmarcar como visto" if watched else "✅ Marcar como visto",
+        callback_data=f"unvw|{anime_id}|{episode}" if watched else f"vw|{anime_id}|{episode}",
+    )
+
+    rows = [
+        [InlineKeyboardButton("Baixar episodio", callback_data=f"watch|{anime_id}|{episode}")],
+        [watch_toggle_button],
+        [
+            InlineKeyboardButton(hd_label, callback_data=f"ql|{anime_id}|{episode}|HD"),
+            InlineKeyboardButton(sd_label, callback_data=f"ql|{anime_id}|{episode}|SD"),
+        ],
+    ]
+
+    nav = []
+    if prev_episode:
+        nav.append(
+            InlineKeyboardButton(
+                "⏮ Anterior",
+                callback_data=f"ep|{anime_id}|{prev_episode}",
+            )
+        )
+    if next_episode:
+        nav.append(
+            InlineKeyboardButton(
+                "Próximo ⏭",
+                callback_data=f"ep|{anime_id}|{next_episode}",
+            )
+        )
+    if nav:
+        rows.append(nav)
+
+    rows.append([
+        InlineKeyboardButton("📋 Lista de episódios", callback_data=f"eps|{anime_id}|0")
+    ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+def _variant_mode_labels(label: str) -> tuple[str, str]:
+    raw = (label or "").strip().lower()
+    if raw.startswith("jp") or "legend" in raw:
+        return (
+            "🇯🇵 Ver legendado no bot",
+            "📱 Abrir legendado no MiniApp",
+        )
+    if raw.startswith("br") or "dub" in raw:
+        return (
+            "🇧🇷 Ver dublado no bot",
+            "📱 Abrir dublado no MiniApp",
+        )
+    cleaned = (label or "anime").strip()
+    return (
+        f"🎬 Ver {cleaned} no bot",
+        f"📱 Abrir {cleaned} no MiniApp",
+    )
+
+
+def _variant_keyboard(
+    item: dict,
+    anime: dict,
+    fallback_title: str = "Sem tÃ­tulo",
+    back_callback: str | None = None,
+) -> InlineKeyboardMarkup:
+    rows = []
+
+    sub_variant = _pick_variant(item, dubbed=False)
+    dub_variant = _pick_variant(item, dubbed=True)
+
+    if sub_variant:
+        bot_label, mini_label = _variant_mode_labels("jp")
+        rows.append([
+            InlineKeyboardButton(bot_label, callback_data=f"var|{sub_variant['id']}")
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                mini_label,
+                web_app=WebAppInfo(url=_build_miniapp_anime_url(sub_variant["id"])),
+            )
+        ])
+
+    if dub_variant:
+        bot_label, mini_label = _variant_mode_labels("br")
+        rows.append([
+            InlineKeyboardButton(bot_label, callback_data=f"var|{dub_variant['id']}")
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                mini_label,
+                web_app=WebAppInfo(url=_build_miniapp_anime_url(dub_variant["id"])),
+            )
+        ])
+
+    second_row = []
+    anilist_url = _build_anilist_url(anime, fallback_title, item)
+    trailer_url = _build_trailer_url(anime)
+
+    if anilist_url:
+        second_row.append(InlineKeyboardButton("🧾 Sinopse", url=anilist_url))
+
+    if trailer_url:
+        second_row.append(InlineKeyboardButton("🎬 Trailer", url=trailer_url))
+
+    if not rows:
+        default_id = item.get("default_anime_id") or item.get("id")
+        rows.append(_anime_access_row(default_id))
+
+    if second_row:
+        rows.append(second_row)
+
+    if back_callback:
+        rows.append([
+            InlineKeyboardButton("🔙 Voltar", callback_data=back_callback)
+        ])
 
     return InlineKeyboardMarkup(rows)
 
@@ -1329,7 +1691,7 @@ def _action_signature(data: str) -> str:
     if not data:
         return ""
 
-    prefixes = ("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|")
+    prefixes = ("ep|", "eps|", "anime|", "season|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|")
     for prefix in prefixes:
         if data.startswith(prefix):
             return data
@@ -1775,6 +2137,67 @@ async def _render_single_anime(
     return await _safe_edit_text(query, text, keyboard)
 
 
+async def _render_season_picker(query, context: ContextTypes.DEFAULT_TYPE, anime_id: str) -> bool:
+    anime = await _get_cached_anime(context, anime_id)
+    title = _pick_display_title(anime, anime.get("title") or anime_id)
+    base_query = _season_base_query(title)
+    results = await asyncio.wait_for(search_anime(base_query), timeout=25)
+
+    seasons: list[dict] = []
+    seen_ids: set[str] = set()
+    fallback_season = 1
+
+    for item in results or []:
+        candidates = [item] + list(item.get("variants") or [])
+        for candidate in candidates:
+            candidate_id = str(candidate.get("id") or "").strip()
+            if not candidate_id or candidate_id in seen_ids:
+                continue
+
+            candidate_title = str(candidate.get("title") or item.get("title") or "")
+            candidate_text = f"{candidate_title} {candidate_id}".lower()
+            if any(blocked in candidate_text for blocked in ("movie", "filme", "ova", "ona", "special", "memories", "spin-off", "vigilante", "illegals")):
+                continue
+            if base_query.lower().split()[0] not in candidate_text:
+                continue
+
+            seen_ids.add(candidate_id)
+            seasons.append({
+                "id": candidate_id,
+                "title": candidate_title,
+                "season": _season_number_from_item(candidate, fallback_season),
+            })
+            fallback_season += 1
+
+    if not seasons:
+        await _safe_answer_query(query, "Nao encontrei outras temporadas agora.", show_alert=True)
+        return False
+
+    seasons.sort(key=lambda item: (int(item["season"]), item["title"]))
+    rows = []
+    current = []
+    for item in seasons[:18]:
+        prefix = "Atual - " if item["id"] == anime_id else ""
+        current.append(
+            InlineKeyboardButton(
+                f"{prefix}T{int(item['season']):02d}",
+                callback_data=f"anime|{item['id']}",
+            )
+        )
+        if len(current) == 3:
+            rows.append(current)
+            current = []
+    if current:
+        rows.append(current)
+
+    rows.append([InlineKeyboardButton("Voltar", callback_data=f"anime|{anime_id}")])
+    return await _safe_edit_text(
+        query,
+        _season_picker_text(title, len(seasons)),
+        InlineKeyboardMarkup(rows),
+    )
+
+
 async def _render_episodes_page(
     query,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1787,6 +2210,13 @@ async def _render_episodes_page(
 
     items = payload.get("items", [])
     total = payload.get("total", 0)
+
+    if total <= 0 and offset == 0:
+        invalidate_anime_episode_cache(anime_id)
+        invalidate_callback_episode_cache(anime_id)
+        payload = await _get_cached_episodes(anime_id, offset, EPISODES_PER_PAGE)
+        items = payload.get("items", [])
+        total = payload.get("total", 0)
 
     display_title = _format_title_with_version(
         _pick_display_title(anime, anime.get("title") or "Sem título"),
@@ -1834,6 +2264,20 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_answer_query(query, "⚠️ Não aperte várias vezes seguidas.", show_alert=False)
         return
 
+    if data.startswith("ql|"):
+        parts = data.split("|", 3)
+        if len(parts) == 4:
+            _, anime_id, episode, requested_quality = parts
+            requested_quality = _normalize_quality(requested_quality)
+            current_quality = _get_selected_quality(context, anime_id, episode)
+            if current_quality == requested_quality:
+                await _safe_answer_query(
+                    query,
+                    f"🔘 Já está em {requested_quality}.",
+                    show_alert=False,
+                )
+                return
+
     message = query.message
     user_lock = _user_lock(user.id)
 
@@ -1864,7 +2308,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     _set_inflight_action(message.chat.id, message.message_id, current_action)
 
-                if data.startswith(("ep|", "eps|", "anime|", "sp|", "sa|", "ql|", "rec|", "var|", "vw|", "unvw|")):
+                if data.startswith(("ep|", "eps|", "anime|", "season|", "sp|", "sa|", "rec|", "var|", "vw|", "unvw|")):
                     await _set_loading_state(query)
 
                 if data.startswith("ql|"):
@@ -1878,9 +2322,6 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     if not _can_switch_quality_now(context, anime_id, episode):
                         await _safe_answer_query(query, "⏳ Aguarde um instante para trocar a qualidade.", show_alert=False)
-                        return
-
-                    if current_quality == requested_quality:
                         return
 
                     _set_selected_quality(context, anime_id, episode, requested_quality)
@@ -1948,6 +2389,13 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     return
 
+                if data.startswith("season|"):
+                    _, anime_id = data.split("|", 1)
+                    ok = await _render_season_picker(query, context, anime_id)
+                    if not ok:
+                        await _render_single_anime(query, context, anime_id, caption_only=True)
+                    return
+
                 if False and data.startswith("watch|"):
                     _, anime_id, episode = data.split("|", 2)
 
@@ -1986,6 +2434,107 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if data.startswith("watch|"):
                     _, anime_id, episode = data.split("|", 2)
+
+                    if not DOWNLOAD_ARCHIVE_CHANNEL:
+                        await _safe_answer_query(
+                            query,
+                            "Configure DOWNLOAD_ARCHIVE_CHANNEL para arquivar os downloads.",
+                            show_alert=True,
+                        )
+                        return
+
+                    if not query.message:
+                        await _safe_answer_query(query, "Nao consegui identificar o chat.", show_alert=True)
+                        return
+
+                    current_refs, required_refs = _offline_referral_progress(user.id)
+                    if current_refs < required_refs:
+                        await _safe_answer_query(
+                            query,
+                            f"Indique {required_refs} pessoas para liberar o baixar offline.",
+                            show_alert=True,
+                        )
+                        await _send_offline_locked_message(query.message, user.id)
+                        return
+
+                    anime = await _get_cached_anime(context, anime_id)
+                    selected_quality = _get_selected_quality(context, anime_id, episode)
+                    player = await _get_cached_player(anime_id, episode, selected_quality)
+                    video_url = (player.get("video") or "").strip()
+                    resolved_quality = _normalize_quality(player.get("quality", selected_quality))
+
+                    _safe_log_event(
+                        event_type="download_click",
+                        user_id=user.id,
+                        username=user.username or user.first_name or "",
+                        anime_id=anime_id,
+                        anime_title=anime.get("title", "Sem tÃ­tulo"),
+                        episode=str(episode),
+                        extra=resolved_quality,
+                    )
+
+                    if not video_url:
+                        await _safe_answer_query(query, "âŒ NÃ£o encontrei o vÃ­deo desse episÃ³dio.", show_alert=True)
+                        return
+
+                    service_msg = await query.message.reply_text(
+                        "Preparando download offline...",
+                        disable_notification=True,
+                    )
+
+                    try:
+                        await _safe_answer_query(query, "Preparando download...", show_alert=False)
+                        ok = await send_archived_episode(
+                            bot=context.bot,
+                            target_chat_id=query.message.chat_id,
+                            archive_chat_id=DOWNLOAD_ARCHIVE_CHANNEL,
+                            anime_id=anime_id,
+                            anime_title=_format_title_with_version(
+                                anime.get("title", "Sem titulo"),
+                                _resolve_is_dubbed(context, anime_id, anime=anime),
+                            ),
+                            episode=str(episode),
+                            quality=resolved_quality,
+                            video_url=video_url,
+                        )
+                        if not ok:
+                            await _safe_answer_query(query, "Nao consegui salvar esse arquivo.", show_alert=True)
+                            await service_msg.edit_text("Nao consegui salvar esse episodio.")
+                        else:
+                            await service_msg.edit_text(
+                                "Episodio enviado\n\n"
+                                f"Anime: {_format_title_with_version(anime.get('title', 'Sem titulo'), _resolve_is_dubbed(context, anime_id, anime=anime))}\n"
+                                f"Episodio: {_episode_service_label(episode)}"
+                            )
+                    except Exception:
+                        await _safe_answer_query(query, "Nao consegui enviar o download agora.", show_alert=True)
+                        try:
+                            await service_msg.edit_text("Nao consegui enviar esse episodio agora.")
+                        except Exception:
+                            pass
+                    finally:
+                        asyncio.create_task(_delete_message_later(service_msg))
+
+                    return
+
+                    try:
+                        await query.message.reply_text(
+                            (
+                                f"🔗 <b>{html.escape(_format_title_with_version(anime.get('title', 'Sem tÃ­tulo'), _resolve_is_dubbed(context, anime_id, anime=anime)))}</b>\n"
+                                f"Episodio: {html.escape(str(episode))}\n"
+                                f"Qualidade: {html.escape(selected_quality)}\n\n"
+                                "Use o botao abaixo para abrir o link normal."
+                            ),
+                            parse_mode="HTML",
+                            disable_web_page_preview=True,
+                            reply_markup=InlineKeyboardMarkup(
+                                [[InlineKeyboardButton("Abrir link normal", url=video_url)]]
+                            ),
+                        )
+                    except Exception:
+                        await _safe_answer_query(query, "âš ï¸ NÃ£o consegui enviar o link normal agora.", show_alert=True)
+
+                    return
 
                     anime = await _get_cached_anime(context, anime_id)
                     selected_quality = _get_selected_quality(context, anime_id, episode)

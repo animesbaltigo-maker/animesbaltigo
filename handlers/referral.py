@@ -4,7 +4,7 @@ from urllib.parse import quote
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from config import BOT_USERNAME
+from config import BOT_USERNAME, OFFLINE_REFERRAL_REQUIRED_CLICKS
 from services.referral_db import referral_stats, referral_ranking
 
 
@@ -58,7 +58,7 @@ async def _send_panel(message, user_id):
 
     text = (
         "🎁 <b>Sistema de Convites</b>\n\n"
-        "Convide amigos para usar o bot e suba no ranking.\n\n"
+        "Convide amigos para usar o bot, suba no ranking e libere o baixar offline.\n\n"
 
         "📊 <b>Suas estatísticas</b>\n\n"
 
@@ -69,6 +69,8 @@ async def _send_panel(message, user_id):
 
         "🔗 <b>Seu link</b>\n"
         f"<code>{link}</code>\n\n"
+        "Baixar offline libera quando "
+        f"<code>{OFFLINE_REFERRAL_REQUIRED_CLICKS}</code> pessoas diferentes clicarem no seu link.\n\n"
 
         "🛡 <b>Regras</b>\n"
         "• Autoindicação não conta\n"

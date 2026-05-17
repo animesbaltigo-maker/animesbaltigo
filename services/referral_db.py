@@ -1,17 +1,21 @@
-import os
 import sqlite3
 import time
+from pathlib import Path
 
-DB_PATH = "data/referrals.sqlite"
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+DB_PATH = str(DATA_DIR / "referrals.sqlite")
 
 MIN_INTERACTIONS_TO_QUALIFY = 2
 MIN_SECONDS_TO_QUALIFY = 7 * 24 * 60 * 60
 
 
 def _connect():
-    os.makedirs("data", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -260,6 +264,20 @@ def referral_stats(user_id):
             "pending": pending,
             "qualified": qualified
         }
+
+
+def referral_distinct_clicks(user_id):
+    with _connect() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+        SELECT COUNT(DISTINCT clicked_user_id)
+        FROM referral_clicks
+        WHERE referrer_user_id = ?
+        AND clicked_user_id != ?
+        """, (user_id, user_id))
+
+        return int(cur.fetchone()[0] or 0)
 
 
 def referral_ranking(limit=3):
