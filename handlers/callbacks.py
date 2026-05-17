@@ -7,6 +7,10 @@ import inspect
 from urllib.parse import quote_plus
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update, WebAppInfo
+try:
+    from telegram import CopyTextButton
+except Exception:
+    CopyTextButton = None
 from telegram.ext import ContextTypes
 
 from config import ADMIN_IDS, BOT_USERNAME, MINIAPP_SHORT_NAME, OFFLINE_REFERRAL_REQUIRED_CLICKS
@@ -197,6 +201,13 @@ def _offline_referral_url(user_id: int) -> str:
     return f"https://t.me/{username}?start=ref_{user_id}"
 
 
+def _copy_text_button(label: str, text: str) -> InlineKeyboardButton:
+    payload = str(text or "")[:256]
+    if CopyTextButton is not None:
+        return InlineKeyboardButton(label, copy_text=CopyTextButton(text=payload))
+    return InlineKeyboardButton(label, api_kwargs={"copy_text": {"text": payload}})
+
+
 async def _send_offline_referral_gate(query, user) -> None:
     ok, current, required = _offline_referral_unlocked(user.id)
     if ok:
@@ -218,6 +229,7 @@ async def _send_offline_referral_gate(query, user) -> None:
     )
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Compartilhar meu link", url=share_url)],
+        [_copy_text_button("Copiar meu link", link)],
         [InlineKeyboardButton("Abrir meu link", url=link)],
     ])
     await query.answer(f"Faltam {missing} indicacao(oes) para liberar.", show_alert=True)

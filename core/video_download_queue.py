@@ -115,6 +115,8 @@ def _save_archive_index(data: dict) -> None:
 
 
 def _message_id_from_sent(sent) -> int | None:
+    if isinstance(sent, (list, tuple)) and sent:
+        sent = sent[0]
     for attr in ("message_id", "id"):
         value = getattr(sent, attr, None)
         if value:
@@ -154,7 +156,7 @@ async def _archive_downloaded_episode(app, job: VideoDownloadJob, path: Path) ->
         f"{job.caption}\n\n"
         f"<code>{html.escape(_job_key(job.anime_id, job.episode, job.quality))}</code>"
     )
-    sent = await _send_video_safe(app.bot, archive_chat_id, path, archive_caption)
+    sent = await _send_video_safe(app.bot, archive_chat_id, path, archive_caption, protect_content=False)
     message_id = _message_id_from_sent(sent)
     if not message_id:
         return {}
@@ -649,8 +651,17 @@ async def _download_hls(job: VideoDownloadJob, entry: dict, target: Path, temp: 
     return target
 
 
-async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress_cb=None) -> bool:
+async def _send_video_safe(
+    bot,
+    chat_id: int,
+    path: Path,
+    caption: str,
+    progress_cb=None,
+    *,
+    protect_content: bool | None = None,
+) -> bool:
     size = path.stat().st_size
+    effective_protect = VIDEO_DOWNLOAD_PROTECT_CONTENT if protect_content is None else bool(protect_content)
 
     if telethon_configured():
         if size > TELETHON_MAX_BYTES:
@@ -663,7 +674,7 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress
             caption,
             as_video=True,
             progress_callback=progress_cb,
-            protect_content=True,
+            protect_content=effective_protect,
         )
         if sent:
             return sent
@@ -690,7 +701,7 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress
                 caption=caption,
                 parse_mode="HTML",
                 supports_streaming=True,
-                protect_content=True,
+                protect_content=effective_protect,
                 read_timeout=120,
                 write_timeout=120,
                 connect_timeout=30,
@@ -717,7 +728,7 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress
                 filename=path.name,
                 caption=caption,
                 parse_mode="HTML",
-                protect_content=True,
+                protect_content=effective_protect,
                 read_timeout=120,
                 write_timeout=120,
                 connect_timeout=30,

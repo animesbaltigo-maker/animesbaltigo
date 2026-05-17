@@ -2,6 +2,10 @@ import html
 from urllib.parse import quote
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
+try:
+    from telegram import CopyTextButton
+except Exception:
+    CopyTextButton = None
 from telegram.ext import ContextTypes
 
 from config import BOT_USERNAME, OFFLINE_REFERRAL_REQUIRED_CLICKS, STICKER_DIVISOR, WEBAPP_BASE_URL
@@ -21,6 +25,13 @@ def _affiliate_webapp_url(user_id: int) -> str:
     if not base:
         return ""
     return f"{base}/affiliate?user_id={int(user_id)}&bot={quote(_bot_username())}"
+
+
+def _copy_text_button(label: str, text: str) -> InlineKeyboardButton:
+    payload = str(text or "")[:256]
+    if CopyTextButton is not None:
+        return InlineKeyboardButton(label, copy_text=CopyTextButton(text=payload))
+    return InlineKeyboardButton(label, api_kwargs={"copy_text": {"text": payload}})
 
 
 async def _send_panel(message, user_id: int):
@@ -65,6 +76,7 @@ async def _send_panel(message, user_id: int):
         "🔥 Acesse agora:\n"
         f"👉 {link}"
     )
+    rows.append([_copy_text_button("Copiar meu link", link)])
     rows.append([InlineKeyboardButton("Compartilhar no Telegram", url=f"https://t.me/share/url?text={quote(telegram_text)}")])
     rows.append([InlineKeyboardButton("Compartilhar no WhatsApp", url="https://wa.me/?text=" + quote(telegram_text))])
 
