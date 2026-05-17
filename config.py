@@ -43,6 +43,8 @@ REQUIRED_CHANNELS = _env_str_list(
 REQUIRED_CHANNEL_URL = os.getenv("REQUIRED_CHANNEL_URL", "https://t.me/Centraldeanimes_Baltigo").strip()
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AnimesBaltigo_Bot").strip()
 CANAL_POSTAGEM = os.getenv("CANAL_POSTAGEM", "@Centraldeanimes_Baltigo").strip()
+DOWNLOAD_ARCHIVE_CHANNEL = os.getenv("DOWNLOAD_ARCHIVE_CHANNEL", "-1003776313014").strip()
+OFFLINE_REFERRAL_REQUIRED_CLICKS = int(os.getenv("OFFLINE_REFERRAL_REQUIRED_CLICKS", "3") or "3")
 STICKER_DIVISOR = os.getenv(
     "STICKER_DIVISOR",
     "CAACAgQAAx0CbKkU-AACFJtps_kRLpeUt2Gvd7mT4d0gS1vyCgACOhUAAqDAiFJSU5pkUMltvzoE",

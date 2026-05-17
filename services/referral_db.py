@@ -262,6 +262,18 @@ def referral_stats(user_id):
         }
 
 
+def referral_distinct_clicks(user_id):
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT COUNT(DISTINCT clicked_user_id)
+        FROM referral_clicks
+        WHERE referrer_user_id = ?
+        AND clicked_user_id != ?
+        """, (user_id, user_id))
+        return int(cur.fetchone()[0] or 0)
+
+
 def get_referrer_user_id(user_id):
     with _connect() as conn:
         cur = conn.cursor()

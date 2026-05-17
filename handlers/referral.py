@@ -4,7 +4,7 @@ from urllib.parse import quote
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import ContextTypes
 
-from config import BOT_USERNAME, STICKER_DIVISOR, WEBAPP_BASE_URL
+from config import BOT_USERNAME, OFFLINE_REFERRAL_REQUIRED_CLICKS, STICKER_DIVISOR, WEBAPP_BASE_URL
 from services.affiliate_db import affiliate_summary, cents_to_money
 
 DEFAULT_BANNER_URL = (
@@ -49,6 +49,7 @@ async def _send_panel(message, user_id: int):
         "• 📊 Ver cliques e conversões\n"
         "• 💰 Controlar comissões\n"
         "• 🏦 Solicitar saque\n\n"
+        f"<b>📥 Baixar offline:</b> libera com <code>{OFFLINE_REFERRAL_REQUIRED_CLICKS}</code> cliques de pessoas diferentes no seu link.\n\n"
         "━━━━━━━━━━━━━━━━\n\n"
         "<i>Toque no botão abaixo para abrir seu painel 👇</i>"
     )

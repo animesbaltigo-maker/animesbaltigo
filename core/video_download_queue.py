@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import os
 import re
 import shutil
@@ -15,6 +16,8 @@ from telegram.error import TelegramError, TimedOut
 
 from config import (
     ADMIN_IDS,
+    DOWNLOAD_ARCHIVE_CHANNEL,
+    OFFLINE_REFERRAL_REQUIRED_CLICKS,
     TELETHON_UPLOAD_MAX_MB,
     UPSTREAM_PROXY_URL,
     VIDEO_CACHE_CLEANUP_INTERVAL_SECONDS,
@@ -33,7 +36,7 @@ from config import (
     SOURCE_SITE_BASE,
 )
 from core.telethon_uploader import send_file_with_telethon, telethon_configured
-from services.subscriptions import is_active_subscriber
+from services.referral_db import referral_distinct_clicks
 
 HEADERS = {
     "User-Agent": (
@@ -78,10 +81,100 @@ _cleanup_task: asyncio.Task | None = None
 _active_jobs: dict[str, dict] = {}
 _active_user_jobs: dict[int, str] = {}
 _enqueue_lock = asyncio.Lock()
+_archive_lock = asyncio.Lock()
+
+ARCHIVE_INDEX_PATH = Path(VIDEO_DOWNLOAD_CACHE_DIR).parent / "episode_file_ids.json"
 
 
 def _job_key(anime_id: str, episode: str, quality: str) -> str:
     return f"{anime_id}|{episode}|{quality}".lower()
+
+
+def _archive_chat_id() -> int | str:
+    raw = str(DOWNLOAD_ARCHIVE_CHANNEL or "").strip()
+    if raw.lstrip("-").isdigit():
+        return int(raw)
+    return raw
+
+
+def _load_archive_index() -> dict:
+    if not ARCHIVE_INDEX_PATH.exists():
+        return {}
+    try:
+        data = json.loads(ARCHIVE_INDEX_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_archive_index(data: dict) -> None:
+    ARCHIVE_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ARCHIVE_INDEX_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(ARCHIVE_INDEX_PATH)
+
+
+def _message_id_from_sent(sent) -> int | None:
+    for attr in ("message_id", "id"):
+        value = getattr(sent, attr, None)
+        if value:
+            try:
+                return int(value)
+            except Exception:
+                return None
+    return None
+
+
+async def _copy_archived_episode(bot, chat_id: int, entry: dict, caption: str) -> bool:
+    message_id = entry.get("archive_message_id")
+    archive_chat_id = entry.get("archive_chat_id") or DOWNLOAD_ARCHIVE_CHANNEL
+    if not message_id or not archive_chat_id:
+        return False
+    try:
+        await bot.copy_message(
+            chat_id=chat_id,
+            from_chat_id=archive_chat_id,
+            message_id=int(message_id),
+            caption=caption,
+            parse_mode="HTML",
+            protect_content=VIDEO_DOWNLOAD_PROTECT_CONTENT,
+        )
+        return True
+    except Exception as error:
+        print(f"[VIDEO_ARCHIVE] copy_failed key_entry={entry!r} error={error!r}")
+        return False
+
+
+async def _archive_downloaded_episode(app, job: VideoDownloadJob, path: Path) -> dict:
+    archive_chat_id = _archive_chat_id()
+    if not archive_chat_id:
+        return {}
+
+    archive_caption = (
+        f"{job.caption}\n\n"
+        f"<code>{html.escape(_job_key(job.anime_id, job.episode, job.quality))}</code>"
+    )
+    sent = await _send_video_safe(app.bot, archive_chat_id, path, archive_caption)
+    message_id = _message_id_from_sent(sent)
+    if not message_id:
+        return {}
+
+    return {
+        "archive_chat_id": str(archive_chat_id),
+        "archive_message_id": message_id,
+        "anime_id": job.anime_id,
+        "episode": str(job.episode),
+        "quality": job.quality,
+        "title": job.title,
+        "created_at": int(time.time()),
+    }
+
+
+def _offline_unlocked(user_id: int) -> bool:
+    if user_id in ADMIN_IDS:
+        return True
+    required = max(1, int(OFFLINE_REFERRAL_REQUIRED_CLICKS or 3))
+    return referral_distinct_clicks(user_id) >= required
 
 
 def _safe_filename(value: str, fallback: str = "episodio") -> str:
@@ -267,6 +360,14 @@ async def _cleanup_loop() -> None:
 async def _safe_edit(message, text: str) -> None:
     try:
         await message.edit_text(text, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+async def _delete_status_later(message, delay: float = 7.0) -> None:
+    try:
+        await asyncio.sleep(delay)
+        await message.delete()
     except Exception:
         pass
 
@@ -565,7 +666,7 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress
             protect_content=True,
         )
         if sent:
-            return True
+            return sent
         if size > UPLOAD_MAX_BYTES:
             raise RuntimeError(
                 "Arquivo grande demais para Bot API e o uploader Telethon nao conseguiu iniciar.\n"
@@ -582,7 +683,7 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress
 
     try:
         with open(path, "rb") as file:
-            await bot.send_video(
+            sent = await bot.send_video(
                 chat_id=chat_id,
                 video=file,
                 filename=path.name,
@@ -595,7 +696,7 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress
                 connect_timeout=30,
                 pool_timeout=30,
             )
-        return True
+        return sent
     except TimedOut:
         try:
             await bot.send_message(chat_id, "O envio demorou mais que o esperado. Confere se o video ja chegou.")
@@ -610,7 +711,7 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress
                 "Use Telegram Bot API local ou Telethon para epis\u00f3dios grandes."
             ) from error
         with open(path, "rb") as file:
-            await bot.send_document(
+            sent = await bot.send_document(
                 chat_id=chat_id,
                 document=file,
                 filename=path.name,
@@ -622,7 +723,7 @@ async def _send_video_safe(bot, chat_id: int, path: Path, caption: str, progress
                 connect_timeout=30,
                 pool_timeout=30,
             )
-        return True
+        return sent
 
 
 async def _process_job(app, job: VideoDownloadJob) -> None:
@@ -647,6 +748,16 @@ async def _process_job(app, job: VideoDownloadJob) -> None:
                 ),
             )
 
+        archive_entry = {}
+        async with _archive_lock:
+            index = _load_archive_index()
+            archive_entry = index.get(key) or {}
+            if not archive_entry:
+                archive_entry = await _archive_downloaded_episode(app, job, path)
+                if archive_entry:
+                    index[key] = archive_entry
+                    _save_archive_index(index)
+
         for waiter in entry["waiters"]:
             last_upload_update = 0.0
 
@@ -658,7 +769,11 @@ async def _process_job(app, job: VideoDownloadJob) -> None:
                 last_upload_update = now
                 await _upload_progress(entry, job, current, total)
 
-            await _send_video_safe(app.bot, waiter["chat_id"], path, waiter["caption"], progress_cb=progress_cb)
+            copied = False
+            if archive_entry:
+                copied = await _copy_archived_episode(app.bot, waiter["chat_id"], archive_entry, waiter["caption"])
+            if not copied:
+                await _send_video_safe(app.bot, waiter["chat_id"], path, waiter["caption"], progress_cb=progress_cb)
 
         for message in list(entry["status_messages"]):
             await _safe_edit(
@@ -669,11 +784,13 @@ async def _process_job(app, job: VideoDownloadJob) -> None:
                     f"<b>Epis\u00f3dio:</b> {html.escape(str(job.episode))}"
                 ),
             )
+            asyncio.create_task(_delete_status_later(message))
     except Exception as error:
         print(f"[VIDEO_DOWNLOAD] failed key={key} error={error!r} source={_safe_url_label(job.video_url)}")
         error_text = _format_download_error(error, job)
         for message in list(entry["status_messages"]):
             await _safe_edit(message, f"<b>Falha ao baixar epis\u00f3dio:</b>\n<code>{html.escape(error_text)}</code>")
+            asyncio.create_task(_delete_status_later(message))
     finally:
         await _delete_downloaded_file(path)
         try:
@@ -703,10 +820,27 @@ async def enqueue_video_download(app, job: VideoDownloadJob) -> int:
     key = _job_key(job.anime_id, job.episode, job.quality)
 
     async with _enqueue_lock:
-        if job.user_id not in ADMIN_IDS and not is_active_subscriber(job.user_id):
+        if not _offline_unlocked(job.user_id):
             raise RuntimeError(
-                "Offline exclusivo para assinantes BaltigoFlix. Assine para liberar downloads."
+                f"Indique {max(1, int(OFFLINE_REFERRAL_REQUIRED_CLICKS or 3))} pessoas diferentes para liberar o baixar offline."
             )
+
+        index = _load_archive_index()
+        archive_entry = index.get(key) or {}
+        if archive_entry:
+            copied = await _copy_archived_episode(app.bot, job.chat_id, archive_entry, job.caption)
+            if copied:
+                status = await app.bot.send_message(
+                    job.chat_id,
+                    (
+                        "<b>Episódio enviado</b>\n\n"
+                        f"<b>Anime:</b> {html.escape(job.title)}\n"
+                        f"<b>Episódio:</b> {html.escape(str(job.episode))}"
+                    ),
+                    parse_mode="HTML",
+                )
+                asyncio.create_task(_delete_status_later(status))
+                return queue.qsize()
 
         if job.user_id in _active_user_jobs:
             raise RuntimeError(

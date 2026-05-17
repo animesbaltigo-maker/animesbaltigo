@@ -9,9 +9,9 @@ from urllib.parse import quote_plus
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update, WebAppInfo
 from telegram.ext import ContextTypes
 
-from config import ADMIN_IDS, BOT_USERNAME, MINIAPP_SHORT_NAME
+from config import ADMIN_IDS, BOT_USERNAME, MINIAPP_SHORT_NAME, OFFLINE_REFERRAL_REQUIRED_CLICKS
 from core.video_download_queue import VideoDownloadJob, enqueue_video_download
-from handlers.offline_paywall import answer_subscription_check, send_offline_paywall
+from handlers.offline_paywall import answer_subscription_check
 from services.animefire_client import (
     get_anime_details,
     get_episodes,
@@ -25,7 +25,7 @@ from services.metrics import (
     mark_episode_watched,
     unmark_episode_watched,
 )
-from services.subscriptions import is_active_subscriber
+from services.referral_db import referral_distinct_clicks
 
 EPISODES_PER_PAGE = 15
 SEARCH_RESULTS_PER_PAGE = 8
@@ -184,6 +184,50 @@ async def _safe_answer_query(query, text: str | None = None, show_alert: bool = 
             await query.answer(text, show_alert=show_alert)
     except Exception:
         pass
+
+
+def _offline_referral_unlocked(user_id: int) -> tuple[bool, int, int]:
+    required = max(1, int(OFFLINE_REFERRAL_REQUIRED_CLICKS or 3))
+    current = referral_distinct_clicks(user_id)
+    return current >= required, current, required
+
+
+def _offline_referral_url(user_id: int) -> str:
+    username = (BOT_USERNAME or "AnimesBaltigo_Bot").strip().lstrip("@")
+    return f"https://t.me/{username}?start=ref_{user_id}"
+
+
+async def _send_offline_referral_gate(query, user) -> None:
+    ok, current, required = _offline_referral_unlocked(user.id)
+    if ok:
+        return
+    missing = max(0, required - current)
+    link = _offline_referral_url(user.id)
+    share_url = (
+        "https://t.me/share/url?"
+        f"url={quote_plus(link)}"
+        "&text=" + quote_plus("Vem usar esse bot de animes comigo:")
+    )
+    text = (
+        "<b>Baixar offline bloqueado</b>\n\n"
+        f"Indique o bot para <b>{required}</b> pessoas diferentes para liberar essa funcao.\n\n"
+        f"<b>Seu progresso:</b> <code>{current}/{required}</code>\n"
+        f"<b>Faltam:</b> <code>{missing}</code>\n\n"
+        "<b>Seu link:</b>\n"
+        f"<code>{html.escape(link)}</code>"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Compartilhar meu link", url=share_url)],
+        [InlineKeyboardButton("Abrir meu link", url=link)],
+    ])
+    await query.answer(f"Faltam {missing} indicacao(oes) para liberar.", show_alert=True)
+    if query.message:
+        await query.message.reply_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
 
 
 async def _mark_user_seen_safe(user):
@@ -2357,10 +2401,11 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if (
         data.startswith(("off|", "offeps|", "offepss|", "offspseason|", "dl|"))
         and user.id not in ADMIN_IDS
-        and not is_active_subscriber(user.id)
     ):
-        await send_offline_paywall(query, user)
-        return
+        unlocked, _, _ = _offline_referral_unlocked(user.id)
+        if not unlocked:
+            await _send_offline_referral_gate(query, user)
+            return
 
     if data == "noop_loading":
         await _safe_answer_query(query, "⏳ Aguarde...", show_alert=False)

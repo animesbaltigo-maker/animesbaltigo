@@ -304,7 +304,7 @@ async def send_file_with_telethon(
     as_video: bool = True,
     progress_callback: ProgressCallback | None = None,
     protect_content: bool = True,
-) -> bool:
+) -> object:
     if not _enabled or not _client:
         ok = await start_telethon_uploader()
         if not ok:
@@ -348,4 +348,5 @@ async def send_file_with_telethon(
         if thumb:
             thumb.unlink(missing_ok=True)
 
-    return True
+    messages = _as_message_list(result)
+    return messages[0] if messages else True
