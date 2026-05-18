@@ -14,7 +14,7 @@ except Exception:
 from telegram.ext import ContextTypes
 
 from config import ADMIN_IDS, BOT_USERNAME, MINIAPP_SHORT_NAME, OFFLINE_REFERRAL_REQUIRED_CLICKS
-from core.video_download_queue import VideoDownloadJob, enqueue_video_download
+from core.video_download_queue import VideoDownloadJob, delete_delivered_episode_messages, enqueue_video_download
 from handlers.offline_paywall import answer_subscription_check
 from services.animefire_client import (
     get_anime_details,
@@ -2506,6 +2506,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         anime_title=anime.get("title", "Sem título"),
                         username=user.username or user.first_name or "",
                     )
+                    await delete_delivered_episode_messages(context.application.bot, user.id, anime_id, episode)
 
                     await _safe_answer_query(query, "✅ Marcado como visto.", show_alert=False)
 

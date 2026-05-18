@@ -78,12 +78,15 @@ class VideoDownloadJob:
 
 _workers: list[asyncio.Task] = []
 _cleanup_task: asyncio.Task | None = None
+_delivery_cleanup_task: asyncio.Task | None = None
 _active_jobs: dict[str, dict] = {}
 _active_user_jobs: dict[int, str] = {}
 _enqueue_lock = asyncio.Lock()
 _archive_lock = asyncio.Lock()
 
 ARCHIVE_INDEX_PATH = Path(VIDEO_DOWNLOAD_CACHE_DIR).parent / "episode_file_ids.json"
+DELIVERY_INDEX_PATH = Path(VIDEO_DOWNLOAD_CACHE_DIR).parent / "episode_delivery_messages.json"
+DELIVERY_TTL_SECONDS = 24 * 60 * 60
 
 
 def _job_key(anime_id: str, episode: str, quality: str) -> str:
@@ -114,6 +117,95 @@ def _save_archive_index(data: dict) -> None:
     tmp.replace(ARCHIVE_INDEX_PATH)
 
 
+def _delivery_key(user_id: int, anime_id: str, episode: str) -> str:
+    return f"{int(user_id or 0)}|{str(anime_id or '').strip()}|{str(episode or '').strip()}".lower()
+
+
+def _load_delivery_index() -> dict:
+    if not DELIVERY_INDEX_PATH.exists():
+        return {}
+    try:
+        data = json.loads(DELIVERY_INDEX_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_delivery_index(data: dict) -> None:
+    DELIVERY_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = DELIVERY_INDEX_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(DELIVERY_INDEX_PATH)
+
+
+async def _delete_message_later(bot, chat_id: int, message_id: int, key: str) -> None:
+    await asyncio.sleep(DELIVERY_TTL_SECONDS)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as error:
+        print(f"[VIDEO_DELIVERY] delete_later_failed key={key} error={error!r}")
+    data = _load_delivery_index()
+    current = data.get(key) or {}
+    if int(current.get("message_id") or 0) == int(message_id):
+        data.pop(key, None)
+        _save_delivery_index(data)
+
+
+def _remember_delivered_episode(bot, *, user_id: int, chat_id: int, sent, anime_id: str, episode: str) -> None:
+    message_id = _message_id_from_sent(sent)
+    if not message_id:
+        return
+    key = _delivery_key(user_id, anime_id, episode)
+    data = _load_delivery_index()
+    data[key] = {
+        "chat_id": int(chat_id),
+        "message_id": int(message_id),
+        "user_id": int(user_id or 0),
+        "anime_id": str(anime_id),
+        "episode": str(episode),
+        "created_at": int(time.time()),
+        "expires_at": int(time.time()) + DELIVERY_TTL_SECONDS,
+    }
+    _save_delivery_index(data)
+    asyncio.create_task(_delete_message_later(bot, int(chat_id), int(message_id), key))
+
+
+async def delete_delivered_episode_messages(bot, user_id: int, anime_id: str, episode: str) -> int:
+    key = _delivery_key(user_id, anime_id, episode)
+    data = _load_delivery_index()
+    entry = data.pop(key, None)
+    if not entry:
+        return 0
+    try:
+        await bot.delete_message(chat_id=int(entry["chat_id"]), message_id=int(entry["message_id"]))
+    except Exception as error:
+        print(f"[VIDEO_DELIVERY] delete_seen_failed key={key} error={error!r}")
+    _save_delivery_index(data)
+    return 1
+
+
+async def _delivery_cleanup_loop(bot) -> None:
+    while True:
+        try:
+            now = int(time.time())
+            data = _load_delivery_index()
+            changed = False
+            for key, entry in list(data.items()):
+                if int(entry.get("expires_at") or 0) > now:
+                    continue
+                try:
+                    await bot.delete_message(chat_id=int(entry["chat_id"]), message_id=int(entry["message_id"]))
+                except Exception as error:
+                    print(f"[VIDEO_DELIVERY] cleanup_delete_failed key={key} error={error!r}")
+                data.pop(key, None)
+                changed = True
+            if changed:
+                _save_delivery_index(data)
+        except Exception as error:
+            print(f"[VIDEO_DELIVERY] cleanup_error={error!r}")
+        await asyncio.sleep(10 * 60)
+
+
 def _message_id_from_sent(sent) -> int | None:
     if isinstance(sent, (list, tuple)) and sent:
         sent = sent[0]
@@ -127,13 +219,13 @@ def _message_id_from_sent(sent) -> int | None:
     return None
 
 
-async def _copy_archived_episode(bot, chat_id: int, entry: dict, caption: str) -> bool:
+async def _copy_archived_episode(bot, chat_id: int, entry: dict, caption: str):
     message_id = entry.get("archive_message_id")
     archive_chat_id = entry.get("archive_chat_id") or DOWNLOAD_ARCHIVE_CHANNEL
     if not message_id or not archive_chat_id:
         return False
     try:
-        await bot.copy_message(
+        return await bot.copy_message(
             chat_id=chat_id,
             from_chat_id=archive_chat_id,
             message_id=int(message_id),
@@ -141,10 +233,9 @@ async def _copy_archived_episode(bot, chat_id: int, entry: dict, caption: str) -
             parse_mode="HTML",
             protect_content=VIDEO_DOWNLOAD_PROTECT_CONTENT,
         )
-        return True
     except Exception as error:
         print(f"[VIDEO_ARCHIVE] copy_failed key_entry={entry!r} error={error!r}")
-        return False
+        return None
 
 
 async def _archive_downloaded_episode(app, job: VideoDownloadJob, path: Path) -> dict:
@@ -780,11 +871,19 @@ async def _process_job(app, job: VideoDownloadJob) -> None:
                 last_upload_update = now
                 await _upload_progress(entry, job, current, total)
 
-            copied = False
+            sent = None
             if archive_entry:
-                copied = await _copy_archived_episode(app.bot, waiter["chat_id"], archive_entry, waiter["caption"])
-            if not copied:
-                await _send_video_safe(app.bot, waiter["chat_id"], path, waiter["caption"], progress_cb=progress_cb)
+                sent = await _copy_archived_episode(app.bot, waiter["chat_id"], archive_entry, waiter["caption"])
+            if not sent:
+                sent = await _send_video_safe(app.bot, waiter["chat_id"], path, waiter["caption"], progress_cb=progress_cb)
+            _remember_delivered_episode(
+                app.bot,
+                user_id=waiter["user_id"],
+                chat_id=waiter["chat_id"],
+                sent=sent,
+                anime_id=job.anime_id,
+                episode=job.episode,
+            )
 
         for message in list(entry["status_messages"]):
             await _safe_edit(
@@ -839,8 +938,16 @@ async def enqueue_video_download(app, job: VideoDownloadJob) -> int:
         index = _load_archive_index()
         archive_entry = index.get(key) or {}
         if archive_entry:
-            copied = await _copy_archived_episode(app.bot, job.chat_id, archive_entry, job.caption)
-            if copied:
+            sent = await _copy_archived_episode(app.bot, job.chat_id, archive_entry, job.caption)
+            if sent:
+                _remember_delivered_episode(
+                    app.bot,
+                    user_id=job.user_id,
+                    chat_id=job.chat_id,
+                    sent=sent,
+                    anime_id=job.anime_id,
+                    episode=job.episode,
+                )
                 status = await app.bot.send_message(
                     job.chat_id,
                     (
@@ -920,7 +1027,7 @@ async def enqueue_video_download(app, job: VideoDownloadJob) -> int:
 
 
 async def start_video_download_workers(app) -> None:
-    global _cleanup_task
+    global _cleanup_task, _delivery_cleanup_task
     if app.bot_data.get("video_download_workers_started"):
         return
 
@@ -931,11 +1038,12 @@ async def start_video_download_workers(app) -> None:
         _workers.append(asyncio.create_task(_worker(app, app.bot_data["video_download_queue"])))
 
     _cleanup_task = asyncio.create_task(_cleanup_loop())
+    _delivery_cleanup_task = asyncio.create_task(_delivery_cleanup_loop(app.bot))
     app.bot_data["video_download_workers_started"] = True
 
 
 async def stop_video_download_workers(app) -> None:
-    global _cleanup_task
+    global _cleanup_task, _delivery_cleanup_task
     queue = app.bot_data.get("video_download_queue")
     if queue is None:
         return
@@ -947,5 +1055,9 @@ async def stop_video_download_workers(app) -> None:
         _cleanup_task.cancel()
         await asyncio.gather(_cleanup_task, return_exceptions=True)
         _cleanup_task = None
+    if _delivery_cleanup_task:
+        _delivery_cleanup_task.cancel()
+        await asyncio.gather(_delivery_cleanup_task, return_exceptions=True)
+        _delivery_cleanup_task = None
     await cleanup_video_cache()
     app.bot_data["video_download_workers_started"] = False
